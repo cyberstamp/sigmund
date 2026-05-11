@@ -349,7 +349,7 @@ pqc-sign verify --file <FILE> --signature <ASC> [options]
 |--------|----------|---------|-------------|
 | `--file` | Yes | — | Artifact file to verify |
 | `--signature` | Yes | — | Signature `.asc` file |
-| `--pqc-fingerprint` | No | — | Expected PQC signer fingerprint |
+| `--pqc-fingerprint` | No | — | Expected PQC signer fingerprint. If omitted, any valid PQC signature is accepted. |
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `--strict` | No | `false` | Require both classic and PQC to pass |
 
@@ -376,9 +376,19 @@ Add to your project's `pom.xml`:
 </plugin>
 ```
 
+**Using an environment variable.** If you stored the fingerprint in `PQC_FINGERPRINT` (see [Generate a PQC key](#2-generate-a-pqc-key)), reference it directly in the plugin configuration:
+
+```xml
+<configuration>
+  <pqcFingerprint>${env.PQC_FINGERPRINT}</pqcFingerprint>
+</configuration>
+```
+
+This way `mvn verify` picks up the fingerprint automatically — no `-D` flag needed.
+
 ### `pqc-sign:sign`
 
-Bound to the `verify` phase. Signs all project artifacts (JAR, POM, sources, javadoc) with both classic GPG and PQC, and attaches the `.asc` files for deployment.
+Bound to the `verify` phase. Signs all project artifacts (JAR, POM, sources, javadoc) with both classic GPG and PQC, and attaches the `.asc` files for deployment. The `pqcFingerprint` parameter is required — the build will fail if it is not configured.
 
 ```bash
 mvn verify -Dpqc.fingerprint=<FINGERPRINT>
@@ -400,7 +410,7 @@ mvn pqc-sign:verify \
 |----------|----------|---------|-------------|
 | `file` | Yes | — | Artifact file to verify |
 | `signature` | Yes | — | Signature `.asc` file |
-| `pqc.fingerprint` | No | — | Expected PQC signer fingerprint |
+| `pqc.fingerprint` | No | — | Expected PQC signer fingerprint. If omitted, any valid PQC signature is accepted. |
 | `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `pqc.strict` | No | `false` | Require both signatures to pass |
 
