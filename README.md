@@ -169,7 +169,7 @@ java -jar cli/target/pqc-sign.jar sign \
   --pqc-fingerprint <FINGERPRINT>
 ```
 
-This produces `my-artifact-1.0.jar.asc` containing both the classic GPG and PQC signatures.
+This produces `my-artifact-1.0.jar.asc` containing both the classic GPG and PQC signatures. The default combine mode is `SEPARATE_BLOCKS`, which stores the two signatures as separate armored blocks in the same file (Maven Central compatible). Pass `--combine-mode MERGED_PACKETS` for a single armored block instead. See [Combine Modes](#combine-modes) for details.
 
 ### 4. Verify a signature
 
