@@ -139,6 +139,30 @@ class RoundTripIntegrationTest {
         System.out.println(report.format());
     }
 
+    @Test
+    void fullRoundTrip_mergedPackets(@TempDir Path tempDir) throws Exception {
+        Path artifact = createTestArtifact(tempDir, "merged-test.jar");
+        Path signature = tempDir.resolve("merged-test.jar.asc");
+
+        HybridSigner signer = createHybridSigner()
+                .withCombineMode(AscCombiner.CombineMode.MERGED_PACKETS);
+        signer.sign(artifact, signature);
+
+        HybridVerifier verifier = createHybridVerifier();
+        VerificationReport report = verifier.verify(artifact, signature);
+
+        assertEquals(VerificationResult.PASS, report.classicResult(),
+                "Classic (GPG) signature should be valid in merged mode");
+        assertEquals(VerificationResult.PASS, report.pqcResult(),
+                "PQC (Sequoia) signature should be valid in merged mode");
+        assertTrue(report.isStrictPass());
+
+        // Merged mode produces a single armored block
+        String content = Files.readString(signature);
+        assertEquals(1, content.split("-----BEGIN PGP").length - 1,
+                "Merged mode should produce a single armored block");
+    }
+
     /**
      * Tests backward compatibility by verifying that GPG can verify the combined
      * .asc file even though it contains a v6 PQC packet.

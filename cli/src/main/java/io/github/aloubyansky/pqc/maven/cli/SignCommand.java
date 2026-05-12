@@ -1,5 +1,6 @@
 package io.github.aloubyansky.pqc.maven.cli;
 
+import io.github.aloubyansky.pqc.maven.core.AscCombiner;
 import io.github.aloubyansky.pqc.maven.core.GpgSigner;
 import io.github.aloubyansky.pqc.maven.core.HybridSigner;
 import io.github.aloubyansky.pqc.maven.core.SqRunner;
@@ -105,6 +106,10 @@ public class SignCommand implements Callable<Integer> {
     @CommandLine.Option(names = { "--output" }, description = "Output signature file path (default: <file>.asc)")
     private String output;
 
+    @CommandLine.Option(names = {
+            "--combine-mode" }, description = "How to combine signatures: SEPARATE_BLOCKS (default, Maven Central compatible) or MERGED_PACKETS (single armored block)")
+    private AscCombiner.CombineMode combineMode;
+
     /**
      * Executes the signing command.
      * <p>
@@ -133,7 +138,7 @@ public class SignCommand implements Callable<Integer> {
 
             GpgSigner gpgSigner = createGpgSigner();
             SqRunner sqRunner = createSqRunner(sqHomeDir);
-            HybridSigner signer = HybridSigner.create(gpgSigner, sqRunner, pqcFingerprint);
+            HybridSigner signer = HybridSigner.create(gpgSigner, sqRunner, pqcFingerprint, combineMode);
 
             signer.sign(artifactFile, outputFile);
 

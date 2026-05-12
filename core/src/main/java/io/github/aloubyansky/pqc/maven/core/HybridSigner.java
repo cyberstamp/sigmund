@@ -95,6 +95,7 @@ public class HybridSigner {
     private final ClassicSignFn classicSign;
     private final PqcSignFn pqcSign;
     private String pqcFingerprint;
+    private AscCombiner.CombineMode combineMode = AscCombiner.CombineMode.SEPARATE_BLOCKS;
 
     /**
      * Constructs a HybridSigner with custom signing functions.
@@ -134,6 +135,20 @@ public class HybridSigner {
             throw new IllegalArgumentException("fingerprint cannot be null or empty");
         }
         this.pqcFingerprint = fingerprint;
+        return this;
+    }
+
+    /**
+     * Sets how classical and PQC signatures are combined in the .asc file.
+     *
+     * @param mode the combine mode
+     * @return this HybridSigner instance for method chaining
+     */
+    public HybridSigner withCombineMode(AscCombiner.CombineMode mode) {
+        if (mode == null) {
+            throw new IllegalArgumentException("combineMode cannot be null");
+        }
+        this.combineMode = mode;
         return this;
     }
 
@@ -190,6 +205,20 @@ public class HybridSigner {
      * @throws IllegalArgumentException if any parameter is null or pqcFingerprint is empty
      */
     public static HybridSigner create(GpgSigner gpg, SqRunner sq, String pqcFingerprint) {
+        return create(gpg, sq, pqcFingerprint, null);
+    }
+
+    /**
+     * Factory method that creates a HybridSigner wired with real GPG and Sequoia tools.
+     *
+     * @param gpg the GpgSigner instance to use for classical signing
+     * @param sq the SqRunner instance to use for PQC signing
+     * @param pqcFingerprint the PQC key fingerprint to use for signing
+     * @param combineMode how to combine signatures, or null for the default
+     * @return a new HybridSigner instance configured with the provided tools
+     */
+    public static HybridSigner create(GpgSigner gpg, SqRunner sq, String pqcFingerprint,
+            AscCombiner.CombineMode combineMode) {
         if (gpg == null) {
             throw new IllegalArgumentException("gpg cannot be null");
         }
@@ -200,8 +229,12 @@ public class HybridSigner {
             throw new IllegalArgumentException("pqcFingerprint cannot be null or empty");
         }
 
-        return new HybridSigner(gpg::sign, sq::sign)
+        HybridSigner signer = new HybridSigner(gpg::sign, sq::sign)
                 .withPqcFingerprint(pqcFingerprint);
+        if (combineMode != null) {
+            signer.withCombineMode(combineMode);
+        }
+        return signer;
     }
 
     /**
@@ -268,7 +301,7 @@ public class HybridSigner {
      * @return the combined ASCII-armored signature
      */
     private String combineSignatures(String classicAsc, String pqcAsc) {
-        return AscCombiner.combine(classicAsc, pqcAsc);
+        return AscCombiner.combine(classicAsc, pqcAsc, combineMode);
     }
 
     /**

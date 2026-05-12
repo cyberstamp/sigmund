@@ -29,33 +29,103 @@ class AscCombinerTest {
         return AscCombiner.armor(testData);
     }
 
+    // --- SEPARATE_BLOCKS mode (default) ---
+
     @Test
-    void combine_mergesTwoArmoredBlocks() {
+    void separateBlocks_preservesTwoArmoredBlocks() {
         String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
 
-        assertNotNull(combined);
-
-        // Verify result has exactly one BEGIN/END marker pair
-        int beginCount = countOccurrences(combined, "-----BEGIN PGP SIGNATURE-----");
-        int endCount = countOccurrences(combined, "-----END PGP SIGNATURE-----");
-
-        assertEquals(1, beginCount, "Combined block should have exactly one BEGIN marker");
-        assertEquals(1, endCount, "Combined block should have exactly one END marker");
+        assertEquals(2, countOccurrences(combined, "-----BEGIN PGP"));
+        assertEquals(2, countOccurrences(combined, "-----END PGP"));
     }
 
     @Test
-    void combine_resultIsLargerThanEitherInput() {
+    void separateBlocks_classicBlockComesFirst() {
         String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
 
-        assertNotNull(combined);
-
-        // Combined result should be larger than either input alone
-        int combinedLength = combined.length();
-        assertTrue(combinedLength > ARMORED_BLOCK_1.length(),
-                "Combined result should be larger than first input");
-        assertTrue(combinedLength > ARMORED_BLOCK_2.length(),
-                "Combined result should be larger than second input");
+        assertTrue(combined.startsWith(ARMORED_BLOCK_1.stripTrailing()),
+                "Combined output should start with the classic block");
     }
+
+    @Test
+    void separateBlocks_defaultMatchesExplicitMode() {
+        String defaultResult = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
+        String explicitResult = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2,
+                AscCombiner.CombineMode.SEPARATE_BLOCKS);
+
+        assertEquals(defaultResult, explicitResult);
+    }
+
+    // --- MERGED_PACKETS mode ---
+
+    @Test
+    void mergedPackets_producesSingleArmoredBlock() {
+        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2,
+                AscCombiner.CombineMode.MERGED_PACKETS);
+
+        assertEquals(1, countOccurrences(combined, "-----BEGIN PGP"),
+                "Merged mode should have exactly one BEGIN marker");
+        assertEquals(1, countOccurrences(combined, "-----END PGP"),
+                "Merged mode should have exactly one END marker");
+    }
+
+    @Test
+    void mergedPackets_containsBothPackets() {
+        byte[] raw1 = AscCombiner.dearmor(ARMORED_BLOCK_1);
+        byte[] raw2 = AscCombiner.dearmor(ARMORED_BLOCK_2);
+
+        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2,
+                AscCombiner.CombineMode.MERGED_PACKETS);
+        byte[] rawCombined = AscCombiner.dearmor(combined);
+
+        assertEquals(raw1.length + raw2.length, rawCombined.length,
+                "Merged result should contain bytes from both inputs");
+    }
+
+    @Test
+    void mergedPackets_isLargerThanEitherInput() {
+        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2,
+                AscCombiner.CombineMode.MERGED_PACKETS);
+
+        assertTrue(combined.length() > ARMORED_BLOCK_1.length());
+        assertTrue(combined.length() > ARMORED_BLOCK_2.length());
+    }
+
+    // --- extractBlock ---
+
+    @Test
+    void extractBlock_returnsFirstBlock() {
+        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
+
+        String first = AscCombiner.extractBlock(combined, 0);
+        assertNotNull(first);
+        assertEquals(1, countOccurrences(first, "-----BEGIN PGP"));
+        assertArrayEquals(AscCombiner.dearmor(ARMORED_BLOCK_1), AscCombiner.dearmor(first));
+    }
+
+    @Test
+    void extractBlock_returnsSecondBlock() {
+        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
+
+        String second = AscCombiner.extractBlock(combined, 1);
+        assertNotNull(second);
+        assertEquals(1, countOccurrences(second, "-----BEGIN PGP"));
+        assertArrayEquals(AscCombiner.dearmor(ARMORED_BLOCK_2), AscCombiner.dearmor(second));
+    }
+
+    @Test
+    void extractBlock_returnsNullForOutOfRange() {
+        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
+
+        assertNull(AscCombiner.extractBlock(combined, 2));
+    }
+
+    @Test
+    void extractBlock_returnsNullFromSingleBlockForIndex1() {
+        assertNull(AscCombiner.extractBlock(ARMORED_BLOCK_1, 1));
+    }
+
+    // --- dearmor ---
 
     @Test
     void dearmor_extractsRawBytes() {

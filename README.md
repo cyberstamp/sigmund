@@ -2,10 +2,12 @@
 
 ## Overview
 
-This tool adds post-quantum cryptographic (PQC) signatures to Maven artifacts alongside classic GPG signatures. Every `.asc` signature file contains two OpenPGP signature packets:
+This tool adds post-quantum cryptographic (PQC) signatures to Maven artifacts alongside classic GPG signatures. Every `.asc` signature file contains two OpenPGP signatures:
 
 - A **classic v4 signature** (RSA/EdDSA via GnuPG) — backward-compatible, verifiable by all existing tools
 - A **PQC v6 signature** (ML-DSA-65+Ed25519 via Sequoia) — quantum-resistant, per [draft-ietf-openpgp-pqc](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/)
+
+The two signatures can be stored as **two separate armored blocks** (default, Maven Central compatible) or **merged into a single armored block** with concatenated raw packets. See [Combine Modes](#combine-modes) for details.
 
 Existing tools (GPG, Maven Central) see only the classic signature and work as before. PQC-aware tools can verify both.
 
@@ -216,7 +218,6 @@ artifact.jar
     +-- sq sign --signature-file --> pqc.sig       (v6 PQC signature packet)
     |
     +-- AscCombiner.combine() -----> artifact.jar.asc
-                                      (single armored block with both packets)
 ```
 
 **Stage 1 — Classic GPG signature.** `GpgSigner` invokes GnuPG as an external process:
@@ -235,14 +236,49 @@ sq --overwrite sign --signer <fingerprint> --signature-file <sig> <artifact>
 
 Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP signature packet with composite ML-DSA-65+Ed25519 per draft-ietf-openpgp-pqc. The PQC key must be in Sequoia's keystore (set via the `SEQUOIA_HOME` environment variable). The `--overwrite` flag is always passed to handle cases where the output file already exists (e.g., temp files).
 
-**Stage 3 — Combine.** `AscCombiner` merges both signatures into a single `.asc` using Bouncy Castle's bcpg library:
+**Stage 3 — Combine.** `AscCombiner` merges both signatures into a single `.asc` file. The combine behavior depends on the selected mode (see [Combine Modes](#combine-modes)).
 
-1. Dearmor the classic `.asc` via `ArmoredInputStream` to extract raw v4 packet bytes
-2. Dearmor the PQC `.sig` via `ArmoredInputStream` to extract raw v6 packet bytes
-3. Concatenate v4 bytes + v6 bytes into a single byte array
-4. Re-armor the combined bytes via `ArmoredOutputStream` into one `.asc` file
+### Combine Modes
 
-The result is a valid OpenPGP armored message containing two signature packets in sequence.
+The `combineMode` setting controls how the classic and PQC signatures are stored in the `.asc` file.
+
+#### `SEPARATE_BLOCKS` (default)
+
+The classic GPG signature and PQC signature are kept as **two separate ASCII-armored blocks** concatenated in the same file, classic first:
+
+```
+-----BEGIN PGP SIGNATURE-----
+(classic v4 signature — exactly as GPG produced it)
+-----END PGP SIGNATURE-----
+-----BEGIN PGP SIGNATURE-----
+(PQC v6 signature — exactly as Sequoia produced it)
+-----END PGP SIGNATURE-----
+```
+
+Neither signature is re-armored — both are preserved byte-for-byte as their respective tools produced them. Verifiers that parse only the first armored block (including Maven Central) see only the classic v4 signature and succeed. PQC-aware tools process all blocks and find the v6 signature.
+
+This is the recommended mode for publishing to Maven Central and other repositories with standard OpenPGP verification.
+
+#### `MERGED_PACKETS`
+
+Both signatures are dearmored, their raw OpenPGP packets concatenated, and re-armored into a **single armored block** using Bouncy Castle's bcpg library:
+
+```
+-----BEGIN PGP SIGNATURE-----
+Version: BCPG v1.84
+
+(base64-encoded v4 packet bytes + v6 packet bytes)
+-----END PGP SIGNATURE-----
+```
+
+The steps are:
+
+1. Dearmor the classic `.asc` via `ArmoredInputStream` → raw v4 packet bytes
+2. Dearmor the PQC `.sig` via `ArmoredInputStream` → raw v6 packet bytes
+3. Concatenate v4 bytes + v6 bytes
+4. Re-armor via `ArmoredOutputStream` → single `.asc` file
+
+This produces a more compact output and is a valid OpenPGP armored message with two signature packets in sequence. GPG can verify the classic signature within it (exit code 2 with "Good signature" due to the unknown v6 packet warning). However, some verifiers — including Maven Central — may reject the file because they cannot handle the v6 PQC packet.
 
 ### Verification Pipeline
 
@@ -256,7 +292,7 @@ artifact.jar + artifact.jar.asc
     +-- VerificationReport ------> combined report
 ```
 
-Verification delegates to each tool independently. Both tools read the same combined `.asc` file and each verifies only the signature packet it understands:
+Verification delegates to each tool independently:
 
 **Classic verification.** `HybridVerifier` runs:
 
@@ -264,7 +300,7 @@ Verification delegates to each tool independently. Both tools read the same comb
 gpg --verify <signature.asc> <artifact>
 ```
 
-GPG parses the armored `.asc`, finds the v4 signature packet, verifies it against its keyring, and skips the v6 PQC packet (printing a warning: `packet(2) with unknown version 6`).
+GPG parses the `.asc`, finds the v4 signature packet, verifies it against its keyring, and skips the v6 PQC packet (printing a warning: `packet(2) with unknown version 6`).
 
 GPG exit codes are interpreted as:
 - **Exit 0** — signature valid (PASS)
@@ -278,7 +314,7 @@ GPG exit codes are interpreted as:
 sq verify --signer <fingerprint> --signature-file <signature.asc> <artifact>
 ```
 
-Sequoia parses the `.asc`, finds the v6 PQC signature packet, verifies it against its cert-store, and ignores the v4 classic packet. If `sq` is not available, PQC verification is skipped and the result is `NOT_PRESENT`.
+Sequoia finds the v6 PQC signature packet and verifies it against its cert-store. When the `.asc` contains two separate armored blocks (`SEPARATE_BLOCKS` mode), the verifier automatically extracts the PQC block (second block) into a temporary file for Sequoia, since `sq` only processes the first armored block in a file. In `MERGED_PACKETS` mode, Sequoia reads the single block and finds the v6 packet directly. If `sq` is not available, PQC verification is skipped and the result is `NOT_PRESENT`.
 
 **Verification modes:**
 
@@ -296,15 +332,9 @@ PQC keys are managed by Sequoia's built-in keystore, controlled by the `SEQUOIA_
 
 ### Maven Central Compatibility
 
-The combined `.asc` is a valid OpenPGP armored message. Maven Central's upload validation:
-1. Parses the `.asc` file
-2. Finds the v4 classic GPG signature
-3. Verifies it against public keyservers
-4. Ignores the v6 PQC packet (unknown packet version)
+With `SEPARATE_BLOCKS` mode (the default), the `.asc` file starts with a standard armored block containing only the classic v4 signature. Maven Central's upload validation parses the first armored block, verifies the classic signature against public keyservers, and ignores the second block (the PQC signature). No changes to Maven Central are required.
 
-No changes to Maven Central are required. The v6 PQC packet is invisible to tools that don't understand it.
-
-**Note:** GPG returns exit code 2 (not 0) when verifying a combined `.asc` that contains an unknown v6 packet. The signature itself is valid — the non-zero exit code reflects the warning about the unknown packet. Maven Central's server-side verification may or may not check the exit code; if it does, this behavior needs to be tested against the actual Central validation pipeline.
+With `MERGED_PACKETS` mode, the single armored block contains both v4 and v6 packets. Maven Central's verifier rejects this because it encounters the v6 PQC packet it does not understand. **Use `SEPARATE_BLOCKS` (the default) for publishing to Maven Central.**
 
 ## CLI Reference
 
@@ -336,6 +366,7 @@ pqc-sign sign --file <FILE> --pqc-fingerprint <FP> [options]
 | `--gpg-key` | No | GPG default | GPG key ID for classic signing |
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `--output` | No | `<file>.asc` | Output signature file path |
+| `--combine-mode` | No | `SEPARATE_BLOCKS` | `SEPARATE_BLOCKS` (Maven Central compatible) or `MERGED_PACKETS` (single armored block) |
 
 ### `pqc-sign verify`
 
@@ -372,6 +403,7 @@ Add to your project's `pom.xml`:
   <configuration>
     <pqcFingerprint>${pqc.fingerprint}</pqcFingerprint>
     <!-- optional: <gpgKeyName>0xABCD1234</gpgKeyName> -->
+    <!-- optional: <combineMode>MERGED_PACKETS</combineMode> -->
   </configuration>
 </plugin>
 ```
@@ -392,6 +424,9 @@ Bound to the `verify` phase. Signs all project artifacts (JAR, POM, sources, jav
 
 ```bash
 mvn verify -Dpqc.fingerprint=<FINGERPRINT>
+
+# Use merged packets mode (single armored block):
+mvn verify -Dpqc.fingerprint=<FINGERPRINT> -Dpqc.combineMode=MERGED_PACKETS
 ```
 
 ### `pqc-sign:verify`
@@ -421,8 +456,8 @@ mvn pqc-sign:verify \
 The unit tests run without any external tools (no GPG or sq required):
 
 - **CliToolTest** (4 tests) — process execution, stdout/stderr capture, exit code handling, checked execution
-- **AscCombinerTest** (3 tests) — dearmoring, combining two armored blocks, verifying single-block output
-- **HybridSignerTest** (1 test) — orchestration with mock signers (no real GPG/sq), verifies combining logic
+- **AscCombinerTest** (11 tests) — `SEPARATE_BLOCKS` mode (two-block output, ordering, default-equals-explicit), `MERGED_PACKETS` mode (single-block output, packet concatenation, size), `extractBlock()` (first/second/out-of-range extraction), dearmoring
+- **HybridSignerTest** (2 tests) — orchestration with mock signers for both `SEPARATE_BLOCKS` (two blocks) and `MERGED_PACKETS` (single block) modes
 - **HybridVerifierTest** (7 tests) — VerificationReport formatting, strict vs transitional modes, PASS/FAIL/NO_KEY/NOT_PRESENT scenarios
 
 Run unit tests:
@@ -446,21 +481,28 @@ mvn test -pl core -Dtest=RoundTripIntegrationTest
 
 A fresh Sequoia keystore is created in a JUnit `@TempDir`. A PQC key is generated with `--without-password` (required for non-interactive test execution). The key fingerprint is shared across all test methods.
 
-**Test 1 — Full round-trip (`fullRoundTrip_signAndVerify`):**
+**Test 1 — Full round-trip, `SEPARATE_BLOCKS` (`fullRoundTrip_signAndVerify`):**
 
 1. Creates a test artifact file
-2. Signs with `HybridSigner.create(gpg, sq, fingerprint)` — produces a combined `.asc` with both v4 and v6 packets
+2. Signs with `HybridSigner` using the default `SEPARATE_BLOCKS` mode — produces an `.asc` with two separate armored blocks
 3. Verifies with `HybridVerifier` — asserts classic PASS and PQC PASS
 4. Asserts `isStrictPass()` is true
-5. Prints the verification report
 
-**Test 2 — GPG backward compatibility (`backwardCompat_gpgVerifiesCombinedAsc`):**
+**Test 2 — Full round-trip, `MERGED_PACKETS` (`fullRoundTrip_mergedPackets`):**
+
+1. Creates a test artifact file
+2. Signs with `HybridSigner` using `MERGED_PACKETS` mode — produces an `.asc` with a single armored block
+3. Verifies with `HybridVerifier` — asserts classic PASS and PQC PASS
+4. Asserts `isStrictPass()` is true
+5. Asserts the `.asc` file contains exactly one armored block
+
+**Test 3 — GPG backward compatibility (`backwardCompat_gpgVerifiesCombinedAsc`):**
 
 1. Creates and signs a test artifact (hybrid `.asc`)
 2. Runs `gpg --verify` directly via `CliTool.run()` on the combined `.asc`
 3. Asserts GPG reports "Good signature" — accepts exit code 0 or exit code 2 (exit 2 is expected because GPG prints a warning about the unknown v6 PQC packet but still validates the classic signature)
 
-**Test 3 — Tamper detection (`tamperedArtifact_verificationFails`):**
+**Test 4 — Tamper detection (`tamperedArtifact_verificationFails`):**
 
 1. Creates and signs a test artifact
 2. Overwrites the artifact file with different content
@@ -474,7 +516,7 @@ The Maven plugin includes invoker tests under `maven-plugin/src/it/`. These requ
 
 ### GPG exit code 2 for hybrid `.asc` files
 
-GnuPG returns exit code 2 (rather than 0) when verifying a combined `.asc` that contains a v6 PQC packet. This is because GPG logs a warning about the unknown packet version. The signature itself is valid — GPG reports "Good signature" in its output.
+GnuPG returns exit code 2 (rather than 0) when verifying an `.asc` file that contains a v6 PQC packet. This applies to both combine modes — GPG processes all armored blocks in the file and warns about the unknown packet version. The signature itself is valid — GPG reports "Good signature" in its output.
 
 The `HybridVerifier` handles this by checking for "Good signature" in stderr when the exit code is 2. However, other tools or CI systems that check GPG's exit code strictly may interpret exit code 2 as a failure.
 
@@ -500,13 +542,13 @@ The `HybridVerifier` does not currently parse the GPG signing key ID from `gpg -
 
 `HybridVerifier.verifyClassic()` calls `gpg --verify` directly via `CliTool.run()` rather than using the `GpgSigner` instance's configured executable path. If the user configured a custom GPG path in `GpgSigner`, it would be used for signing but not for verification. This should be addressed before upstream contribution.
 
-### Bouncy Castle re-armoring adds `Version` header
+### Bouncy Castle re-armoring adds `Version` header (`MERGED_PACKETS` only)
 
-When `AscCombiner` re-armors the combined packets, Bouncy Castle adds a `Version: BCPG v1.80` header to the armored output. This does not affect functionality — GPG and sq both ignore armor headers — but it means the re-armored `.asc` looks slightly different from what GPG or sq would produce natively.
+In `MERGED_PACKETS` mode, `AscCombiner` re-armors the combined packets via Bouncy Castle, which adds a `Version: BCPG v1.84` header to the armored output. This does not affect functionality — GPG and sq both ignore armor headers — but it means the re-armored `.asc` looks slightly different from what GPG or sq would produce natively. In `SEPARATE_BLOCKS` mode (the default), both signatures are preserved exactly as their respective tools produced them, so this does not apply.
 
-### Maven Central compatibility not yet verified
+### `MERGED_PACKETS` mode incompatible with Maven Central
 
-While the `.asc` format is designed to be backward-compatible (Maven Central should find and verify the v4 classic signature), actual upload testing against Maven Central has not been performed. The behavior of Central's server-side validation with a combined v4+v6 `.asc` should be verified before production use.
+Maven Central's signature verification rejects `.asc` files produced with `MERGED_PACKETS` mode because its verifier cannot handle the v6 PQC packet inside the single armored block. Use the default `SEPARATE_BLOCKS` mode for publishing to Maven Central.
 
 ## Project Structure
 
@@ -574,6 +616,47 @@ The release plugin does not push to the remote. Review the commits and tag, then
 ```bash
 git push origin main --tags
 ```
+
+## Verifying Releases
+
+If your project signs artifacts with this plugin, publish your PQC fingerprint so consumers can verify signatures. Recommended practices:
+
+### Publishing the fingerprint
+
+Make the fingerprint available in multiple independent channels so consumers can cross-check:
+
+- **README** — include the fingerprint in a "Verifying Signatures" section
+- **KEYS file** — follow the [Apache KEYS convention](https://www.apache.org/dev/release-signing.html#keys-policy), adding the PQC fingerprint alongside classic GPG key IDs
+- **Release notes** — repeat the fingerprint in each release announcement
+- **Project website** — publish on a page served from a different infrastructure than the repository
+
+If any source shows a different fingerprint, the artifact should not be trusted.
+
+### Verifying a downloaded artifact
+
+Consumers can verify using the CLI or Maven plugin with the published fingerprint:
+
+**CLI:**
+
+```bash
+java -jar pqc-sign.jar verify \
+  --file my-artifact-1.0.jar \
+  --signature my-artifact-1.0.jar.asc \
+  --pqc-fingerprint <FINGERPRINT> \
+  --strict
+```
+
+**Maven plugin:**
+
+```bash
+mvn pqc-sign:verify \
+  -Dfile=my-artifact-1.0.jar \
+  -Dsignature=my-artifact-1.0.jar.asc \
+  -Dpqc.fingerprint=<FINGERPRINT> \
+  -Dpqc.strict=true
+```
+
+The `--strict` / `pqc.strict=true` flag requires both the classic GPG and PQC signatures to be present and valid. Without it, only the classic GPG signature is required (transitional mode).
 
 ## References
 

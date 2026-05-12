@@ -1,5 +1,7 @@
 package io.github.aloubyansky.pqc.maven.core;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -178,9 +180,9 @@ public class HybridVerifier {
     /**
      * Verifies the PQC signature using the Sequoia command-line tool.
      * <p>
-     * Delegates to {@link SqRunner#verify(Path, Path, String)} which returns
-     * a boolean indicating success or failure.
-     *
+     * When the signature file contains multiple armored blocks (classic + PQC),
+     * extracts the PQC block (second block) into a temporary file for Sequoia,
+     * which only processes the first armored block in a file.
      *
      * @param artifactFile the file that was signed
      * @param signatureFile the signature file to verify
@@ -191,7 +193,26 @@ public class HybridVerifier {
         if (sq == null) {
             return VerificationResult.NOT_PRESENT;
         }
-        boolean verified = sq.verify(artifactFile, signatureFile, pqcFingerprint);
-        return verified ? VerificationResult.PASS : VerificationResult.FAIL;
+        Path pqcSigFile = null;
+        try {
+            String content = Files.readString(signatureFile);
+            String pqcBlock = AscCombiner.extractBlock(content, 1);
+            if (pqcBlock != null) {
+                pqcSigFile = Files.createTempFile("pqc-verify-", ".asc");
+                Files.writeString(pqcSigFile, pqcBlock);
+                signatureFile = pqcSigFile;
+            }
+            boolean verified = sq.verify(artifactFile, signatureFile, pqcFingerprint);
+            return verified ? VerificationResult.PASS : VerificationResult.FAIL;
+        } catch (IOException e) {
+            return VerificationResult.FAIL;
+        } finally {
+            if (pqcSigFile != null) {
+                try {
+                    Files.deleteIfExists(pqcSigFile);
+                } catch (IOException ignored) {
+                }
+            }
+        }
     }
 }

@@ -19,6 +19,9 @@ import org.bouncycastle.bcpg.ArmoredOutputStream;
  */
 public final class AscCombiner {
 
+    private static final String BEGIN_MARKER = "-----BEGIN PGP ";
+    private static final String END_MARKER = "-----END PGP ";
+
     /**
      * Private constructor to prevent instantiation of this utility class.
      */
@@ -71,36 +74,97 @@ public final class AscCombiner {
     }
 
     /**
-     * Combines two ASCII-armored OpenPGP blocks into a single armored block.
-     * <p>
-     * This method performs the following steps:
-     * <ol>
-     * <li>Dearmors both input blocks to extract raw packet bytes</li>
-     * <li>Concatenates the raw packet bytes</li>
-     * <li>Re-armors the combined packet data into a single ASCII-armored block</li>
-     * </ol>
-     * <p>
-     * This is useful for combining classical and post-quantum cryptographic signatures
-     * into a single PGP signature block for hybrid cryptography scenarios.
+     * How to combine classic and PQC signatures in a single .asc file.
+     */
+    public enum CombineMode {
+        /**
+         * Two separate armored blocks in the same file (classic first).
+         * Compatible with Maven Central and other verifiers that only
+         * read the first armored block.
+         */
+        SEPARATE_BLOCKS,
+        /**
+         * Dearmor both, concatenate raw packets, re-armor into a single block.
+         * More compact but may confuse verifiers that cannot handle v6 packets.
+         */
+        MERGED_PACKETS
+    }
+
+    /**
+     * Combines two ASCII-armored OpenPGP blocks using the default mode
+     * ({@link CombineMode#SEPARATE_BLOCKS}).
      *
      * @param armoredClassic the first ASCII-armored block (typically a classical signature)
      * @param armoredPqc the second ASCII-armored block (typically a PQC signature)
-     * @return a single ASCII-armored block containing both signatures
-     * @throws UncheckedIOException if an I/O error occurs during processing
+     * @return the combined result
      * @throws IllegalArgumentException if either input is null or empty
      */
     public static String combine(String armoredClassic, String armoredPqc) {
+        return combine(armoredClassic, armoredPqc, CombineMode.SEPARATE_BLOCKS);
+    }
+
+    /**
+     * Combines two ASCII-armored OpenPGP blocks using the specified mode.
+     *
+     * @param armoredClassic the first ASCII-armored block (typically a classical signature)
+     * @param armoredPqc the second ASCII-armored block (typically a PQC signature)
+     * @param mode how to combine the two blocks
+     * @return the combined result
+     * @throws IllegalArgumentException if any input is null or empty
+     */
+    public static String combine(String armoredClassic, String armoredPqc, CombineMode mode) {
         validateInput(armoredClassic, "First armored input");
         validateInput(armoredPqc, "Second armored input");
-
-        try {
-            byte[] rawClassic = dearmorInternal(armoredClassic);
-            byte[] rawPqc = dearmorInternal(armoredPqc);
-            byte[] combined = concatenatePackets(rawClassic, rawPqc);
-            return armorInternal(combined);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to combine PGP blocks", e);
+        if (mode == null) {
+            throw new IllegalArgumentException("CombineMode must not be null");
         }
+
+        if (mode == CombineMode.MERGED_PACKETS) {
+            try {
+                byte[] rawClassic = dearmorInternal(armoredClassic);
+                byte[] rawPqc = dearmorInternal(armoredPqc);
+                byte[] combined = concatenatePackets(rawClassic, rawPqc);
+                return armorInternal(combined);
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to combine PGP blocks", e);
+            }
+        }
+        return armoredClassic.stripTrailing() + "\n" + armoredPqc.stripTrailing() + "\n";
+    }
+
+    /**
+     * Extracts the Nth armored block (0-based) from a string that may
+     * contain multiple concatenated armored blocks.
+     *
+     * @param combined the string containing one or more armored blocks
+     * @param index the 0-based index of the block to extract
+     * @return the extracted armored block, or null if the index is out of range
+     * @throws IllegalArgumentException if combined is null or empty
+     */
+    public static String extractBlock(String combined, int index) {
+        validateInput(combined, "Combined input");
+
+        int blockIndex = 0;
+        int searchFrom = 0;
+        while (searchFrom < combined.length()) {
+            int beginPos = combined.indexOf(BEGIN_MARKER, searchFrom);
+            if (beginPos < 0) {
+                return null;
+            }
+            int endMarkerPos = combined.indexOf(END_MARKER, beginPos + BEGIN_MARKER.length());
+            if (endMarkerPos < 0) {
+                return null;
+            }
+            int endOfLine = combined.indexOf('\n', endMarkerPos);
+            int blockEnd = (endOfLine >= 0) ? endOfLine + 1 : combined.length();
+
+            if (blockIndex == index) {
+                return combined.substring(beginPos, blockEnd);
+            }
+            blockIndex++;
+            searchFrom = blockEnd;
+        }
+        return null;
     }
 
     /**
