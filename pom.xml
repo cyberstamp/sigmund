@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.github.aloubyansky.pqc.maven</groupId>
     <artifactId>pqc-maven-parent</artifactId>
-    <version>0.0.2</version>
+    <version>0.0.3-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>PQC Sign :: Parent</name>
     <description>Tooling for Maven artifact PQC-based signing and signature verification</description>
@@ -18,7 +18,7 @@
         <connection>scm:git:git://github.com/aloubyansky/pqc-maven-sign.git</connection>
         <developerConnection>scm:git:ssh://github.com/aloubyansky/pqc-maven-sign.git</developerConnection>
         <url>https://github.com/aloubyansky/pqc-maven-sign</url>
-      <tag>0.0.2</tag>
+      <tag>HEAD</tag>
   </scm>
     <developers>
         <developer>

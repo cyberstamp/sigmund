@@ -4,7 +4,7 @@
     <parent>
         <groupId>io.github.aloubyansky.pqc.maven</groupId>
         <artifactId>pqc-maven-parent</artifactId>
-        <version>0.0.2</version>
+        <version>0.0.3-SNAPSHOT</version>
     </parent>
     <artifactId>pqc-sign-core</artifactId>
     <name>PQC Sign :: Core</name>
