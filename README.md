@@ -394,7 +394,7 @@ Add to your project's `pom.xml`:
 <plugin>
   <groupId>io.github.aloubyansky.pqc.maven</groupId>
   <artifactId>pqc-sign-maven-plugin</artifactId>
-  <version>0.0.2-SNAPSHOT</version>
+  <version>0.0.2</version>
   <executions>
     <execution>
       <goals><goal>sign</goal></goals>
