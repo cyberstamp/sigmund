@@ -271,7 +271,7 @@
                                     <executable>bash</executable>
                                     <arguments>
                                         <argument>-c</argument>
-                                        <argument>sed -i '/pqc-sign-maven-plugin/{n;s/&lt;version&gt;[^&lt;]*&lt;\/version&gt;/&lt;version&gt;${project.version}&lt;\/version&gt;/}' ${project.basedir}/README.md</argument>
+                                        <argument>echo '${project.version}' | grep -q SNAPSHOT || sed -i '/pqc-sign-maven-plugin/{n;s/&lt;version&gt;[^&lt;]*&lt;\/version&gt;/&lt;version&gt;${project.version}&lt;\/version&gt;/}' ${project.basedir}/README.md</argument>
                                     </arguments>
                                 </configuration>
                             </execution>
@@ -286,7 +286,7 @@
                                     <executable>bash</executable>
                                     <arguments>
                                         <argument>-c</argument>
-                                        <argument>cd ${project.basedir} &amp;&amp; git diff --quiet README.md 2&gt;/dev/null || (git add README.md &amp;&amp; git commit -m "Update README.md plugin version to ${project.version}")</argument>
+                                        <argument>echo '${project.version}' | grep -q SNAPSHOT || { cd ${project.basedir} &amp;&amp; git diff --quiet README.md 2&gt;/dev/null || (git add README.md &amp;&amp; git commit -m "Update README.md plugin version to ${project.version}"); }</argument>
                                     </arguments>
                                 </configuration>
                             </execution>
