@@ -47,50 +47,6 @@ class AscCombinerTest {
                 "Combined output should start with the classic block");
     }
 
-    @Test
-    void separateBlocks_defaultMatchesExplicitMode() {
-        String defaultResult = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
-        String explicitResult = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2,
-                AscCombiner.CombineMode.SEPARATE_BLOCKS);
-
-        assertEquals(defaultResult, explicitResult);
-    }
-
-    // --- MERGED_PACKETS mode ---
-
-    @Test
-    void mergedPackets_producesSingleArmoredBlock() {
-        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2,
-                AscCombiner.CombineMode.MERGED_PACKETS);
-
-        assertEquals(1, countOccurrences(combined, "-----BEGIN PGP"),
-                "Merged mode should have exactly one BEGIN marker");
-        assertEquals(1, countOccurrences(combined, "-----END PGP"),
-                "Merged mode should have exactly one END marker");
-    }
-
-    @Test
-    void mergedPackets_containsBothPackets() {
-        byte[] raw1 = AscCombiner.dearmor(ARMORED_BLOCK_1);
-        byte[] raw2 = AscCombiner.dearmor(ARMORED_BLOCK_2);
-
-        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2,
-                AscCombiner.CombineMode.MERGED_PACKETS);
-        byte[] rawCombined = AscCombiner.dearmor(combined);
-
-        assertEquals(raw1.length + raw2.length, rawCombined.length,
-                "Merged result should contain bytes from both inputs");
-    }
-
-    @Test
-    void mergedPackets_isLargerThanEitherInput() {
-        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2,
-                AscCombiner.CombineMode.MERGED_PACKETS);
-
-        assertTrue(combined.length() > ARMORED_BLOCK_1.length());
-        assertTrue(combined.length() > ARMORED_BLOCK_2.length());
-    }
-
     // --- extractBlock ---
 
     @Test

@@ -1,6 +1,5 @@
 package io.github.aloubyansky.pqc.maven.plugin;
 
-import io.github.aloubyansky.pqc.maven.core.AscCombiner;
 import io.github.aloubyansky.pqc.maven.core.GpgSigner;
 import io.github.aloubyansky.pqc.maven.core.HybridSigner;
 import io.github.aloubyansky.pqc.maven.core.SqRunner;
@@ -99,19 +98,6 @@ public class SignMojo extends AbstractMojo {
     private File sqHome;
 
     /**
-     * How to combine classic and PQC signatures in the .asc file.
-     * <ul>
-     * <li>{@code SEPARATE_BLOCKS} (default) — two separate armored blocks;
-     * compatible with Maven Central.</li>
-     * <li>{@code MERGED_PACKETS} — single armored block with concatenated
-     * raw packets; more compact but may fail on verifiers that cannot
-     * handle v6 PQC packets.</li>
-     * </ul>
-     */
-    @Parameter(property = "pqc.combineMode", defaultValue = "SEPARATE_BLOCKS")
-    private AscCombiner.CombineMode combineMode;
-
-    /**
      * Executes the signing process for all project artifacts.
      * <p>
      * This method orchestrates the entire signing workflow:
@@ -181,7 +167,7 @@ public class SignMojo extends AbstractMojo {
         try {
             GpgSigner gpg = new GpgSigner(gpgKeyName);
             SqRunner sq = new SqRunner(sequoiaHome);
-            return HybridSigner.create(gpg, sq, pqcFingerprint, combineMode);
+            return HybridSigner.create(gpg, sq, pqcFingerprint);
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to create hybrid signer", e);
         }

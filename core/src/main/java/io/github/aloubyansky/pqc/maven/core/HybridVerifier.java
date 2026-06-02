@@ -209,12 +209,9 @@ public class HybridVerifier {
             boolean verified = sq.verify(artifactFile, signatureFile, pqcFingerprint);
             VerificationResult result = verified ? VerificationResult.PASS : VerificationResult.FAIL;
             String algorithm = sq.inspectSignatureAlgorithm(signatureFile);
-            if (algorithm == null) {
-                algorithm = SqRunner.DEFAULT_PQC_ALGORITHM;
-            }
             return new PqcVerification(result, algorithm);
         } catch (IOException e) {
-            return new PqcVerification(VerificationResult.FAIL, SqRunner.DEFAULT_PQC_ALGORITHM);
+            return new PqcVerification(VerificationResult.FAIL, null);
         } finally {
             if (pqcSigFile != null) {
                 try {

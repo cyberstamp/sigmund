@@ -11,11 +11,11 @@ import org.bouncycastle.bcpg.ArmoredOutputStream;
  * Utility class for manipulating ASCII-armored OpenPGP data.
  * <p>
  * This class provides methods to dearmor (strip ASCII armor from) OpenPGP blocks,
- * armor (wrap in ASCII armor) raw OpenPGP packets, and combine multiple armored
- * blocks into a single armored block containing concatenated raw packets.
+ * armor (wrap in ASCII armor) raw OpenPGP packets, combine two armored blocks
+ * into a single file, and extract individual blocks from a combined file.
  * <p>
  * This is particularly useful for combining classical and post-quantum signatures
- * into a single PGP signature block.
+ * into a single .asc file with two separate armored blocks.
  */
 public final class AscCombiner {
 
@@ -74,25 +74,11 @@ public final class AscCombiner {
     }
 
     /**
-     * How to combine classic and PQC signatures in a single .asc file.
-     */
-    public enum CombineMode {
-        /**
-         * Two separate armored blocks in the same file (classic first).
-         * Compatible with Maven Central and other verifiers that only
-         * read the first armored block.
-         */
-        SEPARATE_BLOCKS,
-        /**
-         * Dearmor both, concatenate raw packets, re-armor into a single block.
-         * More compact but may confuse verifiers that cannot handle v6 packets.
-         */
-        MERGED_PACKETS
-    }
-
-    /**
-     * Combines two ASCII-armored OpenPGP blocks using the default mode
-     * ({@link CombineMode#SEPARATE_BLOCKS}).
+     * Combines two ASCII-armored OpenPGP blocks into a single file as two
+     * separate armored blocks (classic first, PQC second).
+     * <p>
+     * This format is compatible with Maven Central and other verifiers that
+     * only read the first armored block.
      *
      * @param armoredClassic the first ASCII-armored block (typically a classical signature)
      * @param armoredPqc the second ASCII-armored block (typically a PQC signature)
@@ -100,35 +86,8 @@ public final class AscCombiner {
      * @throws IllegalArgumentException if either input is null or empty
      */
     public static String combine(String armoredClassic, String armoredPqc) {
-        return combine(armoredClassic, armoredPqc, CombineMode.SEPARATE_BLOCKS);
-    }
-
-    /**
-     * Combines two ASCII-armored OpenPGP blocks using the specified mode.
-     *
-     * @param armoredClassic the first ASCII-armored block (typically a classical signature)
-     * @param armoredPqc the second ASCII-armored block (typically a PQC signature)
-     * @param mode how to combine the two blocks
-     * @return the combined result
-     * @throws IllegalArgumentException if any input is null or empty
-     */
-    public static String combine(String armoredClassic, String armoredPqc, CombineMode mode) {
         validateInput(armoredClassic, "First armored input");
         validateInput(armoredPqc, "Second armored input");
-        if (mode == null) {
-            throw new IllegalArgumentException("CombineMode must not be null");
-        }
-
-        if (mode == CombineMode.MERGED_PACKETS) {
-            try {
-                byte[] rawClassic = dearmorInternal(armoredClassic);
-                byte[] rawPqc = dearmorInternal(armoredPqc);
-                byte[] combined = concatenatePackets(rawClassic, rawPqc);
-                return armorInternal(combined);
-            } catch (IOException e) {
-                throw new UncheckedIOException("Failed to combine PGP blocks", e);
-            }
-        }
         return armoredClassic.stripTrailing() + "\n" + armoredPqc.stripTrailing() + "\n";
     }
 
@@ -195,20 +154,6 @@ public final class AscCombiner {
             armoredOutputStream.close();
             return outputStream.toString();
         }
-    }
-
-    /**
-     * Concatenates two byte arrays into a single array.
-     *
-     * @param first the first byte array
-     * @param second the second byte array
-     * @return a new byte array containing first followed by second
-     */
-    private static byte[] concatenatePackets(byte[] first, byte[] second) {
-        byte[] result = new byte[first.length + second.length];
-        System.arraycopy(first, 0, result, 0, first.length);
-        System.arraycopy(second, 0, result, first.length, second.length);
-        return result;
     }
 
     /**

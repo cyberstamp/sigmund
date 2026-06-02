@@ -54,35 +54,6 @@ class HybridSignerTest {
         assertEquals(2, countOccurrences(combined, "-----BEGIN PGP MESSAGE-----"));
     }
 
-    @Test
-    void sign_mergedPacketsProducesSingleBlock(@TempDir Path tempDir) throws Exception {
-        Path artifact = tempDir.resolve("test.jar");
-        Files.writeString(artifact, "fake jar content");
-
-        byte[] fakeClassicPacket = new byte[] { 0x04, 0x00, 0x1F };
-        byte[] fakePqcPacket = new byte[] { 0x06, 0x00, 0x2A };
-        String fakeClassicAsc = AscCombiner.armor(fakeClassicPacket);
-        String fakePqcAsc = AscCombiner.armor(fakePqcPacket);
-
-        HybridSigner signer = new HybridSigner(
-                (file, output) -> {
-                    Files.writeString(output, fakeClassicAsc);
-                    return fakeClassicAsc;
-                },
-                (file, output, fp) -> {
-                    Files.writeString(output, fakePqcAsc);
-                    return fakePqcAsc;
-                })
-                .withPqcFingerprint("0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF")
-                .withCombineMode(AscCombiner.CombineMode.MERGED_PACKETS);
-
-        Path ascOutput = tempDir.resolve("test.jar.asc");
-        signer.sign(artifact, ascOutput);
-
-        String combined = Files.readString(ascOutput);
-        assertEquals(1, countOccurrences(combined, "-----BEGIN PGP MESSAGE-----"));
-    }
-
     /**
      * Counts the number of occurrences of a substring in a string.
      *

@@ -106,27 +106,33 @@ public record VerificationReport(
         return sb.toString();
     }
 
+    private static final String CLASSIC_PREFIX = "  Classic (GPG): ";
+    private static final String UNKNOWN_ALGORITHM = "unknown";
+
     /**
-     * Formats the classic (GPG) verification result line.
-     * <p>
-     * The line includes the result status and optionally the key ID if available.
-     * The result is left-padded to align with the PQC line.
-     *
-     *
-     * @return a formatted string like " Classic (GPG): PASS [key: 0xABCD1234]"
+     * Builds the PQC line prefix including the algorithm name, e.g. {@code "  PQC (ML-DSA-87+Ed448): "}.
      */
-    private int resultColumn() {
-        String algorithm = (pqcAlgorithm != null) ? pqcAlgorithm : "unknown";
-        int pqcPrefix = "  PQC (".length() + algorithm.length() + "): ".length();
-        int classicPrefix = "  Classic (GPG): ".length();
-        return Math.max(pqcPrefix, classicPrefix);
+    private String pqcPrefix() {
+        String algorithm = (pqcAlgorithm != null) ? pqcAlgorithm : UNKNOWN_ALGORITHM;
+        return "  PQC (" + algorithm + "): ";
     }
 
+    /**
+     * Calculates the column position where result values should start,
+     * ensuring alignment between the classic and PQC lines.
+     */
+    private int resultColumn() {
+        return Math.max(pqcPrefix().length(), CLASSIC_PREFIX.length());
+    }
+
+    /**
+     * Formats the classic (GPG) verification result line, including the
+     * result status and optionally the key ID.
+     */
     private String formatClassicLine() {
         StringBuilder sb = new StringBuilder();
-        String prefix = "  Classic (GPG): ";
-        sb.append(prefix);
-        sb.append(" ".repeat(resultColumn() - prefix.length()));
+        sb.append(CLASSIC_PREFIX);
+        sb.append(" ".repeat(resultColumn() - CLASSIC_PREFIX.length()));
         sb.append(String.format("%-11s", classicResult));
 
         if (classicKeyId != null && !classicKeyId.isEmpty()) {
@@ -148,8 +154,7 @@ public record VerificationReport(
      */
     private String formatPqcLine() {
         StringBuilder sb = new StringBuilder();
-        String algorithm = (pqcAlgorithm != null) ? pqcAlgorithm : "unknown";
-        String prefix = "  PQC (" + algorithm + "): ";
+        String prefix = pqcPrefix();
         sb.append(prefix);
         sb.append(" ".repeat(resultColumn() - prefix.length()));
 
