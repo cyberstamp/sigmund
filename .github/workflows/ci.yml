@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Install sq build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cargo rustc gcc clang libssl-dev libsqlite3-dev \
+            pkg-config libnettle-dev capnproto
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/sq
+            ~/.cargo/registry
+            ~/.cargo/git
+            /tmp/sequoia-sq-pqc/target
+          key: sq-pqc-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+
+      - name: Build PQC-enabled sq
+        run: |
+          if sq version 2>/dev/null; then
+            echo "sq already cached"
+          else
+            git clone --branch pqc --depth 1 \
+              https://gitlab.com/sequoia-pgp/sequoia-sq.git /tmp/sequoia-sq-pqc
+
+            cat >> /tmp/sequoia-sq-pqc/Cargo.toml << 'EOF'
+
+          [patch.crates-io]
+          sequoia-openpgp = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
+          buffered-reader = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
+          sequoia-autocrypt = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
+          sequoia-net = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
+          sequoia-ipc = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
+          EOF
+
+            cd /tmp/sequoia-sq-pqc
+            cargo install --path . --features crypto-openssl --no-default-features
+          fi
+          sq version
+
+      - name: Set up GPG test key
+        run: |
+          gpg --batch --gen-key <<EOF
+          %no-protection
+          Key-Type: RSA
+          Key-Length: 2048
+          Name-Real: CI Test
+          Name-Email: ci@pqc-sign.test
+          Expire-Date: 0
+          EOF
+
+      - name: Build and test
+        run: mvn verify
