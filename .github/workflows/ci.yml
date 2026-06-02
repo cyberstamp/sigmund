@@ -10,6 +10,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      OPENSSL_DIR: /opt/openssl
+      LD_LIBRARY_PATH: /opt/openssl/lib64
+      PKG_CONFIG_PATH: /opt/openssl/lib64/pkgconfig
+
     steps:
       - uses: actions/checkout@v6
 
@@ -24,8 +29,25 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cargo rustc gcc clang libssl-dev libsqlite3-dev \
+            cargo rustc gcc clang libsqlite3-dev \
             pkg-config nettle-dev capnproto
+
+      - name: Cache OpenSSL 3.5
+        id: cache-openssl
+        uses: actions/cache@v5
+        with:
+          path: /opt/openssl
+          key: openssl-3.5.0-${{ runner.os }}
+
+      - name: Build OpenSSL 3.5
+        if: steps.cache-openssl.outputs.cache-hit != 'true'
+        run: |
+          wget -q https://github.com/openssl/openssl/releases/download/openssl-3.5.0/openssl-3.5.0.tar.gz
+          tar xf openssl-3.5.0.tar.gz
+          cd openssl-3.5.0
+          ./config --prefix=/opt/openssl --openssldir=/opt/openssl
+          make -j$(nproc)
+          sudo make install_sw
 
       - name: Cache cargo build
         uses: actions/cache@v5
