@@ -12,25 +12,16 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
-import java.util.TreeSet;
-import java.util.stream.Collectors;
-import javax.inject.Inject;
 import org.apache.maven.artifact.Artifact;
-import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
-import org.apache.maven.project.MavenProject;
-import org.eclipse.aether.RepositorySystem;
-import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactResult;
@@ -45,25 +36,10 @@ import org.eclipse.aether.resolution.ArtifactResult;
  * @see HybridVerifier
  */
 @Mojo(name = "verify-dependencies", defaultPhase = LifecyclePhase.VALIDATE, requiresDependencyResolution = ResolutionScope.TEST, threadSafe = true)
-public class VerifyDependenciesMojo extends AbstractMojo {
-
-    @Parameter(defaultValue = "${project}", readonly = true, required = true)
-    private MavenProject project;
-
-    @Inject
-    private RepositorySystem repoSystem;
-
-    @Parameter(defaultValue = "${repositorySystemSession}", readonly = true)
-    private RepositorySystemSession repoSession;
-
-    @Parameter(defaultValue = "${project.remoteProjectRepositories}", readonly = true)
-    private List<RemoteRepository> remoteRepos;
+public class VerifyDependenciesMojo extends AbstractDependencyMojo {
 
     @Parameter(property = "pqc.keysMap", required = true)
     private File keysMap;
-
-    @Parameter(property = "pqc.includeTestDependencies", defaultValue = "false")
-    private boolean includeTestDependencies;
 
     @Parameter(property = "pqc.unmappedPolicy", defaultValue = "warn")
     private String unmappedPolicy;
@@ -73,9 +49,6 @@ public class VerifyDependenciesMojo extends AbstractMojo {
 
     @Parameter(property = "pqc.sqHome")
     private File sqHome;
-
-    @Parameter(property = "pqc.skip", defaultValue = "false")
-    private boolean skip;
 
     @Parameter(property = "pqc.verifyPomFiles", defaultValue = "true")
     private boolean verifyPomFiles;
@@ -131,25 +104,6 @@ public class VerifyDependenciesMojo extends AbstractMojo {
         } catch (IOException e) {
             throw new MojoExecutionException("Failed to parse keysMap file", e);
         }
-    }
-
-    private static final Comparator<Artifact> ARTIFACT_ORDER = Comparator
-            .comparing(Artifact::getGroupId)
-            .thenComparing(Artifact::getArtifactId)
-            .thenComparing(Artifact::getVersion);
-
-    Set<Artifact> resolveDependencies() {
-        Set<Artifact> artifacts = project.getArtifacts();
-        if (!includeTestDependencies) {
-            artifacts = artifacts.stream()
-                    .filter(a -> !Artifact.SCOPE_TEST.equals(a.getScope()))
-                    .collect(Collectors.toCollection(() -> new TreeSet<>(ARTIFACT_ORDER)));
-        } else {
-            TreeSet<Artifact> sorted = new TreeSet<>(ARTIFACT_ORDER);
-            sorted.addAll(artifacts);
-            artifacts = sorted;
-        }
-        return artifacts;
     }
 
     ArtifactVerification verifyArtifact(Artifact artifact, KeysMap map,
@@ -227,7 +181,12 @@ public class VerifyDependenciesMojo extends AbstractMojo {
     private boolean hasPqcBlock(Path ascFile) {
         try {
             String content = Files.readString(ascFile);
-            return AscCombiner.extractBlock(content, 1) != null;
+            for (String block : AscCombiner.extractAllBlocks(content)) {
+                if (AscCombiner.detectSignatureVersion(block) >= 6) {
+                    return true;
+                }
+            }
+            return false;
         } catch (IOException e) {
             return false;
         }
@@ -270,32 +229,6 @@ public class VerifyDependenciesMojo extends AbstractMojo {
         return a.endsWith(e);
     }
 
-    Path downloadSignature(Artifact artifact) {
-        try {
-            org.eclipse.aether.artifact.Artifact aetherArtifact = new DefaultArtifact(
-                    artifact.getGroupId(),
-                    artifact.getArtifactId(),
-                    artifact.getClassifier(),
-                    artifact.getType() + ".asc",
-                    artifact.getVersion());
-            ArtifactRequest request = new ArtifactRequest(aetherArtifact, remoteRepos, null);
-            ArtifactResult result = repoSystem.resolveArtifact(repoSession, request);
-            return result.getArtifact().getFile().toPath();
-        } catch (ArtifactResolutionException e) {
-            getLog().debug("No .asc signature found for " + artifact);
-            return null;
-        }
-    }
-
-    /**
-     * Creates a HybridVerifier configured with GPG and Sequoia tools.
-     * <p>
-     * If Sequoia is not available, PQC verification will be skipped
-     * and reported as {@link VerificationResult#NOT_PRESENT}.
-     *
-     * @return a configured HybridVerifier instance
-     * @throws MojoExecutionException if the Sequoia home directory cannot be resolved
-     */
     private HybridVerifier createVerifier() throws MojoExecutionException {
         Path sequoiaHome = SequoiaHomeResolver.resolve(sqHome);
         GpgRunner gpg = new GpgRunner();
