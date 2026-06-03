@@ -1,7 +1,8 @@
 package io.github.aloubyansky.pqc.maven.plugin;
 
-import io.github.aloubyansky.pqc.maven.core.GpgSigner;
+import io.github.aloubyansky.pqc.maven.core.GpgRunner;
 import io.github.aloubyansky.pqc.maven.core.HybridVerifier;
+import io.github.aloubyansky.pqc.maven.core.PqcKeyConfig;
 import io.github.aloubyansky.pqc.maven.core.SqRunner;
 import io.github.aloubyansky.pqc.maven.core.VerificationReport;
 import io.github.aloubyansky.pqc.maven.core.VerificationResult;
@@ -37,7 +38,6 @@ import org.apache.maven.plugins.annotations.Parameter;
  * <plugin>
  *   <groupId>io.github.aloubyansky.pqc.maven</groupId>
  *   <artifactId>pqc-sign-maven-plugin</artifactId>
- *   <version>1.0.0-SNAPSHOT</version>
  *   <executions>
  *     <execution>
  *       <goals>
@@ -91,6 +91,19 @@ public class VerifyMojo extends AbstractMojo {
     private String pqcFingerprint;
 
     /**
+     * Path to a PQC certificate file for signature verification.
+     * <p>
+     * When set, PQC verification uses this certificate file directly instead of
+     * looking up a key by fingerprint in the Sequoia keystore. This is useful for
+     * verifying signatures without importing the signer's key.
+     * <p>
+     * Takes precedence over {@link #pqcFingerprint} if both are specified.
+     *
+     */
+    @Parameter(property = "pqc.certFile")
+    private File pqcCertFile;
+
+    /**
      * Path to the Sequoia home directory containing PQC keys/certificates.
      * <p>
      * If not specified, defaults to {@code ~/.local/share/sequoia}.
@@ -133,8 +146,7 @@ public class VerifyMojo extends AbstractMojo {
         getLog().info("Verifying signature for: " + file.getName());
         getLog().info("Using signature file: " + signature.getName());
 
-        Path sequoiaHome = resolveSequoiaHome();
-        HybridVerifier verifier = createVerifier(sequoiaHome);
+        HybridVerifier verifier = createVerifier();
         VerificationReport report = performVerification(verifier);
 
         logReport(report);
@@ -157,45 +169,19 @@ public class VerifyMojo extends AbstractMojo {
     }
 
     /**
-     * Resolves the Sequoia home directory, using the default if not specified.
-     * <p>
-     * The default location is {@code ~/.local/share/sequoia}, which matches
-     * the Sequoia CLI tool's default behavior.
-     *
-     *
-     * @return the resolved Sequoia home path
-     * @throws MojoExecutionException if the path cannot be resolved
-     */
-    private Path resolveSequoiaHome() throws MojoExecutionException {
-        if (sqHome != null) {
-            return sqHome.toPath();
-        }
-
-        String userHome = System.getProperty("user.home");
-        if (userHome == null || userHome.isEmpty()) {
-            throw new MojoExecutionException(
-                    "Cannot resolve Sequoia home: user.home property not set");
-        }
-
-        return Path.of(userHome, ".local", "share", "sequoia");
-    }
-
-    /**
      * Creates a HybridVerifier configured with GPG and Sequoia tools.
      * <p>
      * If Sequoia is not available, the verifier will still work but will
      * only be able to verify GPG signatures (PQC result will be NOT_PRESENT).
      *
-     *
-     * @param sequoiaHome the path to the Sequoia home directory
      * @return a configured HybridVerifier instance
      * @throws MojoExecutionException if verifier creation fails
      */
-    private HybridVerifier createVerifier(Path sequoiaHome) throws MojoExecutionException {
+    private HybridVerifier createVerifier() throws MojoExecutionException {
         try {
-            GpgSigner gpg = new GpgSigner(null);
-            SqRunner sq = createSqRunner(sequoiaHome);
-            return new HybridVerifier(gpg, sq, pqcFingerprint);
+            GpgRunner gpg = new GpgRunner();
+            SqRunner sq = createSqRunner();
+            return new HybridVerifier(gpg, sq);
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to create hybrid verifier", e);
         }
@@ -207,17 +193,32 @@ public class VerifyMojo extends AbstractMojo {
      * This allows graceful fallback to GPG-only verification when Sequoia
      * is not installed or not in the PATH.
      *
-     *
-     * @param sequoiaHome the Sequoia home directory
      * @return a SqRunner instance, or null if Sequoia is not available
+     * @throws MojoExecutionException if the Sequoia home directory cannot be resolved
      */
-    private SqRunner createSqRunner(Path sequoiaHome) {
-        if (SqRunner.isAvailable()) {
-            return new SqRunner(sequoiaHome);
-        } else {
+    private SqRunner createSqRunner() throws MojoExecutionException {
+        if (!SqRunner.isAvailable()) {
             getLog().warn("Sequoia (sq) not found - PQC verification will be skipped");
             return null;
         }
+        return new SqRunner(SequoiaHomeResolver.resolve(sqHome));
+    }
+
+    /**
+     * Builds the PQC key configuration from the plugin parameters.
+     * <p>
+     * {@link #pqcCertFile} takes precedence over {@link #pqcFingerprint}.
+     *
+     * @return the PQC key configuration, or null if neither is specified
+     */
+    private PqcKeyConfig buildPqcKeyConfig() {
+        if (pqcCertFile != null) {
+            return PqcKeyConfig.certFile(pqcCertFile.toPath());
+        }
+        if (pqcFingerprint != null && !pqcFingerprint.isEmpty()) {
+            return PqcKeyConfig.fingerprint(pqcFingerprint);
+        }
+        return null;
     }
 
     /**
@@ -230,7 +231,7 @@ public class VerifyMojo extends AbstractMojo {
     private VerificationReport performVerification(HybridVerifier verifier)
             throws MojoExecutionException {
         try {
-            return verifier.verify(file.toPath(), signature.toPath());
+            return verifier.verify(file.toPath(), signature.toPath(), buildPqcKeyConfig());
         } catch (Exception e) {
             throw new MojoExecutionException("Verification failed", e);
         }

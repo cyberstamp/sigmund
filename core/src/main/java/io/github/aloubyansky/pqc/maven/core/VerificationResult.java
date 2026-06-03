@@ -56,5 +56,15 @@ public enum VerificationResult {
      * and hybrid signatures where the PQC component failed.
      *
      */
-    NOT_PRESENT
+    NOT_PRESENT,
+
+    /**
+     * Verification was intentionally skipped.
+     * <p>
+     * This is used when the keys map entry indicates that no signature is
+     * expected (e.g., {@code noSig}), so verification was never attempted.
+     * This is distinct from {@link #PASS}, which indicates that verification
+     * was performed and succeeded.
+     */
+    SKIPPED
 }

@@ -41,19 +41,4 @@ class CliToolTest {
         assertEquals(42, result.exitCode(), "Exit code should be 42");
     }
 
-    /**
-     * Verifies that runChecked() throws CliException with proper details on non-zero exit.
-     */
-    @Test
-    void runChecked_throwsOnNonZero() {
-        CliTool.CliException exception = assertThrows(
-                CliTool.CliException.class,
-                () -> CliTool.runChecked("sh", "-c", "echo fail >&2; exit 1"),
-                "runChecked should throw CliException on non-zero exit");
-
-        assertEquals(1, exception.getExitCode(), "Exception should contain exit code 1");
-        assertTrue(
-                exception.getMessage().contains("fail"),
-                "Exception message should contain stderr output 'fail'");
-    }
 }

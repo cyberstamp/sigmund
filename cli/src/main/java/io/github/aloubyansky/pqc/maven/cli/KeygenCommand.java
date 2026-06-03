@@ -2,7 +2,6 @@ package io.github.aloubyansky.pqc.maven.cli;
 
 import io.github.aloubyansky.pqc.maven.core.SqRunner;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 
@@ -55,27 +54,12 @@ public class KeygenCommand implements Callable<Integer> {
             "--userid" }, required = true, description = "User ID for the key (e.g., \"Alice <alice@example.org>\")")
     private String userId;
 
-    /**
-     * The Sequoia home directory where keys will be stored.
-     * <p>
-     * If not specified, defaults to the standard Sequoia home directory:
-     * {@code ~/.local/share/sequoia} on Unix-like systems.
-     *
-     * <p>
-     * The Sequoia home directory contains:
-     * <ul>
-     * <li>Generated keys and certificates</li>
-     * <li>Imported public keys</li>
-     * <li>Configuration files</li>
-     * </ul>
-     *
-     */
-    @CommandLine.Option(names = { "--sq-home" }, description = "Sequoia home directory (default: ~/.local/share/sequoia)")
-    private String sqHome;
-
     @CommandLine.Option(names = {
             "--cipher-suite" }, defaultValue = SqRunner.DEFAULT_CIPHER_SUITE, description = "PQC cipher suite (default: ${DEFAULT-VALUE})")
     private String cipherSuite;
+
+    @CommandLine.Mixin
+    private SqHomeMixin sqHomeMixin;
 
     /**
      * Executes the key generation command.
@@ -98,7 +82,7 @@ public class KeygenCommand implements Callable<Integer> {
     @Override
     public Integer call() {
         try {
-            Path sqHomeDir = resolveSequoiaHome();
+            Path sqHomeDir = sqHomeMixin.resolveSequoiaHome();
             SqRunner sq = new SqRunner(sqHomeDir);
 
             String fingerprint = sq.generateKey(userId, cipherSuite);
@@ -109,47 +93,6 @@ public class KeygenCommand implements Callable<Integer> {
             printErrorMessage(e);
             return 1;
         }
-    }
-
-    /**
-     * Resolves the Sequoia home directory path.
-     * <p>
-     * If {@link #sqHome} is specified, it is used as-is. Otherwise, the default
-     * Sequoia home directory is returned: {@code ~/.local/share/sequoia}.
-     *
-     * <p>
-     * The {@code ~} symbol is expanded to the user's home directory using the
-     * {@code user.home} system property.
-     *
-     *
-     * @return the resolved Sequoia home directory path
-     */
-    private Path resolveSequoiaHome() {
-        if (sqHome != null && !sqHome.isEmpty()) {
-            return expandTilde(sqHome);
-        }
-
-        String userHome = System.getProperty("user.home");
-        return Paths.get(userHome, ".local", "share", "sequoia");
-    }
-
-    /**
-     * Expands the tilde (~) character to the user's home directory.
-     * <p>
-     * If the path starts with {@code ~/}, the tilde is replaced with the value
-     * of the {@code user.home} system property. Otherwise, the path is returned
-     * unchanged.
-     *
-     *
-     * @param path the path to expand
-     * @return the path with tilde expanded, or the original path if no tilde present
-     */
-    private Path expandTilde(String path) {
-        if (path.startsWith("~/")) {
-            String userHome = System.getProperty("user.home");
-            return Paths.get(userHome, path.substring(2));
-        }
-        return Paths.get(path);
     }
 
     /**

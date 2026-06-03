@@ -1,7 +1,8 @@
 package io.github.aloubyansky.pqc.maven.cli;
 
-import io.github.aloubyansky.pqc.maven.core.GpgSigner;
+import io.github.aloubyansky.pqc.maven.core.GpgRunner;
 import io.github.aloubyansky.pqc.maven.core.HybridVerifier;
+import io.github.aloubyansky.pqc.maven.core.PqcKeyConfig;
 import io.github.aloubyansky.pqc.maven.core.SqRunner;
 import io.github.aloubyansky.pqc.maven.core.VerificationReport;
 import io.github.aloubyansky.pqc.maven.core.VerificationResult;
@@ -98,13 +99,18 @@ public class VerifyCommand implements Callable<Integer> {
     private String pqcFingerprint;
 
     /**
-     * The Sequoia home directory where PQC keys are stored.
+     * Path to a PQC certificate file for signature verification.
      * <p>
-     * If not specified, defaults to {@code ~/.local/share/sequoia}.
+     * When set, PQC verification uses this certificate file directly instead of
+     * looking up a key by fingerprint in the Sequoia keystore.
+     * Takes precedence over {@link #pqcFingerprint}.
      *
      */
-    @CommandLine.Option(names = { "--sq-home" }, description = "Sequoia home directory (default: ~/.local/share/sequoia)")
-    private String sqHome;
+    @CommandLine.Option(names = { "--pqc-cert-file" }, description = "PQC certificate file for verification (optional)")
+    private String pqcCertFile;
+
+    @CommandLine.Mixin
+    private SqHomeMixin sqHomeMixin;
 
     /**
      * Whether to require both signatures to pass (strict mode).
@@ -127,7 +133,7 @@ public class VerifyCommand implements Callable<Integer> {
      * This method performs the following steps:
      * <ol>
      * <li>Resolves file paths (artifact, signature, Sequoia home)</li>
-     * <li>Creates {@link GpgSigner} and {@link SqRunner} instances (if available)</li>
+     * <li>Creates an {@link SqRunner} instance (if available)</li>
      * <li>Creates a {@link HybridVerifier}</li>
      * <li>Performs verification and generates a report</li>
      * <li>Prints the verification report</li>
@@ -146,13 +152,12 @@ public class VerifyCommand implements Callable<Integer> {
         try {
             Path artifactFile = resolveArtifactFile();
             Path signatureFile = resolveSignatureFile();
-            Path sqHomeDir = resolveSequoiaHome();
 
-            GpgSigner gpgSigner = createGpgSigner();
-            SqRunner sqRunner = createSqRunnerIfAvailable(sqHomeDir);
-            HybridVerifier verifier = new HybridVerifier(gpgSigner, sqRunner, pqcFingerprint);
+            GpgRunner gpgRunner = new GpgRunner();
+            SqRunner sqRunner = createSqRunnerIfAvailable();
+            HybridVerifier verifier = new HybridVerifier(gpgRunner, sqRunner);
 
-            VerificationReport report = verifier.verify(artifactFile, signatureFile);
+            VerificationReport report = verifier.verify(artifactFile, signatureFile, buildPqcKeyConfig());
 
             printVerificationReport(report);
 
@@ -182,53 +187,20 @@ public class VerifyCommand implements Callable<Integer> {
     }
 
     /**
-     * Resolves the Sequoia home directory path.
+     * Builds the PQC key configuration from the command-line options.
      * <p>
-     * If {@link #sqHome} is specified, it is used as-is. Otherwise, the default
-     * Sequoia home directory is returned: {@code ~/.local/share/sequoia}.
+     * {@code --pqc-cert-file} takes precedence over {@code --pqc-fingerprint}.
      *
-     *
-     * @return the resolved Sequoia home directory path
+     * @return the PQC key configuration, or null if neither option is specified
      */
-    private Path resolveSequoiaHome() {
-        if (sqHome != null && !sqHome.isEmpty()) {
-            return expandTilde(sqHome);
+    private PqcKeyConfig buildPqcKeyConfig() {
+        if (pqcCertFile != null && !pqcCertFile.isEmpty()) {
+            return PqcKeyConfig.certFile(sqHomeMixin.expandTilde(pqcCertFile));
         }
-
-        String userHome = System.getProperty("user.home");
-        return Paths.get(userHome, ".local", "share", "sequoia");
-    }
-
-    /**
-     * Expands the tilde (~) character to the user's home directory.
-     * <p>
-     * If the path starts with {@code ~/}, the tilde is replaced with the value
-     * of the {@code user.home} system property. Otherwise, the path is returned
-     * unchanged.
-     *
-     *
-     * @param path the path to expand
-     * @return the path with tilde expanded, or the original path if no tilde present
-     */
-    private Path expandTilde(String path) {
-        if (path.startsWith("~/")) {
-            String userHome = System.getProperty("user.home");
-            return Paths.get(userHome, path.substring(2));
+        if (pqcFingerprint != null && !pqcFingerprint.isEmpty()) {
+            return PqcKeyConfig.fingerprint(pqcFingerprint);
         }
-        return Paths.get(path);
-    }
-
-    /**
-     * Creates a {@link GpgSigner} instance.
-     * <p>
-     * The GPG key is set to {@code null} to use GPG's default verification behavior,
-     * which accepts signatures from any key in the keyring.
-     *
-     *
-     * @return a configured GpgSigner instance
-     */
-    private GpgSigner createGpgSigner() {
-        return new GpgSigner(null);
+        return null;
     }
 
     /**
@@ -240,13 +212,13 @@ public class VerifyCommand implements Callable<Integer> {
      * {@link VerificationResult#NOT_PRESENT} for the PQC component.
      *
      *
-     * @param sqHomeDir the Sequoia home directory path
      * @return a configured SqRunner instance, or null if sq is not available
      */
-    private SqRunner createSqRunnerIfAvailable(Path sqHomeDir) {
+    private SqRunner createSqRunnerIfAvailable() {
         if (!SqRunner.isAvailable()) {
             return null;
         }
+        Path sqHomeDir = sqHomeMixin.resolveSequoiaHome();
         return new SqRunner(sqHomeDir);
     }
 

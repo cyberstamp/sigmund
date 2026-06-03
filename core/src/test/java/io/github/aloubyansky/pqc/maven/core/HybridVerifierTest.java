@@ -2,6 +2,7 @@ package io.github.aloubyansky.pqc.maven.core;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -189,4 +190,31 @@ class HybridVerifierTest {
         assertTrue(pqcLineHasNoKey,
                 "PQC line should not contain [key:] when fingerprint is null");
     }
+
+    @Test
+    void pqcKeyConfig_certFile() {
+        PqcKeyConfig config = PqcKeyConfig.certFile(Path.of("/tmp/cert.pem"));
+        assertTrue(config.isCertFile());
+        assertFalse(config.isFingerprint());
+        assertEquals(Path.of("/tmp/cert.pem"), config.certFilePath());
+    }
+
+    @Test
+    void pqcKeyConfig_fingerprint() {
+        PqcKeyConfig config = PqcKeyConfig.fingerprint("ABCD1234");
+        assertFalse(config.isCertFile());
+        assertTrue(config.isFingerprint());
+        assertEquals("ABCD1234", config.fingerprint());
+    }
+
+    @Test
+    void pqcKeyConfig_nullFingerprint_throws() {
+        assertThrows(IllegalArgumentException.class, () -> PqcKeyConfig.fingerprint(null));
+    }
+
+    @Test
+    void pqcKeyConfig_nullCertFile_throws() {
+        assertThrows(IllegalArgumentException.class, () -> PqcKeyConfig.certFile(null));
+    }
+
 }

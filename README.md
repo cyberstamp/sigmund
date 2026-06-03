@@ -218,7 +218,7 @@ artifact.jar
     +-- AscCombiner.combine() -----> artifact.jar.asc
 ```
 
-**Stage 1 — Classic GPG signature.** `GpgSigner` invokes GnuPG as an external process:
+**Stage 1 — Classic GPG signature.** `GpgRunner` invokes GnuPG as an external process:
 
 ```
 gpg --batch --yes --armor --detach-sign [--local-user <keyId>] --output <sig> <artifact>
@@ -346,8 +346,23 @@ pqc-sign verify --file <FILE> --signature <ASC> [options]
 | `--file` | Yes | — | Artifact file to verify |
 | `--signature` | Yes | — | Signature `.asc` file |
 | `--pqc-fingerprint` | No | — | Expected PQC signer fingerprint. If omitted, any valid PQC signature is accepted. |
+| `--pqc-cert-file` | No | — | PQC certificate file for verification (takes precedence over `--pqc-fingerprint`) |
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `--strict` | No | `false` | Require both classic and PQC to pass |
+
+### `pqc-sign export-cert`
+
+Export a PQC public certificate for distribution.
+
+```
+pqc-sign export-cert --fingerprint <FP> [options]
+```
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--fingerprint` | Yes | — | PQC key fingerprint to export |
+| `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `--output`, `-o` | No | stdout | Output file path |
 
 ## Maven Plugin
 
@@ -407,6 +422,7 @@ mvn pqc-sign:verify \
 | `file` | Yes | — | Artifact file to verify |
 | `signature` | Yes | — | Signature `.asc` file |
 | `pqc.fingerprint` | No | — | Expected PQC signer fingerprint. If omitted, any valid PQC signature is accepted. |
+| `pqc.certFile` | No | — | PQC certificate file for verification (takes precedence over `pqc.fingerprint`) |
 | `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `pqc.strict` | No | `false` | Require both signatures to pass |
 
@@ -469,7 +485,7 @@ The Maven plugin includes invoker tests under `maven-plugin/src/it/`. These requ
 
 ### GPG exit code 2 for hybrid `.asc` files
 
-GnuPG returns exit code 2 (rather than 0) when verifying an `.asc` file that contains a v6 PQC packet. This applies to both combine modes — GPG processes all armored blocks in the file and warns about the unknown packet version. The signature itself is valid — GPG reports "Good signature" in its output.
+GnuPG returns exit code 2 (rather than 0) when verifying an `.asc` file that contains a v6 PQC packet. GPG processes all armored blocks in the file and warns about the unknown packet version. The signature itself is valid — GPG reports "Good signature" in its output.
 
 The `HybridVerifier` handles this by checking for "Good signature" in stderr when the exit code is 2. However, other tools or CI systems that check GPG's exit code strictly may interpret exit code 2 as a failure.
 
@@ -489,12 +505,6 @@ The PQC-enabled `sequoia-openpgp` (version `2.2.0-pqc.1`) is not published on cr
 
 ### No classic key ID extraction from GPG output
 
-The `HybridVerifier` does not currently parse the GPG signing key ID from `gpg --verify` output. The `classicKeyId` field in the `VerificationReport` is always `null`. This is a cosmetic limitation — the verification itself works correctly.
-
-### HybridVerifier hardcodes `gpg` executable path
-
-`HybridVerifier.verifyClassic()` calls `gpg --verify` directly via `CliTool.run()` rather than using the `GpgSigner` instance's configured executable path. If the user configured a custom GPG path in `GpgSigner`, it would be used for signing but not for verification. This should be addressed before upstream contribution.
-
 ## Project Structure
 
 ```
@@ -502,12 +512,13 @@ pom.xml                                  Parent POM
 core/                                    Core library
   src/main/java/io/github/aloubyansky/maven/pqc/
     CliTool.java                         External process execution
-    GpgSigner.java                       GnuPG CLI wrapper
+    GpgRunner.java                       GnuPG CLI wrapper (signing + verification)
     SqRunner.java                        Sequoia sq CLI wrapper
     AscCombiner.java                     OpenPGP armor operations (via BC bcpg)
     HybridSigner.java                    Orchestrates classic + PQC signing
     HybridVerifier.java                  Dual verification (gpg + sq)
-    VerificationResult.java              Result enum (PASS, FAIL, NO_KEY, NOT_PRESENT)
+    PqcKeyConfig.java                    PQC key identification (fingerprint or cert file)
+    VerificationResult.java              Result enum (PASS, FAIL, NO_KEY, NOT_PRESENT, SKIPPED)
     VerificationReport.java              Formatted verification report
 cli/                                     CLI tools (picocli)
 maven-plugin/                            Maven plugin (sign + verify goals)

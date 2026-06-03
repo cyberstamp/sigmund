@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -27,11 +28,10 @@ import java.util.concurrent.TimeUnit;
  *         System.out.println(result.stdout());
  *     }
  *
- *     // Checked execution - throws CliException on non-zero exit
- *     try {
- *         CliTool.runChecked("gpg", "--version");
- *     } catch (CliException e) {
- *         System.err.println("Command failed: " + e.getMessage());
+ *     // Check exit code for failure
+ *     Result versionResult = CliTool.run("gpg", "--version");
+ *     if (versionResult.exitCode() != 0) {
+ *         System.err.println("Command failed: " + versionResult.stderr());
  *     }
  * }
  * </pre>
@@ -62,9 +62,26 @@ public final class CliTool {
      * @throws RuntimeException if the process is interrupted or times out
      */
     public static Result run(String... command) {
+        return run(null, command);
+    }
+
+    /**
+     * Executes a command with additional environment variables.
+     *
+     * @param env environment variables to add to the process, or null for none
+     * @param command the command and its arguments to execute
+     * @return a {@link Result} containing exit code, stdout, and stderr
+     * @throws IllegalArgumentException if command is null or empty
+     * @throws UncheckedIOException if an I/O error occurs during execution
+     * @throws RuntimeException if the process is interrupted or times out
+     */
+    public static Result run(Map<String, String> env, String... command) {
         validateCommand(command);
 
         ProcessBuilder pb = new ProcessBuilder(command);
+        if (env != null) {
+            pb.environment().putAll(env);
+        }
         Process process = startProcess(pb);
 
         // Read stdout and stderr concurrently to avoid pipe buffer deadlock
@@ -76,37 +93,6 @@ public final class CliTool {
         int exitCode = waitForCompletion(process);
 
         return new Result(exitCode, stdout, stderr);
-    }
-
-    /**
-     * Executes a command and throws {@link CliException} if the exit code is non-zero.
-     * <p>
-     * This is a convenience method for cases where command failure should be
-     * treated as an exceptional condition. The exception message includes the
-     * command, exit code, and stderr output.
-     *
-     *
-     * @param command the command and its arguments to execute
-     * @return a {@link Result} containing exit code 0, stdout, and stderr
-     * @throws CliException if the exit code is non-zero
-     * @throws IllegalArgumentException if command is null or empty
-     * @throws UncheckedIOException if an I/O error occurs during execution
-     * @throws RuntimeException if the process is interrupted or times out
-     */
-    public static Result runChecked(String... command) {
-        Result result = run(command);
-
-        if (result.exitCode() != 0) {
-            String commandStr = String.join(" ", command);
-            String message = String.format(
-                    "Command '%s' failed with exit code %d%s",
-                    commandStr,
-                    result.exitCode(),
-                    result.stderr().isEmpty() ? "" : ": " + result.stderr().trim());
-            throw new CliException(message, result.exitCode());
-        }
-
-        return result;
     }
 
     /**
@@ -176,7 +162,7 @@ public final class CliTool {
             StringBuilder sb = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) {
-                if (sb.length() > 0) {
+                if (!sb.isEmpty()) {
                     sb.append(System.lineSeparator());
                 }
                 sb.append(line);
@@ -197,32 +183,4 @@ public final class CliTool {
     public record Result(int exitCode, String stdout, String stderr) {
     }
 
-    /**
-     * Exception thrown when a command executed via {@link #runChecked(String...)}
-     * returns a non-zero exit code.
-     */
-    public static class CliException extends RuntimeException {
-
-        private final int exitCode;
-
-        /**
-         * Constructs a new CliException with the specified message and exit code.
-         *
-         * @param message the detail message
-         * @param exitCode the exit code from the failed command
-         */
-        public CliException(String message, int exitCode) {
-            super(message);
-            this.exitCode = exitCode;
-        }
-
-        /**
-         * Returns the exit code from the failed command.
-         *
-         * @return the exit code
-         */
-        public int getExitCode() {
-            return exitCode;
-        }
-    }
 }

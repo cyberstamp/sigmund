@@ -1,6 +1,6 @@
 package io.github.aloubyansky.pqc.maven.cli;
 
-import io.github.aloubyansky.pqc.maven.core.GpgSigner;
+import io.github.aloubyansky.pqc.maven.core.GpgRunner;
 import io.github.aloubyansky.pqc.maven.core.HybridSigner;
 import io.github.aloubyansky.pqc.maven.core.SqRunner;
 import java.nio.file.Path;
@@ -49,7 +49,7 @@ import picocli.CommandLine;
  *
  *
  * @see HybridSigner
- * @see GpgSigner
+ * @see GpgRunner
  * @see SqRunner
  */
 @CommandLine.Command(name = "sign", description = "Create a hybrid signature combining GPG and PQC", mixinStandardHelpOptions = true)
@@ -86,14 +86,8 @@ public class SignCommand implements Callable<Integer> {
     @CommandLine.Option(names = { "--gpg-key" }, description = "GPG key ID/email (default: use GPG's default key)")
     private String gpgKey;
 
-    /**
-     * The Sequoia home directory where the PQC key is stored.
-     * <p>
-     * If not specified, defaults to {@code ~/.local/share/sequoia}.
-     *
-     */
-    @CommandLine.Option(names = { "--sq-home" }, description = "Sequoia home directory (default: ~/.local/share/sequoia)")
-    private String sqHome;
+    @CommandLine.Mixin
+    private SqHomeMixin sqHomeMixin;
 
     /**
      * The output path for the generated signature file.
@@ -111,7 +105,7 @@ public class SignCommand implements Callable<Integer> {
      * This method performs the following steps:
      * <ol>
      * <li>Resolves file paths (artifact, output, Sequoia home)</li>
-     * <li>Creates {@link GpgSigner} and {@link SqRunner} instances</li>
+     * <li>Creates {@link GpgRunner} and {@link SqRunner} instances</li>
      * <li>Creates a {@link HybridSigner} using the factory method</li>
      * <li>Generates the hybrid signature</li>
      * <li>Prints the output file path</li>
@@ -129,12 +123,10 @@ public class SignCommand implements Callable<Integer> {
         try {
             Path artifactFile = resolveArtifactFile();
             Path outputFile = resolveOutputFile(artifactFile);
-            Path sqHomeDir = resolveSequoiaHome();
 
-            GpgSigner gpgSigner = createGpgSigner();
-            SqRunner sqRunner = createSqRunner(sqHomeDir);
-            HybridSigner signer = HybridSigner.create(gpgSigner, sqRunner, pqcFingerprint);
-
+            GpgRunner gpgSigner = createGpgRunner();
+            SqRunner sqRunner = createSqRunner();
+            HybridSigner signer = new HybridSigner(gpgSigner, sqRunner, pqcFingerprint);
             signer.sign(artifactFile, outputFile);
 
             printSuccessMessage(outputFile);
@@ -172,62 +164,25 @@ public class SignCommand implements Callable<Integer> {
     }
 
     /**
-     * Resolves the Sequoia home directory path.
-     * <p>
-     * If {@link #sqHome} is specified, it is used as-is. Otherwise, the default
-     * Sequoia home directory is returned: {@code ~/.local/share/sequoia}.
-     *
-     *
-     * @return the resolved Sequoia home directory path
-     */
-    private Path resolveSequoiaHome() {
-        if (sqHome != null && !sqHome.isEmpty()) {
-            return expandTilde(sqHome);
-        }
-
-        String userHome = System.getProperty("user.home");
-        return Paths.get(userHome, ".local", "share", "sequoia");
-    }
-
-    /**
-     * Expands the tilde (~) character to the user's home directory.
-     * <p>
-     * If the path starts with {@code ~/}, the tilde is replaced with the value
-     * of the {@code user.home} system property. Otherwise, the path is returned
-     * unchanged.
-     *
-     *
-     * @param path the path to expand
-     * @return the path with tilde expanded, or the original path if no tilde present
-     */
-    private Path expandTilde(String path) {
-        if (path.startsWith("~/")) {
-            String userHome = System.getProperty("user.home");
-            return Paths.get(userHome, path.substring(2));
-        }
-        return Paths.get(path);
-    }
-
-    /**
-     * Creates a {@link GpgSigner} instance with the configured GPG key.
+     * Creates a {@link GpgRunner} instance with the configured GPG key.
      * <p>
      * If {@link #gpgKey} is specified, it is used as the key identifier. Otherwise,
      * {@code null} is passed, which causes GPG to use its default key.
      *
      *
-     * @return a configured GpgSigner instance
+     * @return a configured GpgRunner instance
      */
-    private GpgSigner createGpgSigner() {
-        return new GpgSigner(gpgKey);
+    private GpgRunner createGpgRunner() {
+        return new GpgRunner(gpgKey);
     }
 
     /**
      * Creates an {@link SqRunner} instance with the configured Sequoia home directory.
      *
-     * @param sqHomeDir the Sequoia home directory path
      * @return a configured SqRunner instance
      */
-    private SqRunner createSqRunner(Path sqHomeDir) {
+    private SqRunner createSqRunner() {
+        Path sqHomeDir = sqHomeMixin.resolveSequoiaHome();
         return new SqRunner(sqHomeDir);
     }
 

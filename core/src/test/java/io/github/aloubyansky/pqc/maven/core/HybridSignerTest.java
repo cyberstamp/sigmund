@@ -3,6 +3,8 @@ package io.github.aloubyansky.pqc.maven.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -33,16 +35,30 @@ class HybridSignerTest {
         String fakeClassicAsc = AscCombiner.armor(fakeClassicPacket);
         String fakePqcAsc = AscCombiner.armor(fakePqcPacket);
 
-        // Mock signers
-        HybridSigner signer = new HybridSigner(
-                (file, output) -> {
-                    Files.writeString(output, fakeClassicAsc);
-                    return fakeClassicAsc;
-                },
-                (file, output, fp) -> {
-                    Files.writeString(output, fakePqcAsc);
-                    return fakePqcAsc;
-                }).withPqcFingerprint("0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF");
+        GpgRunner gpg = new GpgRunner() {
+            @Override
+            public String sign(Path artifactFile, Path outputSig) {
+                try {
+                    Files.writeString(outputSig, fakeClassicAsc);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+                return fakeClassicAsc;
+            }
+        };
+        SqRunner sq = new SqRunner(tempDir) {
+            @Override
+            public String sign(Path artifactFile, Path outputSig, String fingerprint) {
+                try {
+                    Files.writeString(outputSig, fakePqcAsc);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+                return fakePqcAsc;
+            }
+        };
+        String fp = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
+        HybridSigner signer = new HybridSigner(gpg, sq, fp);
 
         Path ascOutput = tempDir.resolve("test.jar.asc");
         signer.sign(artifact, ascOutput);

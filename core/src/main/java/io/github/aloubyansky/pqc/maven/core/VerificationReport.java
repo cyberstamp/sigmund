@@ -100,63 +100,48 @@ public record VerificationReport(
     public String format() {
         StringBuilder sb = new StringBuilder();
         sb.append("Signature Verification Report:\n");
-        sb.append(formatClassicLine()).append("\n");
-        sb.append(formatPqcLine()).append("\n");
-        sb.append(formatOverallLine());
+        formatClassicLine(sb).append("\n");
+        formatPqcLine(sb).append("\n");
+        formatOverallLine(sb);
         return sb.toString();
     }
 
-    private static final String CLASSIC_PREFIX = "  Classic (GPG): ";
-    private static final String UNKNOWN_ALGORITHM = "unknown";
-
     /**
-     * Builds the PQC line prefix including the algorithm name, e.g. {@code "  PQC (ML-DSA-87+Ed448): "}.
+     * Appends the classic (GPG) verification result line.
+     * <p>
+     * The line includes the result status and optionally the key ID if available.
+     * The result is left-padded to align with the PQC line.
+     *
+     * @param sb the builder to append to
+     * @return the same builder for chaining
      */
-    private String pqcPrefix() {
-        String algorithm = (pqcAlgorithm != null) ? pqcAlgorithm : UNKNOWN_ALGORITHM;
-        return "  PQC (" + algorithm + "): ";
-    }
-
-    /**
-     * Calculates the column position where result values should start,
-     * ensuring alignment between the classic and PQC lines.
-     */
-    private int resultColumn() {
-        return Math.max(pqcPrefix().length(), CLASSIC_PREFIX.length());
-    }
-
-    /**
-     * Formats the classic (GPG) verification result line, including the
-     * result status and optionally the key ID.
-     */
-    private String formatClassicLine() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(CLASSIC_PREFIX);
-        sb.append(" ".repeat(resultColumn() - CLASSIC_PREFIX.length()));
+    private StringBuilder formatClassicLine(StringBuilder sb) {
+        sb.append("  Classic (GPG):           ");
         sb.append(String.format("%-11s", classicResult));
 
         if (classicKeyId != null && !classicKeyId.isEmpty()) {
             sb.append(" [key: ").append(classicKeyId).append("]");
         }
 
-        return sb.toString();
+        return sb;
     }
 
     /**
-     * Formats the PQC verification result line.
+     * Appends the PQC verification result line.
      * <p>
      * The line includes the algorithm name (or "unknown" if not present), the
      * result status, and optionally the key fingerprint. Special handling for
      * {@link VerificationResult#NOT_PRESENT} displays a user-friendly message.
      *
-     *
-     * @return a formatted string like " PQC (ML-DSA-87+Ed448): PASS [key: abc123]"
+     * @param sb the builder to append to
+     * @return the same builder for chaining
      */
-    private String formatPqcLine() {
-        StringBuilder sb = new StringBuilder();
-        String prefix = pqcPrefix();
-        sb.append(prefix);
-        sb.append(" ".repeat(resultColumn() - prefix.length()));
+    private StringBuilder formatPqcLine(StringBuilder sb) {
+        String algorithm = (pqcAlgorithm != null) ? pqcAlgorithm : "unknown";
+        sb.append("  PQC (").append(algorithm).append("): ");
+
+        int padding = Math.max(0, SqRunner.DEFAULT_PQC_ALGORITHM.length() - algorithm.length());
+        sb.append(" ".repeat(padding));
 
         if (pqcResult == VerificationResult.NOT_PRESENT) {
             sb.append("NOT PRESENT (classic-only signature)");
@@ -168,11 +153,11 @@ public record VerificationReport(
             }
         }
 
-        return sb.toString();
+        return sb;
     }
 
     /**
-     * Formats the overall assessment line based on both results.
+     * Appends the overall assessment line based on both results.
      * <p>
      * The assessment describes the combined security status:
      * <ul>
@@ -181,11 +166,10 @@ public record VerificationReport(
      * <li>Classic FAIL: "FAIL (classic signature invalid)"</li>
      * </ul>
      *
-     *
-     * @return a formatted string like " Overall: PASS (both signatures valid)"
+     * @param sb the builder to append to
+     * @return the same builder for chaining
      */
-    private String formatOverallLine() {
-        StringBuilder sb = new StringBuilder();
+    private StringBuilder formatOverallLine(StringBuilder sb) {
         sb.append("  Overall: ");
 
         if (isStrictPass()) {
@@ -210,6 +194,6 @@ public record VerificationReport(
             sb.append(")");
         }
 
-        return sb.toString();
+        return sb;
     }
 }

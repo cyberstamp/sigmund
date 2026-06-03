@@ -3,6 +3,7 @@ package io.github.aloubyansky.pqc.maven.core;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.function.BiPredicate;
 
 /**
  * Verifies hybrid signatures containing both classic GPG and PQC components.
@@ -19,26 +20,30 @@ import java.nio.file.Path;
  * {
  *     &#64;code
  *     // Create verifier with both GPG and PQC support
- *     GpgSigner gpg = new GpgSigner("gpg", null);
+ *     GpgRunner gpg = new GpgRunner();
  *     SqRunner sq = new SqRunner(Path.of("/tmp/sq-keys"));
- *     String pqcFingerprint = "ABC123...";
- *     HybridVerifier verifier = new HybridVerifier(gpg, sq, pqcFingerprint);
+ *     HybridVerifier verifier = new HybridVerifier(gpg, sq);
  *
- *     // Verify a hybrid signature
+ *     // Verify with a specific PQC key fingerprint
+ *     PqcKeyConfig config = PqcKeyConfig.fingerprint("ABC123...");
  *     VerificationReport report = verifier.verify(
  *             Path.of("artifact.jar"),
- *             Path.of("artifact.jar.asc"));
+ *             Path.of("artifact.jar.asc"),
+ *             config);
  *
- *     if (report.isStrictPass()) {
- *         System.out.println("Quantum-safe verification passed!");
- *     }
+ *     // Or verify with a certificate file
+ *     PqcKeyConfig certConfig = PqcKeyConfig.certFile(Path.of("signer.cert"));
+ *     VerificationReport report2 = verifier.verify(
+ *             Path.of("artifact.jar"),
+ *             Path.of("artifact.jar.asc"),
+ *             certConfig);
  *
- *     // Create verifier for classic-only signatures (no PQC support)
- *     HybridVerifier classicOnly = new HybridVerifier(gpg, null, null);
- *     VerificationReport report2 = classicOnly.verify(
+ *     // Pass null to skip PQC verification
+ *     VerificationReport report3 = verifier.verify(
  *             Path.of("old-artifact.jar"),
- *             Path.of("old-artifact.jar.asc"));
- *     // report2.pqcResult() will be NOT_PRESENT
+ *             Path.of("old-artifact.jar.asc"),
+ *             null);
+ *     // report3.pqcResult() will be NOT_PRESENT
  * }
  * </pre>
  * <p>
@@ -54,32 +59,23 @@ import java.nio.file.Path;
  */
 public class HybridVerifier {
 
-    private final GpgSigner gpg;
+    private final GpgRunner gpg;
     private final SqRunner sq;
-    private final String pqcFingerprint;
 
     /**
      * Constructs a HybridVerifier with specified GPG and PQC configuration.
-     * <p>
-     * The {@code gpg} parameter is currently unused for verification (GPG is
-     * invoked directly via {@link CliTool}), but is included for future-proofing
-     * and API consistency with {@link HybridSigner}.
      *
-     *
-     * @param gpg the GPG signer instance (currently unused, reserved for future use)
+     * @param gpg the GPG runner instance for classic signature verification
      * @param sq the Sequoia runner instance for PQC verification, or null to
      *        skip PQC verification
-     * @param pqcFingerprint the expected PQC key fingerprint, or null if not
-     *        verifying against a specific key
      * @throws IllegalArgumentException if gpg is null
      */
-    public HybridVerifier(GpgSigner gpg, SqRunner sq, String pqcFingerprint) {
+    public HybridVerifier(GpgRunner gpg, SqRunner sq) {
         if (gpg == null) {
             throw new IllegalArgumentException("gpg cannot be null");
         }
         this.gpg = gpg;
         this.sq = sq;
-        this.pqcFingerprint = pqcFingerprint;
     }
 
     /**
@@ -88,26 +84,21 @@ public class HybridVerifier {
      * This method performs the following steps:
      * <ol>
      * <li>Verifies the classic GPG signature using {@code gpg --verify}</li>
-     * <li>Verifies the PQC signature using {@code sq verify} (if {@link #sq} is not null)</li>
+     * <li>Verifies the PQC signature using the provided PQC key configuration (if {@link #sq} is not null)</li>
      * <li>Combines the results into a {@link VerificationReport}</li>
      * </ol>
      *
      * <p>
-     * The method handles various failure modes gracefully:
-     * <ul>
-     * <li>If PQC verifier is null: PQC result is {@link VerificationResult#NOT_PRESENT}</li>
-     * <li>If GPG fails: classic result is {@link VerificationResult#FAIL}</li>
-     * <li>If PQC signature is invalid: PQC result is {@link VerificationResult#FAIL}</li>
-     * </ul>
-     *
+     * The PQC key configuration can specify either a fingerprint or a certificate file path.
      *
      * @param artifactFile the file that was signed
      * @param signatureFile the detached signature file (may contain classic-only or
      *        hybrid signature)
+     * @param pqcKeyConfig the PQC key configuration (cert file or fingerprint), or null to skip PQC verification
      * @return a {@link VerificationReport} containing both classic and PQC results
      * @throws IllegalArgumentException if artifactFile or signatureFile is null
      */
-    public VerificationReport verify(Path artifactFile, Path signatureFile) {
+    public VerificationReport verify(Path artifactFile, Path signatureFile, PqcKeyConfig pqcKeyConfig) {
         if (artifactFile == null) {
             throw new IllegalArgumentException("artifactFile cannot be null");
         }
@@ -115,88 +106,59 @@ public class HybridVerifier {
             throw new IllegalArgumentException("signatureFile cannot be null");
         }
 
-        VerificationResult classicResult = verifyClassic(artifactFile, signatureFile);
-        String classicKeyId = null; // TODO: Parse from GPG output in future enhancement
+        GpgRunner.VerifyResult classic = verifyClassic(artifactFile, signatureFile);
 
         VerificationResult pqcResult;
         String pqcAlgorithm = null;
         String pqcKeyFp = null;
 
-        if (sq != null) {
-            PqcVerification pqc = verifyPqc(artifactFile, signatureFile);
-            pqcResult = pqc.result;
+        if (sq != null && pqcKeyConfig != null) {
+            pqcResult = verifyPqc(artifactFile, signatureFile, pqcKeyConfig);
             if (pqcResult == VerificationResult.PASS || pqcResult == VerificationResult.FAIL) {
-                pqcAlgorithm = pqc.algorithm;
-                pqcKeyFp = pqcFingerprint;
+                pqcAlgorithm = SqRunner.DEFAULT_PQC_ALGORITHM;
+                pqcKeyFp = pqcKeyConfig.isFingerprint() ? pqcKeyConfig.fingerprint() : null;
             }
         } else {
             pqcResult = VerificationResult.NOT_PRESENT;
         }
 
         return new VerificationReport(
-                classicResult,
-                classicKeyId,
+                classic.goodSignature() ? VerificationResult.PASS : VerificationResult.FAIL,
+                classic.keyId(),
                 pqcResult,
                 pqcAlgorithm,
                 pqcKeyFp);
     }
 
+    private GpgRunner.VerifyResult verifyClassic(Path artifactFile, Path signatureFile) {
+        return gpg.verify(artifactFile, signatureFile);
+    }
+
     /**
-     * Verifies the classic GPG signature using the gpg command-line tool.
-     * <p>
-     * This method runs:
-     * {@code gpg --verify <signatureFile> <artifactFile>}
-     *
-     * <p>
-     * The verification result is determined by the exit code:
-     * <ul>
-     * <li>Exit code 0: {@link VerificationResult#PASS} (valid signature)</li>
-     * <li>Exit code 2: {@link VerificationResult#PASS} (valid signature with warnings,
-     * e.g., unknown v6 PQC packet in the combined .asc)</li>
-     * <li>Exit code 1: {@link VerificationResult#FAIL} (bad signature)</li>
-     * <li>Other exit codes: {@link VerificationResult#FAIL}</li>
-     * </ul>
-     *
+     * Verifies the PQC signature using the Sequoia command-line tool with the given key configuration.
      *
      * @param artifactFile the file that was signed
      * @param signatureFile the signature file to verify
+     * @param config the PQC key configuration (cert file or fingerprint)
      * @return {@link VerificationResult#PASS} if verification succeeds,
      *         {@link VerificationResult#FAIL} otherwise
      */
-    private VerificationResult verifyClassic(Path artifactFile, Path signatureFile) {
-        CliTool.Result result = CliTool.run(
-                "gpg",
-                "--verify",
-                signatureFile.toString(),
-                artifactFile.toString());
-
-        // GPG exit codes: 0 = valid, 1 = bad signature, 2 = warnings (e.g., unknown packet version).
-        // Exit code 2 with "Good signature" means the classic signature is valid
-        // but GPG encountered the v6 PQC packet it doesn't understand.
-        boolean goodSignature = result.exitCode() == 0
-                || (result.exitCode() == 2 && result.stderr().contains("Good signature"));
-        return goodSignature ? VerificationResult.PASS : VerificationResult.FAIL;
-    }
-
-    private record PqcVerification(VerificationResult result, String algorithm) {
+    private VerificationResult verifyPqc(Path artifactFile, Path signatureFile, PqcKeyConfig config) {
+        return verifyPqcBlock(artifactFile, signatureFile,
+                (artifact, sig) -> config.isCertFile()
+                        ? sq.verifyCertFile(artifact, sig, config.certFilePath())
+                        : sq.verify(artifact, sig, config.fingerprint()));
     }
 
     /**
-     * Verifies the PQC signature and detects the algorithm from the signature.
+     * Extracts the PQC block from a combined signature file and verifies it.
      * <p>
      * When the signature file contains multiple armored blocks (classic + PQC),
      * extracts the PQC block (second block) into a temporary file for Sequoia,
-     * which only processes the first armored block in a file. After verification,
-     * inspects the signature to determine the actual PQC algorithm.
-     *
-     * @param artifactFile the file that was signed
-     * @param signatureFile the signature file to verify
-     * @return verification result with the detected algorithm name
+     * which only processes the first armored block in a file.
      */
-    private PqcVerification verifyPqc(Path artifactFile, Path signatureFile) {
-        if (sq == null) {
-            return new PqcVerification(VerificationResult.NOT_PRESENT, null);
-        }
+    private VerificationResult verifyPqcBlock(Path artifactFile, Path signatureFile,
+            BiPredicate<Path, Path> verifyFn) {
         Path pqcSigFile = null;
         try {
             String content = Files.readString(signatureFile);
@@ -206,12 +168,10 @@ public class HybridVerifier {
                 Files.writeString(pqcSigFile, pqcBlock);
                 signatureFile = pqcSigFile;
             }
-            boolean verified = sq.verify(artifactFile, signatureFile, pqcFingerprint);
-            VerificationResult result = verified ? VerificationResult.PASS : VerificationResult.FAIL;
-            String algorithm = sq.inspectSignatureAlgorithm(signatureFile);
-            return new PqcVerification(result, algorithm);
+            boolean verified = verifyFn.test(artifactFile, signatureFile);
+            return verified ? VerificationResult.PASS : VerificationResult.FAIL;
         } catch (IOException e) {
-            return new PqcVerification(VerificationResult.FAIL, null);
+            return VerificationResult.FAIL;
         } finally {
             if (pqcSigFile != null) {
                 try {

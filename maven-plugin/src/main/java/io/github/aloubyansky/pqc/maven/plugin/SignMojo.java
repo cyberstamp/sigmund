@@ -1,6 +1,6 @@
 package io.github.aloubyansky.pqc.maven.plugin;
 
-import io.github.aloubyansky.pqc.maven.core.GpgSigner;
+import io.github.aloubyansky.pqc.maven.core.GpgRunner;
 import io.github.aloubyansky.pqc.maven.core.HybridSigner;
 import io.github.aloubyansky.pqc.maven.core.SqRunner;
 import java.io.File;
@@ -33,7 +33,6 @@ import org.apache.maven.project.MavenProjectHelper;
  * <plugin>
  *   <groupId>io.github.aloubyansky.pqc.maven</groupId>
  *   <artifactId>pqc-sign-maven-plugin</artifactId>
- *   <version>1.0.0-SNAPSHOT</version>
  *   <executions>
  *     <execution>
  *       <goals>
@@ -50,7 +49,7 @@ import org.apache.maven.project.MavenProjectHelper;
  * }</pre>
  *
  * @see HybridSigner
- * @see GpgSigner
+ * @see GpgRunner
  * @see SqRunner
  */
 @Mojo(name = "sign", defaultPhase = LifecyclePhase.VERIFY, threadSafe = true)
@@ -115,8 +114,7 @@ public class SignMojo extends AbstractMojo {
     public void execute() throws MojoExecutionException {
         getLog().info("Starting hybrid signing process...");
 
-        Path sequoiaHome = resolveSequoiaHome();
-        HybridSigner signer = createSigner(sequoiaHome);
+        HybridSigner signer = createSigner();
         List<FileToSign> filesToSign = collectFilesToSign();
 
         getLog().info("Signing " + filesToSign.size() + " artifact(s)...");
@@ -129,45 +127,17 @@ public class SignMojo extends AbstractMojo {
     }
 
     /**
-     * Resolves the Sequoia home directory, using the default if not specified.
-     * <p>
-     * The default location is {@code ~/.local/share/sequoia}, which matches
-     * the Sequoia CLI tool's default behavior.
-     *
-     *
-     * @return the resolved Sequoia home path
-     * @throws MojoExecutionException if the path cannot be resolved
-     */
-    private Path resolveSequoiaHome() throws MojoExecutionException {
-        if (sqHome != null) {
-            return sqHome.toPath();
-        }
-
-        String userHome = System.getProperty("user.home");
-        if (userHome == null || userHome.isEmpty()) {
-            throw new MojoExecutionException(
-                    "Cannot resolve Sequoia home: user.home property not set");
-        }
-
-        return Path.of(userHome, ".local", "share", "sequoia");
-    }
-
-    /**
      * Creates a HybridSigner configured with GPG and Sequoia tools.
-     * <p>
-     * This method initializes the signer with the configured GPG key name
-     * and PQC fingerprint.
      *
-     *
-     * @param sequoiaHome the path to the Sequoia home directory
      * @return a configured HybridSigner instance
      * @throws MojoExecutionException if signer creation fails
      */
-    private HybridSigner createSigner(Path sequoiaHome) throws MojoExecutionException {
+    private HybridSigner createSigner() throws MojoExecutionException {
         try {
-            GpgSigner gpg = new GpgSigner(gpgKeyName);
+            Path sequoiaHome = SequoiaHomeResolver.resolve(sqHome);
+            GpgRunner gpg = new GpgRunner(gpgKeyName);
             SqRunner sq = new SqRunner(sequoiaHome);
-            return HybridSigner.create(gpg, sq, pqcFingerprint);
+            return new HybridSigner(gpg, sq, pqcFingerprint);
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to create hybrid signer", e);
         }

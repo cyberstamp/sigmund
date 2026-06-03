@@ -49,7 +49,7 @@ class RoundTripIntegrationTest {
      * <p>
      * This method is used by JUnit's {@link EnabledIf} annotation to conditionally
      * enable the test class. It verifies not just that {@code sq} is installed, but
-     * that it supports the default PQC cipher suite. The standard
+     * that it supports the default PQC cipher suite ({@code mldsa87-ed448}). The standard
      * Sequoia release (1.3.x) does not include PQC support — version 1.4.0-pqc.1+
      * from the {@code pqc} branch is required.
      *
@@ -57,14 +57,14 @@ class RoundTripIntegrationTest {
      * @return true if both {@code gpg} and PQC-enabled {@code sq} are available
      */
     static boolean toolsAvailable() {
-        if (!GpgSigner.isAvailable() || !SqRunner.isAvailable()) {
+        if (!GpgRunner.isAvailable() || !SqRunner.isAvailable()) {
             return false;
         }
         // Check that sq actually supports PQC cipher suites
         try {
             CliTool.Result result = CliTool.run("sq", "key", "generate", "--help");
-            return result.stdout().contains(SqRunner.DEFAULT_CIPHER_SUITE)
-                    || result.stderr().contains(SqRunner.DEFAULT_CIPHER_SUITE);
+            return result.stdout().contains("mldsa87-ed448")
+                    || result.stderr().contains("mldsa87-ed448");
         } catch (Exception e) {
             return false;
         }
@@ -124,7 +124,7 @@ class RoundTripIntegrationTest {
         signer.sign(artifact, signature);
 
         // Act: Verify the signature
-        VerificationReport report = verifier.verify(artifact, signature);
+        VerificationReport report = verifier.verify(artifact, signature, PqcKeyConfig.fingerprint(pqcFingerprint));
 
         // Assert: Both classic and PQC signatures should pass
         assertEquals(VerificationResult.PASS, report.classicResult(),
@@ -221,7 +221,7 @@ class RoundTripIntegrationTest {
 
         // Act: Verify the signature
         HybridVerifier verifier = createHybridVerifier();
-        VerificationReport report = verifier.verify(artifact, signature);
+        VerificationReport report = verifier.verify(artifact, signature, PqcKeyConfig.fingerprint(pqcFingerprint));
 
         // Assert: Both signatures should fail due to tampering
         assertEquals(VerificationResult.FAIL, report.classicResult(),
@@ -264,9 +264,9 @@ class RoundTripIntegrationTest {
      * @return a configured HybridSigner instance
      */
     private HybridSigner createHybridSigner() {
-        GpgSigner gpg = new GpgSigner(null); // null = use default GPG key
+        GpgRunner gpg = new GpgRunner(); // null = use default GPG key
         SqRunner sq = new SqRunner(sqHome);
-        return HybridSigner.create(gpg, sq, pqcFingerprint);
+        return new HybridSigner(gpg, sq, pqcFingerprint);
     }
 
     /**
@@ -280,8 +280,8 @@ class RoundTripIntegrationTest {
      * @return a configured HybridVerifier instance
      */
     private HybridVerifier createHybridVerifier() {
-        GpgSigner gpg = new GpgSigner(null); // null = use default GPG key
+        GpgRunner gpg = new GpgRunner();
         SqRunner sq = new SqRunner(sqHome);
-        return new HybridVerifier(gpg, sq, pqcFingerprint);
+        return new HybridVerifier(gpg, sq);
     }
 }
