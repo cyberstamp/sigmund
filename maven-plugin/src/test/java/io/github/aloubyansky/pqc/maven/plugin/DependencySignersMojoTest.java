@@ -18,7 +18,7 @@ class DependencySignersMojoTest {
         Artifact artifact = createArtifact("com.example", "lib", "1.0");
 
         List<DependencySignersMojo.ArtifactSigner> results = mojo.inspectSignatures(artifact,
-                new io.github.aloubyansky.pqc.maven.core.GpgRunner());
+                new io.github.aloubyansky.pqc.maven.core.GpgRunner(), null);
         assertEquals(1, results.size());
         assertEquals(VerificationResult.NOT_PRESENT, results.get(0).signatureInfo().result());
         assertNull(results.get(0).signatureInfo().keyId());

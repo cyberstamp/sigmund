@@ -3,7 +3,9 @@ package io.github.aloubyansky.pqc.maven.plugin;
 import io.github.aloubyansky.pqc.maven.core.AscCombiner;
 import io.github.aloubyansky.pqc.maven.core.GpgRunner;
 import io.github.aloubyansky.pqc.maven.core.SignatureInfo;
+import io.github.aloubyansky.pqc.maven.core.SqRunner;
 import io.github.aloubyansky.pqc.maven.core.VerificationResult;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -46,6 +48,9 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
     @Parameter(property = "pqc.keyservers", defaultValue = "hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org")
     private String keyservers;
 
+    @Parameter(property = "pqc.sqHome")
+    private File sqHome;
+
     @Override
     public void execute() throws MojoExecutionException {
         if (skip) {
@@ -58,13 +63,14 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         }
 
         GpgRunner gpg = new GpgRunner();
+        SqRunner sq = createSqRunner();
         Set<Artifact> artifacts = resolveDependencies();
         getLog().info("Inspecting signatures for " + artifacts.size() + " dependency(ies)...");
         getLog().info("");
 
         List<ArtifactSigner> results = new ArrayList<>();
         for (Artifact artifact : artifacts) {
-            results.addAll(inspectSignatures(artifact, gpg));
+            results.addAll(inspectSignatures(artifact, gpg, sq));
         }
 
         if (fetchSignerInfo) {
@@ -90,7 +96,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         return sb.toString();
     }
 
-    List<ArtifactSigner> inspectSignatures(Artifact artifact, GpgRunner gpg) {
+    List<ArtifactSigner> inspectSignatures(Artifact artifact, GpgRunner gpg, SqRunner sq) {
         String coords = formatCoordinates(artifact);
 
         ResolvedSignature resolved = downloadSignatureWithRepo(artifact);
@@ -122,8 +128,8 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
 
             if (version >= 6) {
                 String fingerprint = AscCombiner.extractV6IssuerFingerprint(block);
-                entries.add(new ArtifactSigner(coords, resolved.repoId,
-                        new SignatureInfo(version, fingerprint, null, null, VerificationResult.SKIPPED)));
+                entries.add(inspectPqcBlock(coords, resolved.repoId, block, fingerprint,
+                        version, artifactFile, sq));
             } else {
                 if (entries.stream().noneMatch(e -> e.signatureInfo.version() > 0
                         && e.signatureInfo.version() <= 4)) {
@@ -137,6 +143,58 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         }
 
         return entries;
+    }
+
+    private ArtifactSigner inspectPqcBlock(String coords, String repoId, String block,
+            String fingerprint, int version, Path artifactFile, SqRunner sq) {
+        if (sq == null || fingerprint == null) {
+            return new ArtifactSigner(coords, repoId,
+                    new SignatureInfo(version, fingerprint, null, null, VerificationResult.SKIPPED));
+        }
+
+        SqRunner.CertInfo certInfo = sq.inspectCert(fingerprint);
+        if (certInfo == null) {
+            return new ArtifactSigner(coords, repoId,
+                    new SignatureInfo(version, fingerprint, null, null, VerificationResult.NO_KEY));
+        }
+
+        // Use the cert file from the cert-d store directly (avoids exportCert
+        // resolution issues with PQC certs that sq considers "unusable")
+        Path certFile = certInfo.certFile();
+        if (certFile == null) {
+            certFile = sq.findCertFile(fingerprint);
+        }
+        if (certFile == null) {
+            return new ArtifactSigner(coords, repoId,
+                    new SignatureInfo(version, fingerprint, certInfo.algorithm(),
+                            certInfo.userId(), VerificationResult.NO_KEY));
+        }
+
+        Path pqcSigFile = null;
+        try {
+            pqcSigFile = Files.createTempFile("pqc-sig-", ".asc");
+            Files.writeString(pqcSigFile, block);
+
+            boolean verified = sq.verifyCertFile(artifactFile, pqcSigFile, certFile);
+            return new ArtifactSigner(coords, repoId,
+                    new SignatureInfo(version, fingerprint, certInfo.algorithm(),
+                            certInfo.userId(), verified ? VerificationResult.PASS : VerificationResult.FAIL));
+        } catch (Exception e) {
+            return new ArtifactSigner(coords, repoId,
+                    new SignatureInfo(version, fingerprint, certInfo.algorithm(),
+                            certInfo.userId(), VerificationResult.SKIPPED));
+        } finally {
+            deleteTempFile(pqcSigFile);
+        }
+    }
+
+    private static void deleteTempFile(Path file) {
+        if (file != null) {
+            try {
+                Files.deleteIfExists(file);
+            } catch (IOException ignored) {
+            }
+        }
     }
 
     void fetchMissingSignerInfo(List<ArtifactSigner> results, GpgRunner gpg) {
@@ -300,6 +358,14 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             case 6 -> "PQC";
             default -> version > 0 ? "OpenPGP v" + version : "-";
         };
+    }
+
+    private SqRunner createSqRunner() throws MojoExecutionException {
+        if (!SqRunner.isAvailable()) {
+            getLog().debug("Sequoia (sq) not found - PQC signer info will not be available");
+            return null;
+        }
+        return new SqRunner(SequoiaHomeResolver.resolve(sqHome));
     }
 
     /**

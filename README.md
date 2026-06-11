@@ -518,10 +518,11 @@ core/                                    Core library
     HybridSigner.java                    Orchestrates classic + PQC signing
     HybridVerifier.java                  Dual verification (gpg + sq)
     PqcKeyConfig.java                    PQC key identification (fingerprint or cert file)
+    SignatureInfo.java                   Signature metadata (version, key ID, algorithm, signer)
     VerificationResult.java              Result enum (PASS, FAIL, NO_KEY, NOT_PRESENT, SKIPPED)
     VerificationReport.java              Formatted verification report
 cli/                                     CLI tools (picocli)
-maven-plugin/                            Maven plugin (sign + verify goals)
+maven-plugin/                            Maven plugin (sign, verify, dependency-signers, verify-dependencies goals)
 ```
 
 ## PQC Signature Sizes
@@ -613,6 +614,68 @@ mvn pqc-sign:verify \
 ```
 
 The `--strict` / `pqc.strict=true` flag requires both the classic GPG and PQC signatures to be present and valid. Without it, only the classic GPG signature is required (transitional mode).
+
+### `pqc-sign:dependency-signers`
+
+Reports signer information for all project dependencies by downloading and inspecting their `.asc` signature files. Each armored block is reported separately with its OpenPGP version (v4 for classical GPG, v6 for PQC). Classical signatures are verified via GPG; PQC signatures are verified via Sequoia when the signer's certificate is available in the local cert store.
+
+```bash
+mvn pqc-sign:dependency-signers
+```
+
+Example output:
+
+```
+  com.example:lib:1.0   central   GPG   4AEE18F83AFDEB23   User <user@example.com>
+  com.example:lib:1.0   central   PQC   D62AAB339E45E5EA...   User <user@example.com>
+```
+
+| Property | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `pqc.skip` | No | `false` | Skip the report |
+| `pqc.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers to resolve signer identities |
+| `pqc.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
+| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory for PQC cert lookup |
+| `pqc.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
+
+**PQC signer resolution.** When a v6 (PQC) signature block is found, the plugin extracts the issuer fingerprint from the signature packet and looks up the corresponding certificate in the local Sequoia cert store. If the certificate is found (either by primary key or subkey fingerprint), the signature is verified and the signer's user ID and algorithm are reported. If the certificate is not in the store, the result is `NO_KEY` with the fingerprint displayed.
+
+### `pqc-sign:verify-dependencies`
+
+Verifies GPG and PQC signatures of all project dependencies against a keys map configuration file. Each dependency's signature is downloaded and verified; the goal fails the build if any signature check fails (configurable via policy).
+
+```bash
+mvn pqc-sign:verify-dependencies -Dpqc.keysMap=keys-map.properties
+```
+
+The keys map file maps artifact group/artifact patterns to expected signing keys:
+
+```properties
+# GPG fingerprint
+com.example = 0x4AEE18F83AFDEB23
+
+# PQC fingerprint
+com.example = pqc:D62AAB339E45E5EA2FD036872B01D46A517A299115599CCADD4C50A956F8E707
+
+# PQC certificate file
+com.example = pqc-cert:/path/to/signer.cert
+
+# Accept any valid signature
+org.apache = any
+
+# No signature expected
+test.group = nosig
+```
+
+| Property | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `pqc.keysMap` | Yes | — | Path to the keys map properties file |
+| `pqc.skip` | No | `false` | Skip verification |
+| `pqc.unmappedPolicy` | No | `warn` | Policy for artifacts not in the keys map: `warn`, `fail`, or `skip` |
+| `pqc.failIfPqcUnchecked` | No | `true` | Fail the build if a PQC signature is present but no PQC key is configured |
+| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `pqc.verifyPomFiles` | No | `true` | Also verify POM file signatures |
+| `pqc.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
 
 ## References
 
