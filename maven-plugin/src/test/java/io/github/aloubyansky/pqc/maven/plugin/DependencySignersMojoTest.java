@@ -17,7 +17,7 @@ class DependencySignersMojoTest {
         DependencySignersMojo mojo = createMojo(null);
         Artifact artifact = createArtifact("com.example", "lib", "1.0");
 
-        List<DependencySignersMojo.ArtifactSigner> results = mojo.inspectSignatures(artifact,
+        List<DependencySignersMojo.SignedArtifact> results = mojo.inspectSignatures(artifact,
                 new io.github.aloubyansky.pqc.maven.core.GpgRunner(), null);
         assertEquals(1, results.size());
         assertEquals(VerificationResult.NOT_PRESENT, results.get(0).signatureInfo().result());
@@ -27,7 +27,7 @@ class DependencySignersMojoTest {
 
     @Test
     void artifactSigner_v4WithSigner() {
-        DependencySignersMojo.ArtifactSigner signer = new DependencySignersMojo.ArtifactSigner(
+        DependencySignersMojo.SignedArtifact signer = new DependencySignersMojo.SignedArtifact(
                 "com.example:lib:1.0", "central",
                 new SignatureInfo(4, "ABCD1234", "RSA", "User <user@example.com>", VerificationResult.PASS));
         assertEquals("com.example:lib:1.0", signer.coordinates());
@@ -39,7 +39,7 @@ class DependencySignersMojoTest {
 
     @Test
     void artifactSigner_v6Detected() {
-        DependencySignersMojo.ArtifactSigner signer = new DependencySignersMojo.ArtifactSigner(
+        DependencySignersMojo.SignedArtifact signer = new DependencySignersMojo.SignedArtifact(
                 "com.example:lib:1.0", "central",
                 new SignatureInfo(6, null, null, null, VerificationResult.SKIPPED));
         assertEquals(6, signer.signatureInfo().version());
@@ -49,7 +49,7 @@ class DependencySignersMojoTest {
 
     @Test
     void artifactSigner_noSignature() {
-        DependencySignersMojo.ArtifactSigner signer = new DependencySignersMojo.ArtifactSigner(
+        DependencySignersMojo.SignedArtifact signer = new DependencySignersMojo.SignedArtifact(
                 "com.example:lib:1.0", null,
                 new SignatureInfo(-1, null, null, null, VerificationResult.NOT_PRESENT));
         assertNull(signer.repoId());
@@ -96,7 +96,7 @@ class DependencySignersMojoTest {
         try {
             // Simulate a dependency whose key was not in the keyring at verify time
             var results = new java.util.ArrayList<>(List.of(
-                    new DependencySignersMojo.ArtifactSigner(
+                    new DependencySignersMojo.SignedArtifact(
                             "com.example:lib:1.0", "central",
                             new SignatureInfo(4, "ABCD1234ABCD1234", "RSA", null, VerificationResult.NO_KEY),
                             artifactFile, signatureFile)));
