@@ -5,7 +5,7 @@
 This tool adds post-quantum cryptographic (PQC) signatures to Maven artifacts alongside classic GPG signatures. Every `.asc` signature file contains two OpenPGP signatures:
 
 - A **classic v4 signature** (RSA/EdDSA via GnuPG) — backward-compatible, verifiable by all existing tools
-- A **PQC v6 signature** (ML-DSA-87+Ed448 via Sequoia, default; configurable) — quantum-resistant, CNSA 2.0 compliant, per [draft-ietf-openpgp-pqc](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/)
+- A **PQC v6 signature** (ML-DSA-87+Ed448 via Sequoia, default; configurable) — quantum-resistant, CNSA 2.0 compliant, per [RFC 9980](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/)
 
 The two signatures are stored as **two separate armored blocks** in the same `.asc` file, classic first. Existing tools (GPG, Maven Central) see only the classic signature and work as before. PQC-aware tools can verify both.
 
@@ -232,7 +232,7 @@ This produces a standard ASCII-armored `.asc` file containing a v4 OpenPGP signa
 sq --overwrite sign --signer <fingerprint> --signature-file <sig> <artifact>
 ```
 
-Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP signature packet with the configured PQC hybrid cipher suite (ML-DSA-87+Ed448 by default) per draft-ietf-openpgp-pqc. The PQC key must be in Sequoia's keystore (set via the `SEQUOIA_HOME` environment variable). The `--overwrite` flag is always passed to handle cases where the output file already exists (e.g., temp files).
+Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP signature packet with the configured PQC hybrid cipher suite (ML-DSA-87+Ed448 by default) per RFC 9980. The PQC key must be in Sequoia's keystore (set via the `SEQUOIA_HOME` environment variable). The `--overwrite` flag is always passed to handle cases where the output file already exists (e.g., temp files).
 
 **Stage 3 — Combine.** `AscCombiner` concatenates both signatures into a single `.asc` file as two separate armored blocks, classic first:
 
@@ -495,9 +495,9 @@ The PoC generates PQC keys with `--without-password` to support non-interactive 
 
 ### Sequoia sq is pre-release
 
-The PQC-enabled Sequoia (`sq 1.4.0-pqc.1`) is a pre-release. The underlying [draft-ietf-openpgp-pqc](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/) is not yet an RFC. Algorithm IDs and packet formats may change before standardization. When the standard is finalized and stable Sequoia releases include PQC, the only change needed in this tool is updating the `sq` binary.
+The PQC-enabled Sequoia (`sq 1.4.0-pqc.1`) is a pre-release. The underlying [RFC 9980](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/) (Post-Quantum Cryptography in OpenPGP) has been approved by the IESG as a Proposed Standard and is in AUTH48 (final author review at the RFC Editor). When stable Sequoia releases include PQC, the only change needed in this tool is updating the `sq` binary.
 
-**Finalization timeline (as of April 2026):** The IESG has approved `draft-ietf-openpgp-pqc` (at version -16) as a Proposed Standard, and the document (now at version -17, dated January 2026) is headed to the RFC Editor for final publication. The Sequoia PGP team [plans to release stable PQC support](https://sequoia-pgp.org/blog/2025/11/15/202511-post-quantum-cryptography/) shortly after the RFC is published, targeting the first half of 2026. RHEL 10.1 has already shipped Sequoia with PQC support enabled as a system package.
+The Sequoia PGP team [plans to release stable PQC support](https://sequoia-pgp.org/blog/2025/11/15/202511-post-quantum-cryptography/) shortly after the RFC is published. RHEL 10.1 has already shipped Sequoia with PQC support enabled as a system package.
 
 ### `sequoia-openpgp` PQC crate not on crates.io
 
@@ -518,10 +518,11 @@ core/                                    Core library
     HybridSigner.java                    Orchestrates classic + PQC signing
     HybridVerifier.java                  Dual verification (gpg + sq)
     PqcKeyConfig.java                    PQC key identification (fingerprint or cert file)
+    SignatureInfo.java                   Signature metadata (version, key ID, algorithm, signer)
     VerificationResult.java              Result enum (PASS, FAIL, NO_KEY, NOT_PRESENT, SKIPPED)
     VerificationReport.java              Formatted verification report
 cli/                                     CLI tools (picocli)
-maven-plugin/                            Maven plugin (sign + verify goals)
+maven-plugin/                            Maven plugin (sign, verify, dependency-signers, verify-dependencies goals)
 ```
 
 ## PQC Signature Sizes
@@ -614,10 +615,72 @@ mvn pqc-sign:verify \
 
 The `--strict` / `pqc.strict=true` flag requires both the classic GPG and PQC signatures to be present and valid. Without it, only the classic GPG signature is required (transitional mode).
 
+### `pqc-sign:dependency-signers`
+
+Reports signer information for all project dependencies by downloading and inspecting their `.asc` signature files. Each armored block is reported separately with its OpenPGP version (v4 for classical GPG, v6 for PQC). Classical signatures are verified via GPG; PQC signatures are verified via Sequoia when the signer's certificate is available in the local cert store.
+
+```bash
+mvn pqc-sign:dependency-signers
+```
+
+Example output:
+
+```
+  com.example:lib:1.0   central   GPG   4AEE18F83AFDEB23   User <user@example.com>
+  com.example:lib:1.0   central   PQC   D62AAB339E45E5EA...   User <user@example.com>
+```
+
+| Property | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `pqc.skip` | No | `false` | Skip the report |
+| `pqc.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers to resolve signer identities |
+| `pqc.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
+| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory for PQC cert lookup |
+| `pqc.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
+
+**PQC signer resolution.** When a v6 (PQC) signature block is found, the plugin extracts the issuer fingerprint from the signature packet and looks up the corresponding certificate in the local Sequoia cert store. If the certificate is found (either by primary key or subkey fingerprint), the signature is verified and the signer's user ID and algorithm are reported. If the certificate is not in the store, the result is `NO_KEY` with the fingerprint displayed.
+
+### `pqc-sign:verify-dependencies`
+
+Verifies GPG and PQC signatures of all project dependencies against a keys map configuration file. Each dependency's signature is downloaded and verified; the goal fails the build if any signature check fails (configurable via policy).
+
+```bash
+mvn pqc-sign:verify-dependencies -Dpqc.keysMap=keys-map.properties
+```
+
+The keys map file maps artifact group/artifact patterns to expected signing keys:
+
+```properties
+# GPG fingerprint
+com.example = 0x4AEE18F83AFDEB23
+
+# PQC fingerprint
+com.example = pqc:D62AAB339E45E5EA2FD036872B01D46A517A299115599CCADD4C50A956F8E707
+
+# PQC certificate file
+com.example = pqc-cert:/path/to/signer.cert
+
+# Accept any valid signature
+org.apache = any
+
+# No signature expected
+test.group = nosig
+```
+
+| Property | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `pqc.keysMap` | Yes | — | Path to the keys map properties file |
+| `pqc.skip` | No | `false` | Skip verification |
+| `pqc.unmappedPolicy` | No | `warn` | Policy for artifacts not in the keys map: `warn`, `fail`, or `skip` |
+| `pqc.failIfPqcUnchecked` | No | `true` | Fail the build if a PQC signature is present but no PQC key is configured |
+| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `pqc.verifyPomFiles` | No | `true` | Also verify POM file signatures |
+| `pqc.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
+
 ## References
 
 - [FIPS 204 — ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) — NIST standard for ML-DSA (Dilithium)
-- [draft-ietf-openpgp-pqc](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/) — PQC algorithms for OpenPGP
+- [RFC 9980 (draft-ietf-openpgp-pqc)](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/) — PQC algorithms for OpenPGP
 - [RFC 9580](https://www.rfc-editor.org/rfc/rfc9580) — OpenPGP v6 (Crypto Refresh)
 - [Sequoia PGP PQC blog post](https://sequoia-pgp.org/blog/2025/11/15/202511-post-quantum-cryptography/)
 - [Sequoia PQC source](https://gitlab.com/sequoia-pgp/sequoia-sq/-/tree/pqc) — PQC branch

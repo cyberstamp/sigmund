@@ -2,6 +2,7 @@ package io.github.aloubyansky.pqc.maven.core;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -62,6 +63,8 @@ public class SqRunner {
     public static final String DEFAULT_PQC_ALGORITHM = "ML-DSA-87+Ed448";
 
     private static final Pattern FINGERPRINT_PATTERN = Pattern.compile("(?i)(?:fingerprint:?\\s*)?([0-9A-F]{64})");
+    private static final Pattern INSPECT_ALGO_PATTERN = Pattern.compile("Public-key algo:\\s+(.+)");
+    private static final Pattern INSPECT_USERID_PATTERN = Pattern.compile("UserID:\\s+(.+)");
     private static final String SEQUOIA_HOME = "SEQUOIA_HOME";
 
     private final String sqExecutable;
@@ -307,6 +310,126 @@ public class SqRunner {
                     + (result.stderr().isEmpty() ? "" : ": " + result.stderr().trim()));
         }
         return result.stdout();
+    }
+
+    /**
+     * Information extracted from a certificate in the Sequoia store.
+     *
+     * @param algorithm the public-key algorithm (e.g., "ML-DSA-65+Ed25519", "RSA")
+     * @param userId the primary user ID (e.g., "Name &lt;email&gt;"), or null if not present
+     * @param certFile the cert file in the cert-d store, or null if resolved via {@code --cert}
+     */
+    public record CertInfo(String algorithm, String userId, Path certFile) {
+    }
+
+    /**
+     * Inspects a certificate in the Sequoia store by fingerprint (primary key or
+     * subkey) and returns its algorithm and user ID.
+     * <p>
+     * First tries {@code sq inspect --cert <fingerprint>}. If that fails (e.g. PQC
+     * certs that sq considers "unusable"), falls back to scanning the cert-d
+     * directory for a cert file containing the fingerprint as a primary key or subkey.
+     *
+     * @param fingerprint the hex fingerprint to look up (primary key or subkey)
+     * @return certificate info, or null if the certificate is not in the store
+     */
+    public CertInfo inspectCert(String fingerprint) {
+        if (fingerprint == null || fingerprint.isEmpty()) {
+            return null;
+        }
+        // Fast path: direct --cert lookup
+        String[] args = { "inspect", "--cert", fingerprint };
+        CliTool.Result result = runSq(args);
+        if (result.exitCode() == 0) {
+            CertInfo info = parseCertInfo(result.stdout(), null);
+            if (info != null) {
+                return info;
+            }
+        }
+        // Fallback: scan cert-d for a cert containing this fingerprint
+        return scanCertStore(fingerprint);
+    }
+
+    /**
+     * Finds the cert file in the cert-d store that contains the given fingerprint
+     * (as primary key or subkey).
+     *
+     * @param fingerprint the hex fingerprint to search for
+     * @return the path to the cert file, or null if not found
+     */
+    public Path findCertFile(String fingerprint) {
+        if (fingerprint == null || fingerprint.isEmpty()) {
+            return null;
+        }
+        // Try the cert-d path derived from the fingerprint (works for primary keys)
+        String lower = fingerprint.toLowerCase();
+        if (lower.length() >= 3) {
+            Path direct = certDDir().resolve(lower.substring(0, 2)).resolve(lower.substring(2));
+            if (Files.isRegularFile(direct)) {
+                return direct;
+            }
+        }
+        // Scan for subkey match
+        CertInfo info = scanCertStore(fingerprint);
+        return info != null ? info.certFile() : null;
+    }
+
+    private CertInfo scanCertStore(String fingerprint) {
+        Path certD = certDDir();
+        if (!Files.isDirectory(certD)) {
+            return null;
+        }
+        String upperFp = fingerprint.toUpperCase();
+        try (DirectoryStream<Path> dirs = Files.newDirectoryStream(certD, Files::isDirectory)) {
+            for (Path dir : dirs) {
+                try (DirectoryStream<Path> files = Files.newDirectoryStream(dir, Files::isRegularFile)) {
+                    for (Path file : files) {
+                        CliTool.Result result = runSq("inspect", file.toString());
+                        if (result.exitCode() == 0
+                                && result.stdout().toUpperCase().contains(upperFp)) {
+                            CertInfo info = parseCertInfo(result.stdout(), file);
+                            if (info != null) {
+                                return info;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (IOException e) {
+            // cert-d not accessible
+        }
+        return null;
+    }
+
+    private Path certDDir() {
+        return sequoiaHome.resolve("data").resolve("pgp.cert.d");
+    }
+
+    static CertInfo parseCertInfo(String output, Path certFile) {
+        if (output == null || output.isEmpty()) {
+            return null;
+        }
+        String algorithm = null;
+        String userId = null;
+        for (String line : output.split("\\R")) {
+            String trimmed = line.trim();
+            if (algorithm == null) {
+                Matcher m = INSPECT_ALGO_PATTERN.matcher(trimmed);
+                if (m.matches()) {
+                    algorithm = m.group(1).trim();
+                }
+            }
+            if (userId == null) {
+                Matcher m = INSPECT_USERID_PATTERN.matcher(trimmed);
+                if (m.matches()) {
+                    userId = m.group(1).trim();
+                }
+            }
+        }
+        if (algorithm == null && userId == null) {
+            return null;
+        }
+        return new CertInfo(algorithm, userId, certFile);
     }
 
     /**

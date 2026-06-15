@@ -42,7 +42,12 @@ import java.util.regex.Pattern;
 public class GpgRunner {
 
     private static final Pattern GPG_KEY_PATTERN = Pattern.compile(
-            "using \\w+ key\\s+([0-9A-Fa-f]{16,40})", Pattern.MULTILINE);
+            "using (\\w+) key\\s+([0-9A-Fa-f]{16,40})", Pattern.MULTILINE);
+
+    private static final Pattern GPG_SIGNER_PATTERN = Pattern.compile(
+            "Good signature from \"([^\"]+)\"", Pattern.MULTILINE);
+
+    private static final int GPG_COLONS_UID_FIELD = 9;
 
     /**
      * Checks if the GPG executable is available and functional.
@@ -73,7 +78,44 @@ public class GpgRunner {
         }
         Matcher matcher = GPG_KEY_PATTERN.matcher(gpgStderr);
         if (matcher.find()) {
+            return matcher.group(2).toUpperCase();
+        }
+        return null;
+    }
+
+    /**
+     * Extracts the key algorithm (e.g., "RSA", "EDDSA") from gpg --verify stderr output.
+     *
+     * @param gpgStderr the stderr output from gpg --verify command
+     * @return the algorithm name in uppercase, or null if not found
+     */
+    static String extractAlgorithm(String gpgStderr) {
+        if (gpgStderr == null) {
+            return null;
+        }
+        Matcher matcher = GPG_KEY_PATTERN.matcher(gpgStderr);
+        if (matcher.find()) {
             return matcher.group(1).toUpperCase();
+        }
+        return null;
+    }
+
+    /**
+     * Extracts the signer's user ID from gpg --verify stderr output.
+     * <p>
+     * Parses stderr output looking for lines like:
+     * {@code gpg: Good signature from "Name <email@example.com>" [ultimate]}
+     *
+     * @param gpgStderr the stderr output from gpg --verify command
+     * @return the signer's user ID (e.g., "Name &lt;email@example.com&gt;"), or null if not found
+     */
+    static String extractSignerUserId(String gpgStderr) {
+        if (gpgStderr == null) {
+            return null;
+        }
+        Matcher matcher = GPG_SIGNER_PATTERN.matcher(gpgStderr);
+        if (matcher.find()) {
+            return matcher.group(1);
         }
         return null;
     }
@@ -117,10 +159,14 @@ public class GpgRunner {
     /**
      * Result of a GPG signature verification.
      *
-     * @param goodSignature true if the signature is valid
+     * @param result the verification outcome: {@link VerificationResult#PASS} if the signature is valid,
+     *        {@link VerificationResult#FAIL} if the signature does not match,
+     *        {@link VerificationResult#NO_KEY} if the signing key is not in the keyring
      * @param keyId the signing key ID extracted from GPG output, or null if not found
+     * @param algorithm the key algorithm (e.g., "RSA", "EDDSA"), or null if not found
+     * @param signerUserId the signer's user ID (e.g., "Name &lt;email&gt;"), or null if the key is not in the keyring
      */
-    public record VerifyResult(boolean goodSignature, String keyId) {
+    public record VerifyResult(VerificationResult result, String keyId, String algorithm, String signerUserId) {
     }
 
     /**
@@ -187,12 +233,66 @@ public class GpgRunner {
                 signatureFile.toString(),
                 artifactFile.toString());
 
-        // Exit code 2 means warnings (e.g. unknown packet versions); treat as
-        // valid if GPG still reports "Good signature"
-        boolean goodSignature = result.exitCode() == 0
-                || (result.exitCode() == 2 && result.stderr().contains("Good signature"));
         String keyId = extractGpgKeyId(result.stderr());
-        return new VerifyResult(goodSignature, keyId);
+        String algorithm = extractAlgorithm(result.stderr());
+        String signerUserId = extractSignerUserId(result.stderr());
+
+        // Exit code 2 means warnings (e.g. unknown packet versions); treat as
+        // valid only if GPG still reports "Good signature"
+        VerificationResult verificationResult;
+        if (result.exitCode() == 0
+                || (result.exitCode() == 2 && result.stderr().contains("Good signature"))) {
+            verificationResult = VerificationResult.PASS;
+        } else if (result.stderr().contains("No public key")) {
+            verificationResult = VerificationResult.NO_KEY;
+        } else {
+            verificationResult = VerificationResult.FAIL;
+        }
+        return new VerifyResult(verificationResult, keyId, algorithm, signerUserId);
+    }
+
+    /**
+     * Receives a public key from a keyserver and imports it into the local keyring.
+     *
+     * @param keyId the key ID to receive
+     * @param keyserver the keyserver URL (e.g., "hkps://keys.openpgp.org")
+     * @return true if the key was successfully received, false otherwise
+     */
+    public boolean receiveKey(String keyId, String keyserver) {
+        CliTool.Result result = CliTool.run(
+                gpgExecutable,
+                "--keyserver", keyserver,
+                "--recv-keys", keyId);
+        return result.exitCode() == 0;
+    }
+
+    /**
+     * Looks up the user ID (UID) for a key in the local keyring.
+     * <p>
+     * Parses the {@code --with-colons} output format where the user ID is at field index 9
+     * on lines starting with {@code uid:}.
+     *
+     * @param keyId the key ID to look up
+     * @return the user ID string (e.g., "Name &lt;email@example.com&gt;"), or null if not found
+     */
+    public String listKeyUserId(String keyId) {
+        CliTool.Result result = CliTool.run(
+                gpgExecutable,
+                "--list-keys",
+                "--with-colons",
+                keyId);
+        if (result.exitCode() != 0) {
+            return null;
+        }
+        for (String line : result.stdout().split("\\R")) {
+            if (line.startsWith("uid:")) {
+                String[] fields = line.split(":", -1);
+                if (fields.length > GPG_COLONS_UID_FIELD && !fields[GPG_COLONS_UID_FIELD].isEmpty()) {
+                    return fields[GPG_COLONS_UID_FIELD];
+                }
+            }
+        }
+        return null;
     }
 
     private String[] buildSignCommand(Path artifactFile, Path outputSig) {
