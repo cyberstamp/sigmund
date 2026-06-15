@@ -10,6 +10,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -68,7 +70,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         getLog().info("Inspecting signatures for " + artifacts.size() + " dependency(ies)...");
         getLog().info("");
 
-        List<ArtifactSigner> results = new ArrayList<>();
+        List<SignedArtifact> results = new ArrayList<>();
         for (Artifact artifact : artifacts) {
             results.addAll(inspectSignatures(artifact, gpg, sq));
         }
@@ -96,12 +98,12 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         return sb.toString();
     }
 
-    List<ArtifactSigner> inspectSignatures(Artifact artifact, GpgRunner gpg, SqRunner sq) {
+    List<SignedArtifact> inspectSignatures(Artifact artifact, GpgRunner gpg, SqRunner sq) {
         String coords = formatCoordinates(artifact);
 
         ResolvedSignature resolved = downloadSignatureWithRepo(artifact);
         if (resolved == null) {
-            return List.of(new ArtifactSigner(coords, null,
+            return List.of(new SignedArtifact(coords, null,
                     new SignatureInfo(-1, null, null, null, VerificationResult.NOT_PRESENT)));
         }
 
@@ -110,17 +112,17 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             ascContent = Files.readString(resolved.path);
         } catch (IOException e) {
             getLog().warn("Failed to read .asc file for " + coords);
-            return List.of(new ArtifactSigner(coords, resolved.repoId,
+            return List.of(new SignedArtifact(coords, resolved.repoId,
                     new SignatureInfo(-1, null, null, null, VerificationResult.FAIL)));
         }
 
         List<String> blocks = AscCombiner.extractAllBlocks(ascContent);
         if (blocks.isEmpty()) {
-            return List.of(new ArtifactSigner(coords, resolved.repoId,
+            return List.of(new SignedArtifact(coords, resolved.repoId,
                     new SignatureInfo(-1, null, null, null, VerificationResult.NOT_PRESENT)));
         }
 
-        List<ArtifactSigner> entries = new ArrayList<>();
+        List<SignedArtifact> entries = new ArrayList<>();
         Path artifactFile = artifact.getFile().toPath();
 
         for (String block : blocks) {
@@ -134,7 +136,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                 if (entries.stream().noneMatch(e -> e.signatureInfo.version() > 0
                         && e.signatureInfo.version() <= 4)) {
                     GpgRunner.VerifyResult result = gpg.verify(artifactFile, resolved.path);
-                    entries.add(new ArtifactSigner(coords, resolved.repoId,
+                    entries.add(new SignedArtifact(coords, resolved.repoId,
                             new SignatureInfo(version > 0 ? version : 4, result.keyId(),
                                     result.algorithm(), result.signerUserId(), result.result()),
                             artifactFile, resolved.path));
@@ -145,16 +147,16 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         return entries;
     }
 
-    private ArtifactSigner inspectPqcBlock(String coords, String repoId, String block,
+    private SignedArtifact inspectPqcBlock(String coords, String repoId, String block,
             String fingerprint, int version, Path artifactFile, SqRunner sq) {
         if (sq == null || fingerprint == null) {
-            return new ArtifactSigner(coords, repoId,
+            return new SignedArtifact(coords, repoId,
                     new SignatureInfo(version, fingerprint, null, null, VerificationResult.SKIPPED));
         }
 
         SqRunner.CertInfo certInfo = sq.inspectCert(fingerprint);
         if (certInfo == null) {
-            return new ArtifactSigner(coords, repoId,
+            return new SignedArtifact(coords, repoId,
                     new SignatureInfo(version, fingerprint, null, null, VerificationResult.NO_KEY));
         }
 
@@ -165,7 +167,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             certFile = sq.findCertFile(fingerprint);
         }
         if (certFile == null) {
-            return new ArtifactSigner(coords, repoId,
+            return new SignedArtifact(coords, repoId,
                     new SignatureInfo(version, fingerprint, certInfo.algorithm(),
                             certInfo.userId(), VerificationResult.NO_KEY));
         }
@@ -176,11 +178,11 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             Files.writeString(pqcSigFile, block);
 
             boolean verified = sq.verifyCertFile(artifactFile, pqcSigFile, certFile);
-            return new ArtifactSigner(coords, repoId,
+            return new SignedArtifact(coords, repoId,
                     new SignatureInfo(version, fingerprint, certInfo.algorithm(),
                             certInfo.userId(), verified ? VerificationResult.PASS : VerificationResult.FAIL));
         } catch (Exception e) {
-            return new ArtifactSigner(coords, repoId,
+            return new SignedArtifact(coords, repoId,
                     new SignatureInfo(version, fingerprint, certInfo.algorithm(),
                             certInfo.userId(), VerificationResult.SKIPPED));
         } finally {
@@ -197,7 +199,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         }
     }
 
-    void fetchMissingSignerInfo(List<ArtifactSigner> results, GpgRunner gpg) {
+    void fetchMissingSignerInfo(List<SignedArtifact> results, GpgRunner gpg) {
         Set<String> unknownKeyIds = results.stream()
                 .map(r -> r.signatureInfo)
                 .filter(s -> s.keyId() != null && s.signerUserId() == null)
@@ -226,12 +228,12 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         }
 
         for (int i = 0; i < results.size(); i++) {
-            ArtifactSigner entry = results.get(i);
+            SignedArtifact entry = results.get(i);
             SignatureInfo sig = entry.signatureInfo;
             if (sig.keyId() != null && fetchedKeyIds.contains(sig.keyId())
                     && entry.artifactFile() != null && entry.signatureFile() != null) {
                 GpgRunner.VerifyResult verified = gpg.verify(entry.artifactFile(), entry.signatureFile());
-                results.set(i, new ArtifactSigner(entry.coordinates, entry.repoId,
+                results.set(i, new SignedArtifact(entry.coordinates, entry.repoId,
                         new SignatureInfo(sig.version(), verified.keyId(), verified.algorithm(),
                                 verified.signerUserId(), verified.result()),
                         entry.artifactFile(), entry.signatureFile()));
@@ -250,56 +252,145 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         return servers;
     }
 
-    private void logReport(List<ArtifactSigner> results) {
-        getLog().info("Dependency Signers:");
+    private void logReport(List<SignedArtifact> results) {
 
-        int maxCoords = 0;
-        int maxRepoId = 0;
-        int maxKeyId = 0;
-        for (ArtifactSigner r : results) {
-            maxCoords = Math.max(maxCoords, r.coordinates.length());
-            if (r.repoId != null) {
-                maxRepoId = Math.max(maxRepoId, r.repoId.length());
+        // Group entries by artifact coordinate
+        Map<String, List<SignedArtifact>> byArtifact = new HashMap<>();
+        for (SignedArtifact r : results) {
+            byArtifact.computeIfAbsent(r.coordinates, k -> new ArrayList<>(2)).add(r);
+        }
+
+        // Build signature profile for each artifact and group by shared key sets
+        Map<String, List<String>> profileToCoords = new HashMap<>();
+        List<String> unsignedCoords = new ArrayList<>();
+
+        for (var entry : byArtifact.entrySet()) {
+            String coords = entry.getKey();
+            List<SignedArtifact> signers = entry.getValue();
+
+            boolean allUnsigned = signers.stream()
+                    .allMatch(s -> s.signatureInfo.result() == VerificationResult.NOT_PRESENT);
+            if (allUnsigned) {
+                unsignedCoords.add(coords);
+                continue;
             }
-            if (r.signatureInfo.keyId() != null) {
-                maxKeyId = Math.max(maxKeyId, r.signatureInfo.keyId().length());
+
+            String profileKey = signers.stream()
+                    .filter(s -> s.signatureInfo.result() != VerificationResult.NOT_PRESENT)
+                    .map(s -> s.signatureInfo.version() + ":"
+                            + (s.signatureInfo.keyId() != null ? s.signatureInfo.keyId() : "?"))
+                    .sorted()
+                    .distinct()
+                    .collect(Collectors.joining("|"));
+
+            profileToCoords.computeIfAbsent(profileKey, k -> new ArrayList<>()).add(coords);
+        }
+
+        // Sort artifacts within each group alphabetically
+        profileToCoords.values().forEach(list -> list.sort(Comparator.naturalOrder()));
+        unsignedCoords.sort(Comparator.naturalOrder());
+
+        // Sort groups alphabetically by signer name; unverified groups go last
+        List<Map.Entry<String, List<String>>> sortedGroups = profileToCoords.entrySet().stream()
+                .sorted((a, b) -> {
+                    String signerA = firstSigner(a.getValue(), byArtifact);
+                    String signerB = firstSigner(b.getValue(), byArtifact);
+                    if (signerA != null && signerB != null) {
+                        return signerA.compareToIgnoreCase(signerB);
+                    }
+                    if (signerA != null) {
+                        return -1;
+                    }
+                    if (signerB != null) {
+                        return 1;
+                    }
+                    return a.getKey().compareTo(b.getKey());
+                })
+                .toList();
+
+        // Output signed groups
+        boolean firstGroup = true;
+        for (var groupEntry : sortedGroups) {
+            if (!firstGroup) {
+                getLog().info("");
+            }
+            firstGroup = false;
+
+            List<String> coordsList = groupEntry.getValue();
+
+            // Aggregate best key info across all artifacts in this group
+            Map<String, SignatureInfo> keyInfos = new HashMap<>();
+            for (String coords : coordsList) {
+                for (SignedArtifact as : byArtifact.get(coords)) {
+                    SignatureInfo sig = as.signatureInfo;
+                    if (sig.result() == VerificationResult.NOT_PRESENT) {
+                        continue;
+                    }
+                    String k = sig.version() + ":"
+                            + (sig.keyId() != null ? sig.keyId() : "?");
+                    keyInfos.merge(k, sig, (existing, incoming) -> new SignatureInfo(
+                            existing.version(),
+                            existing.keyId() != null ? existing.keyId() : incoming.keyId(),
+                            existing.algorithm() != null ? existing.algorithm() : incoming.algorithm(),
+                            existing.signerUserId() != null
+                                    ? existing.signerUserId()
+                                    : incoming.signerUserId(),
+                            existing.result() == VerificationResult.PASS
+                                    ? existing.result()
+                                    : incoming.result()));
+                }
+            }
+
+            // Sort key headers by version then keyId
+            List<SignatureInfo> sortedKeys = keyInfos.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .map(Map.Entry::getValue)
+                    .toList();
+
+            boolean groupHasIssue = sortedKeys.stream()
+                    .noneMatch(sig -> sig.signerUserId() != null);
+
+            // Print per-key signer + key lines
+            for (SignatureInfo sig : sortedKeys) {
+                String ver = versionLabel(sig.version());
+                String keyId = sig.keyId() != null ? sig.keyId() : "-";
+                boolean verified = sig.signerUserId() != null;
+                if (verified) {
+                    getLog().info("Signer: " + sig.signerUserId());
+                    getLog().info("   " + ver + ": " + keyId);
+                } else {
+                    getLog().warn("Signer: NOT VERIFIED");
+                    getLog().warn("   " + ver + ": " + keyId);
+                }
+            }
+
+            // Print artifacts
+            for (String coords : coordsList) {
+                boolean hasFail = byArtifact.get(coords).stream()
+                        .anyMatch(as -> as.signatureInfo.result() == VerificationResult.FAIL);
+                String line = "     " + coords;
+                if (hasFail) {
+                    getLog().error(line + "   (BAD SIGNATURE)");
+                } else if (groupHasIssue) {
+                    getLog().warn(line);
+                } else {
+                    getLog().info(line);
+                }
             }
         }
 
-        String format = "  %-" + maxCoords + "s   %-" + Math.max(maxRepoId, 4) + "s   %-3s   %-"
-                + Math.max(maxKeyId, 6) + "s   %s";
-
-        for (ArtifactSigner r : results) {
-            SignatureInfo sig = r.signatureInfo;
-            String repoId = r.repoId != null ? r.repoId : "-";
-            String ver = versionLabel(sig.version());
-            String keyId = sig.keyId() != null ? sig.keyId() : "-";
-            String signer;
-            if (sig.result() == VerificationResult.NOT_PRESENT) {
-                signer = "(no signature)";
-            } else if (sig.result() == VerificationResult.FAIL) {
-                signer = "(BAD SIGNATURE)";
-            } else if (sig.result() == VerificationResult.NO_KEY) {
-                signer = "(key not in keyring)";
-            } else if (sig.result() == VerificationResult.SKIPPED) {
-                signer = "(detected, not verified)";
-            } else if (sig.signerUserId() != null) {
-                signer = sig.signerUserId();
-            } else {
-                signer = "(verified, signer unknown)";
+        // Output unsigned group
+        if (!unsignedCoords.isEmpty()) {
+            if (!firstGroup) {
+                getLog().info("");
             }
-
-            if (sig.result() == VerificationResult.FAIL) {
-                getLog().error(String.format(format, r.coordinates, repoId, ver, keyId, signer));
-            } else if (sig.result() == VerificationResult.NOT_PRESENT
-                    || sig.result() == VerificationResult.NO_KEY
-                    || sig.result() == VerificationResult.SKIPPED) {
-                getLog().warn(String.format(format, r.coordinates, repoId, ver, keyId, signer));
-            } else {
-                getLog().info(String.format(format, r.coordinates, repoId, ver, keyId, signer));
+            getLog().warn("UNSIGNED");
+            for (String coords : unsignedCoords) {
+                getLog().warn("  " + coords);
             }
         }
 
+        // Summary statistics
         long totalArtifacts = results.stream().map(r -> r.coordinates).distinct().count();
         Map<Integer, Long> versionCounts = results.stream()
                 .filter(r -> r.signatureInfo.version() > 0)
@@ -358,6 +449,18 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             case 6 -> "PQC";
             default -> version > 0 ? "OpenPGP v" + version : "-";
         };
+    }
+
+    private static String firstSigner(List<String> coordsList,
+            Map<String, List<SignedArtifact>> byArtifact) {
+        for (String coords : coordsList) {
+            for (SignedArtifact as : byArtifact.get(coords)) {
+                if (as.signatureInfo.signerUserId() != null) {
+                    return as.signatureInfo.signerUserId();
+                }
+            }
+        }
+        return null;
     }
 
     private SqRunner createSqRunner() throws MojoExecutionException {
@@ -438,9 +541,19 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
     record ResolvedSignature(Path path, String repoId) {
     }
 
-    record ArtifactSigner(String coordinates, String repoId, SignatureInfo signatureInfo,
+    /**
+     * Associates a resolved artifact with its signature metadata and optional file paths
+     * for re-verification after key fetching.
+     *
+     * @param coordinates Maven coordinates (groupId:artifactId[:type][:classifier]:version)
+     * @param repoId identifier of the remote repository the artifact was resolved from, or {@code null}
+     * @param signatureInfo signature metadata (version, key ID, algorithm, signer, verification result)
+     * @param artifactFile local path to the artifact file, retained for re-verification; may be {@code null}
+     * @param signatureFile local path to the .asc signature file, retained for re-verification; may be {@code null}
+     */
+    record SignedArtifact(String coordinates, String repoId, SignatureInfo signatureInfo,
             Path artifactFile, Path signatureFile) {
-        ArtifactSigner(String coordinates, String repoId, SignatureInfo signatureInfo) {
+        SignedArtifact(String coordinates, String repoId, SignatureInfo signatureInfo) {
             this(coordinates, repoId, signatureInfo, null, null);
         }
     }
