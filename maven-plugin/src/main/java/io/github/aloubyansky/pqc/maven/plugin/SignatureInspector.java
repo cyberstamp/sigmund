@@ -2,6 +2,7 @@ package io.github.aloubyansky.pqc.maven.plugin;
 
 import io.github.aloubyansky.pqc.maven.core.AscCombiner;
 import io.github.aloubyansky.pqc.maven.core.GpgRunner;
+import io.github.aloubyansky.pqc.maven.core.SignatureBlockVerifier;
 import io.github.aloubyansky.pqc.maven.core.SignatureInfo;
 import io.github.aloubyansky.pqc.maven.core.SqRunner;
 import io.github.aloubyansky.pqc.maven.core.VerificationResult;
@@ -38,8 +39,8 @@ class SignatureInspector {
     private final RepositorySystem repoSystem;
     private final RepositorySystemSession repoSession;
     private final List<RemoteRepository> remoteRepos;
-    private final GpgRunner gpg;
-    private final SqRunner sq;
+    private final GpgRunner gpg; // retained for fetchSignerInfoIfMissing/reverify
+    private final SignatureBlockVerifier blockVerifier;
     private final List<String> keyServers;
     private final Set<String> fetchedKeyIds = new HashSet<>();
 
@@ -49,7 +50,7 @@ class SignatureInspector {
         this.repoSession = builder.repoSession;
         this.remoteRepos = builder.remoteRepos;
         this.gpg = builder.gpg;
-        this.sq = builder.sq;
+        this.blockVerifier = new SignatureBlockVerifier(builder.gpg, builder.sq);
         this.keyServers = List.copyOf(builder.keyServers);
     }
 
@@ -210,15 +211,15 @@ class SignatureInspector {
         Path artifactFile = artifact.getFile().toPath();
 
         for (String block : blocks) {
-            int version = AscCombiner.detectSignatureVersion(block);
+            AscCombiner.SignaturePacketInfo pktInfo = AscCombiner.inspectSignaturePacket(block);
+            int version = pktInfo.version();
 
-            if (version >= 6) {
-                String fingerprint = AscCombiner.extractV6IssuerFingerprint(block);
-                entries.add(inspectPqcBlock(coords, resolved.repoId, block, fingerprint,
-                        version, artifactFile));
-            } else {
+            if (version > 0 && version <= 4) {
                 entries.add(inspectGpgBlock(coords, resolved.repoId, block,
-                        version, artifactFile));
+                        pktInfo, artifactFile));
+            } else {
+                entries.add(inspectBlock(coords, resolved.repoId, block,
+                        pktInfo, artifactFile));
             }
         }
 
@@ -261,68 +262,28 @@ class SignatureInspector {
                 entry.artifactFile(), entry.signatureFile());
     }
 
-    /**
-     * Verifies a single PQC (v6) signature block using the Sequoia cert store.
-     * Looks up the issuer certificate by fingerprint and verifies the signature against it.
-     */
-    private SignedArtifact inspectPqcBlock(String coords, String repoId, String block,
-            String fingerprint, int version, Path artifactFile) {
-        if (sq == null || fingerprint == null) {
-            return new SignedArtifact(coords, repoId,
-                    new SignatureInfo(version, fingerprint, null, null, VerificationResult.SKIPPED));
-        }
-
-        SqRunner.CertInfo certInfo = sq.inspectCert(fingerprint);
-        if (certInfo == null) {
-            return new SignedArtifact(coords, repoId,
-                    new SignatureInfo(version, fingerprint, null, null, VerificationResult.NO_KEY));
-        }
-
-        Path certFile = certInfo.certFile();
-        if (certFile == null) {
-            certFile = sq.findCertFile(fingerprint);
-        }
-        if (certFile == null) {
-            return new SignedArtifact(coords, repoId,
-                    new SignatureInfo(version, fingerprint, certInfo.algorithm(),
-                            certInfo.userId(), VerificationResult.NO_KEY));
-        }
-
-        Path pqcSigFile = null;
+    private SignedArtifact inspectBlock(String coords, String repoId, String block,
+            AscCombiner.SignaturePacketInfo pktInfo, Path artifactFile) {
         try {
-            pqcSigFile = Files.createTempFile("pqc-sig-", ".asc");
-            Files.writeString(pqcSigFile, block);
-
-            boolean verified = sq.verifyCertFile(artifactFile, pqcSigFile, certFile);
-            return new SignedArtifact(coords, repoId,
-                    new SignatureInfo(version, fingerprint, certInfo.algorithm(),
-                            certInfo.userId(), verified ? VerificationResult.PASS : VerificationResult.FAIL));
+            SignatureInfo sig = blockVerifier.verify(artifactFile, block, pktInfo);
+            return new SignedArtifact(coords, repoId, sig);
         } catch (Exception e) {
-            log.debug("PQC verification failed for " + coords + ": " + e.getMessage());
+            log.debug("Verification failed for " + coords + ": " + e.getMessage());
             return new SignedArtifact(coords, repoId,
-                    new SignatureInfo(version, fingerprint, certInfo.algorithm(),
-                            certInfo.userId(), VerificationResult.SKIPPED));
-        } finally {
-            deleteTempFile(pqcSigFile);
+                    new SignatureInfo(pktInfo.version(), pktInfo.issuerFingerprint(),
+                            null, null, VerificationResult.FAIL));
         }
     }
 
-    /**
-     * Verifies a single classical GPG signature block by writing it to a temp file
-     * and invoking GPG. Attempts to fetch signer info from keyservers if configured.
-     * The returned entry does not retain temp file paths.
-     */
     private SignedArtifact inspectGpgBlock(String coords, String repoId, String block,
-            int version, Path artifactFile) {
-        int effectiveVersion = version > 0 ? version : 4;
+            AscCombiner.SignaturePacketInfo pktInfo, Path artifactFile) {
+        int effectiveVersion = pktInfo.version() > 0 ? pktInfo.version() : 4;
         Path gpgSigFile = null;
         try {
             gpgSigFile = Files.createTempFile("gpg-sig-", ".asc");
             Files.writeString(gpgSigFile, block);
-            GpgRunner.VerifyResult result = gpg.verify(artifactFile, gpgSigFile);
-            SignedArtifact entry = new SignedArtifact(coords, repoId,
-                    new SignatureInfo(effectiveVersion, result.keyId(),
-                            result.algorithm(), result.signerUserId(), result.result()),
+            SignatureInfo sig = blockVerifier.verifyGpgBlock(artifactFile, gpgSigFile, effectiveVersion);
+            SignedArtifact entry = new SignedArtifact(coords, repoId, sig,
                     artifactFile, gpgSigFile);
             SignedArtifact fetched;
             try {

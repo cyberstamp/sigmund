@@ -2,12 +2,12 @@
 
 ## Overview
 
-This tool adds post-quantum cryptographic (PQC) signatures to Maven artifacts alongside classic GPG signatures. Every `.asc` signature file contains two OpenPGP signatures:
+This tool adds post-quantum cryptographic (PQC) signatures to Maven artifacts alongside classic GPG signatures. Each `.asc` signature file can contain any number of OpenPGP signature blocks. A typical hybrid file contains:
 
 - A **classic v4 signature** (RSA/EdDSA via GnuPG) — backward-compatible, verifiable by all existing tools
 - A **PQC v6 signature** (ML-DSA-87+Ed448 via Sequoia, default; configurable) — quantum-resistant, CNSA 2.0 compliant, per [RFC 9980](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/)
 
-The two signatures are stored as **two separate armored blocks** in the same `.asc` file, classic first. Existing tools (GPG, Maven Central) see only the classic signature and work as before. PQC-aware tools can verify both.
+The signatures are stored as **separate armored blocks** in the same `.asc` file, classic first. Existing tools (GPG, Maven Central) see only the classic signature and work as before. PQC-aware tools can verify all blocks.
 
 ## Prerequisites
 
@@ -167,24 +167,23 @@ java -jar cli/target/pqc-sign.jar sign \
   --pqc-fingerprint <FINGERPRINT>
 ```
 
-This produces `my-artifact-1.0.jar.asc` containing both the classic GPG and PQC signatures as two separate armored blocks (Maven Central compatible).
+This produces `my-artifact-1.0.jar.asc` containing the classic GPG and PQC signatures as separate armored blocks (Maven Central compatible).
 
 ### 4. Verify a signature
 
 ```bash
 java -jar cli/target/pqc-sign.jar verify \
   --file target/my-artifact-1.0.jar \
-  --signature target/my-artifact-1.0.jar.asc \
-  --pqc-fingerprint <FINGERPRINT>
+  --signature target/my-artifact-1.0.jar.asc
 ```
 
 Output:
 
 ```
 Signature Verification Report:
-  Classic (GPG):             PASS
-  PQC (ML-DSA-87+Ed448):    PASS    [key: <fingerprint>]
-  Overall: PASS (both signatures valid)
+  [1] GPG v4 (RSA):              PASS        [key: <key-id>]
+  [2] PQC v6 (ML-DSA-87+Ed448): PASS        [key: <fingerprint>]
+  Overall: PASS (all 2 signatures valid)
 ```
 
 ### 5. Verify backward compatibility
@@ -234,7 +233,7 @@ sq --overwrite sign --signer <fingerprint> --signature-file <sig> <artifact>
 
 Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP signature packet with the configured PQC hybrid cipher suite (ML-DSA-87+Ed448 by default) per RFC 9980. The PQC key must be in Sequoia's keystore (set via the `SEQUOIA_HOME` environment variable). The `--overwrite` flag is always passed to handle cases where the output file already exists (e.g., temp files).
 
-**Stage 3 — Combine.** `AscCombiner` concatenates both signatures into a single `.asc` file as two separate armored blocks, classic first:
+**Stage 3 — Combine.** `AscCombiner` concatenates the signatures into a single `.asc` file as separate armored blocks, classic first:
 
 ```
 -----BEGIN PGP SIGNATURE-----
@@ -245,48 +244,41 @@ Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP sign
 -----END PGP SIGNATURE-----
 ```
 
-Neither signature is re-armored — both are preserved byte-for-byte as their respective tools produced them. Verifiers that parse only the first armored block (including Maven Central) see only the classic v4 signature and succeed. PQC-aware tools process all blocks and find the v6 signature.
+Neither signature is re-armored — each is preserved byte-for-byte as its respective tool produced it. Verifiers that parse only the first armored block (including Maven Central) see only the classic v4 signature and succeed. PQC-aware tools process all blocks.
 
 ### Verification Pipeline
 
 ```
 artifact.jar + artifact.jar.asc
     |
-    +-- gpg --verify ------------> classic result (PASS/FAIL)
+    +-- extract all armored blocks
     |
-    +-- sq verify ---------------> PQC result     (PASS/FAIL)
+    +-- for each block:
+    |     version <= 4 --> gpg --verify ---------> SignatureInfo (PASS/FAIL/NO_KEY)
+    |     version  5+  --> sq verify (cert store) -> SignatureInfo (PASS/FAIL/NO_KEY/SKIPPED)
+    |     unparseable  --> FAIL
     |
-    +-- VerificationReport ------> combined report
+    +-- VerificationReport (all results)
 ```
 
-Verification delegates to each tool independently:
+Each armored block is extracted into a temporary file and verified independently by `SignatureBlockVerifier`, which routes based on the OpenPGP signature version.
 
-**Classic verification.** `HybridVerifier` runs:
-
-```
-gpg --verify <signature.asc> <artifact>
-```
-
-GPG parses the `.asc`, finds the v4 signature packet, verifies it against its keyring, and skips the v6 PQC packet (printing a warning: `packet(2) with unknown version 6`).
+**Classic verification (v1-v4).** Runs `gpg --verify` against the local keyring.
 
 GPG exit codes are interpreted as:
 - **Exit 0** — signature valid (PASS)
-- **Exit 2 with "Good signature" in stderr** — signature valid but GPG encountered the unknown v6 packet (PASS). This is the expected result for hybrid `.asc` files.
+- **Exit 2 with "Good signature" in stderr** — signature valid but GPG encountered an unknown packet (PASS). This is the expected result for hybrid `.asc` files containing v6 PQC packets.
 - **Exit 1** — bad signature (FAIL)
-- **Other** — error (FAIL)
+- **stderr contains "No public key"** — signer's key not in keyring (NO_KEY)
 
-**PQC verification.** `HybridVerifier` delegates to `SqRunner`, which runs:
+**v5+ verification.** The issuer fingerprint is extracted from the signature packet's Issuer Fingerprint subpacket (type 33). The fingerprint is used to look up the signer's certificate in the Sequoia cert store (`sq inspect --cert`), locate the cert file in cert-d, and verify with `sq verify --signer-file`. If the certificate is not in the store, the result is NO_KEY. If `sq` is not available or the fingerprint cannot be extracted, the result is SKIPPED.
 
-```
-sq verify --signer <fingerprint> --signature-file <signature.asc> <artifact>
-```
-
-Sequoia finds the v6 PQC signature packet and verifies it against its cert-store. Since the `.asc` contains two separate armored blocks and `sq` only processes the first armored block in a file, the verifier automatically extracts the PQC block (second block) into a temporary file for Sequoia. If `sq` is not available, PQC verification is skipped and the result is `NOT_PRESENT`.
+The block's public-key algorithm ID is used to classify the signature as PQC or classical in the report. PQC algorithm IDs are 30-36 per the IANA OpenPGP Public Key Algorithms registry (RFC 9980).
 
 **Verification modes:**
 
-- **Transitional (default):** Classic GPG must pass. PQC result is informational — the overall result is PASS as long as the classic signature is valid.
-- **Strict (`--strict`):** Both classic GPG and PQC must pass for the overall result to be PASS.
+- **Default:** Every signature in the file must pass for the overall result to be PASS.
+- **Lenient (`--lenient`):** At least one signature must pass and none may fail. Skipped or no-key signatures are tolerated.
 
 ### Key Management
 
@@ -345,10 +337,8 @@ pqc-sign verify --file <FILE> --signature <ASC> [options]
 |--------|----------|---------|-------------|
 | `--file` | Yes | — | Artifact file to verify |
 | `--signature` | Yes | — | Signature `.asc` file |
-| `--pqc-fingerprint` | No | — | Expected PQC signer fingerprint. If omitted, any valid PQC signature is accepted. |
-| `--pqc-cert-file` | No | — | PQC certificate file for verification (takes precedence over `--pqc-fingerprint`) |
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
-| `--strict` | No | `false` | Require both classic and PQC to pass |
+| `--lenient` | No | `false` | Pass if at least one signature is valid and none failed |
 
 ### `pqc-sign export-cert`
 
@@ -399,7 +389,7 @@ This way `mvn verify` picks up the fingerprint automatically — no `-D` flag ne
 
 ### `pqc-sign:sign`
 
-Bound to the `verify` phase. Signs all project artifacts (JAR, POM, sources, javadoc) with both classic GPG and PQC, and attaches the `.asc` files for deployment. The `pqcFingerprint` parameter is required — the build will fail if it is not configured.
+Bound to the `verify` phase. Signs all project artifacts (JAR, POM, sources, javadoc) with classic GPG and PQC, and attaches the `.asc` files for deployment. The `pqcFingerprint` parameter is required — the build will fail if it is not configured.
 
 ```bash
 mvn verify -Dpqc.fingerprint=<FINGERPRINT>
@@ -418,19 +408,15 @@ Verify a single signed artifact (standalone, no project required):
 ```bash
 mvn pqc-sign:verify-artifact \
   -Dfile=artifact.jar \
-  -Dsignature=artifact.jar.asc \
-  -Dpqc.fingerprint=<FINGERPRINT> \
-  -Dpqc.strict=true
+  -Dsignature=artifact.jar.asc
 ```
 
 | Property | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `file` | Yes | — | Artifact file to verify |
 | `signature` | Yes | — | Signature `.asc` file |
-| `pqc.fingerprint` | No | — | Expected PQC signer fingerprint. If omitted, any valid PQC signature is accepted. |
-| `pqc.certFile` | No | — | PQC certificate file for verification (takes precedence over `pqc.fingerprint`) |
 | `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
-| `pqc.strict` | No | `false` | Require both signatures to pass |
+| `pqc.lenient` | No | `false` | Pass if at least one signature is valid and none failed |
 
 ### `pqc-sign:verify`
 
@@ -582,22 +568,7 @@ Summary: All clear: 4 dependencies, 3 GPG signature(s), 1 PQC signature(s), 2 un
 
 ### Unit Tests
 
-The unit tests run without any external tools (no GPG or sq required):
-
-**Core module:**
-- **CliToolTest** (4 tests) — process execution, stdout/stderr capture, exit code handling, checked execution
-- **AscCombinerTest** (7 tests) — two-block output, ordering, `extractBlock()` (first/second/out-of-range extraction), dearmoring
-- **HybridSignerTest** (1 test) — orchestration with mock signers, verifies two-block output
-- **HybridVerifierTest** (7 tests) — VerificationReport formatting, strict vs transitional modes, PASS/FAIL/NO_KEY/NOT_PRESENT scenarios
-
-**Maven plugin module:**
-- **TrustConfigParserTest** (23 tests) — YAML parsing of all signer forms (minimal/short/full), settings defaults and overrides, artifact groups, trust mappings, unsigned section, validation errors
-- **ArtifactMatcherTest** (10 tests) — unsigned patterns, artifact groups, group prefix matching, specificity scoring, multiple signer refs, wildcard matching
-- **TrustPatternCollapseTest** (12 tests) — within-group wildcard collapse, majority signer with exceptions, cross-group prefix merging, deeply nested hierarchies
-- **VerifyMojoTest** (15 tests) — fingerprint matching (exact, suffix, case insensitive), member-to-signature matching (GPG, PQC, uid, precedence rules)
-- **DependencySignersMojoTest** (8 tests) — signer reporting logic
-
-Run unit tests:
+Unit tests run without any external tools (no GPG or sq required):
 
 ```bash
 mvn test
@@ -605,7 +576,7 @@ mvn test
 
 ### Integration Tests
 
-The integration tests (`RoundTripIntegrationTest`) require both GnuPG and PQC-enabled Sequoia sq installed. They are automatically skipped if either tool is unavailable or if `sq` does not support the default PQC cipher suite (`mldsa87-ed448`).
+Integration tests require both GnuPG and PQC-enabled Sequoia sq installed. They are automatically skipped if either tool is unavailable or if `sq` does not support the default PQC cipher suite (`mldsa87-ed448`).
 
 Make sure the PQC-enabled `sq` is first on your PATH:
 
@@ -614,37 +585,11 @@ export PATH=~/.cargo/bin:$PATH
 mvn test -pl core -Dtest=RoundTripIntegrationTest
 ```
 
-**Test setup (`@BeforeAll`):**
-
-A fresh Sequoia keystore is created in a JUnit `@TempDir`. A PQC key is generated with `--without-password` (required for non-interactive test execution). The key fingerprint is shared across all test methods.
-
-**Test 1 — Full round-trip (`fullRoundTrip_signAndVerify`):**
-
-1. Creates a test artifact file
-2. Signs with `HybridSigner` — produces an `.asc` with two separate armored blocks
-3. Verifies with `HybridVerifier` — asserts classic PASS and PQC PASS
-4. Asserts `isStrictPass()` is true
-
-**Test 2 — GPG backward compatibility (`backwardCompat_gpgVerifiesCombinedAsc`):**
-
-1. Creates and signs a test artifact (hybrid `.asc`)
-2. Runs `gpg --verify` directly via `CliTool.run()` on the combined `.asc`
-3. Asserts GPG reports "Good signature" — accepts exit code 0 or exit code 2 (exit 2 is expected because GPG prints a warning about the unknown v6 PQC packet but still validates the classic signature)
-
-**Test 3 — Tamper detection (`tamperedArtifact_verificationFails`):**
-
-1. Creates and signs a test artifact
-2. Overwrites the artifact file with different content
-3. Verifies the tampered artifact — asserts both classic and PQC results are FAIL
+The integration tests cover full round-trip signing and verification, GPG backward compatibility (verifying that `gpg --verify` succeeds on hybrid `.asc` files despite the unknown v6 PQC packet), and tamper detection.
 
 ### Maven Plugin Integration Tests
 
-The Maven plugin includes invoker tests under `maven-plugin/src/it/`:
-
-- **dependency-signers** — reports signer information for a real dependency (commons-lang3)
-- **verify** — generates a `trust-config.yaml` via `dependency-signers`, then verifies dependencies against it
-- **update-trust-config** — creates a partial trust config, updates it with missing signers, verifies comments are preserved and no duplicate YAML sections exist
-- **sign-verify-roundtrip** — signs a sample project and verifies `.asc` structure (requires GPG + PQC-enabled sq)
+The Maven plugin includes invoker tests under `maven-plugin/src/it/` covering dependency signer reporting, trust config generation and update, and end-to-end sign-verify round trips (the latter requires GPG + PQC-enabled sq).
 
 ## Known Limitations
 
@@ -664,6 +609,10 @@ The PQC-enabled Sequoia (`sq 1.4.0-pqc.1`) is a pre-release. The underlying [RFC
 
 The Sequoia PGP team [plans to release stable PQC support](https://sequoia-pgp.org/blog/2025/11/15/202511-post-quantum-cryptography/) shortly after the RFC is published. RHEL 10.1 has already shipped Sequoia with PQC support enabled as a system package.
 
+### PQC algorithm ID range
+
+The verifier classifies v5+ signature packets as PQC based on the public-key algorithm ID in the IANA OpenPGP Public Key Algorithms registry. As of RFC 9980, PQC algorithm IDs are 30-36 (ML-DSA, SLH-DSA, ML-KEM composites). This range is hardcoded in `AscCombiner.isPqcAlgorithm()` and will need updating if IANA registers additional PQC algorithms beyond this range.
+
 ### `sequoia-openpgp` PQC crate not on crates.io
 
 The PQC-enabled `sequoia-openpgp` (version `2.2.0-pqc.1`) is not published on crates.io. Building `sq` from source requires a `[patch.crates-io]` section in `Cargo.toml` to redirect dependency resolution to the PQC branch of the main Sequoia repository. This is expected to be resolved once the PQC support is merged into mainline Sequoia.
@@ -671,19 +620,7 @@ The PQC-enabled `sequoia-openpgp` (version `2.2.0-pqc.1`) is not published on cr
 ## Project Structure
 
 ```
-pom.xml                                  Parent POM
-core/                                    Core library
-  src/main/java/io/github/aloubyansky/maven/pqc/
-    CliTool.java                         External process execution
-    GpgRunner.java                       GnuPG CLI wrapper (signing + verification)
-    SqRunner.java                        Sequoia sq CLI wrapper
-    AscCombiner.java                     OpenPGP armor operations (via BC bcpg)
-    HybridSigner.java                    Orchestrates classic + PQC signing
-    HybridVerifier.java                  Dual verification (gpg + sq)
-    PqcKeyConfig.java                    PQC key identification (fingerprint or cert file)
-    SignatureInfo.java                   Signature metadata (version, key ID, algorithm, signer)
-    VerificationResult.java              Result enum (PASS, FAIL, NO_KEY, NOT_PRESENT, SKIPPED)
-    VerificationReport.java              Formatted verification report
+core/                                    Core signing and verification library
 cli/                                     CLI tools (picocli)
 maven-plugin/                            Maven plugin (sign, verify, verify-artifact, dependency-signers goals)
 ```
@@ -754,16 +691,14 @@ If any source shows a different fingerprint, the artifact should not be trusted.
 
 ### Verifying a downloaded artifact
 
-Consumers can verify using the CLI or Maven plugin with the published fingerprint:
+Consumers need the signer's GPG public key in their keyring and the PQC certificate in their Sequoia cert store. Then verify with:
 
 **CLI:**
 
 ```bash
 java -jar pqc-sign.jar verify \
   --file my-artifact-1.0.jar \
-  --signature my-artifact-1.0.jar.asc \
-  --pqc-fingerprint <FINGERPRINT> \
-  --strict
+  --signature my-artifact-1.0.jar.asc
 ```
 
 **Maven plugin:**
@@ -771,12 +706,10 @@ java -jar pqc-sign.jar verify \
 ```bash
 mvn pqc-sign:verify-artifact \
   -Dfile=my-artifact-1.0.jar \
-  -Dsignature=my-artifact-1.0.jar.asc \
-  -Dpqc.fingerprint=<FINGERPRINT> \
-  -Dpqc.strict=true
+  -Dsignature=my-artifact-1.0.jar.asc
 ```
 
-The `--strict` / `pqc.strict=true` flag requires both the classic GPG and PQC signatures to be present and valid. Without it, only the classic GPG signature is required (transitional mode).
+By default, every signature in the `.asc` file must pass verification. Use `--lenient` / `pqc.lenient=true` to tolerate skipped or no-key signatures (at least one must pass and none may fail).
 
 ## References
 

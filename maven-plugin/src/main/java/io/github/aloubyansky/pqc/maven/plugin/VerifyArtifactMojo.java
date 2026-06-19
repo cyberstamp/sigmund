@@ -2,57 +2,19 @@ package io.github.aloubyansky.pqc.maven.plugin;
 
 import io.github.aloubyansky.pqc.maven.core.GpgRunner;
 import io.github.aloubyansky.pqc.maven.core.HybridVerifier;
-import io.github.aloubyansky.pqc.maven.core.PqcKeyConfig;
 import io.github.aloubyansky.pqc.maven.core.SqRunner;
 import io.github.aloubyansky.pqc.maven.core.VerificationReport;
-import io.github.aloubyansky.pqc.maven.core.VerificationResult;
 import java.io.File;
-import java.nio.file.Path;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 
 /**
- * Maven plugin goal that verifies hybrid signatures containing both classical
- * GPG and post-quantum cryptography components.
+ * Maven plugin goal that verifies all signatures in an ASC file.
  * <p>
- * This Mojo can be used standalone (without a project) to verify any signed
- * artifact. It supports both strict mode (requiring both GPG and PQC signatures)
- * and transitional mode (requiring only GPG signature).
- *
- * <p>
- * Example command-line usage:
- *
- * <pre>{@code
- * mvn io.github.aloubyansky.pqc.maven:pqc-sign-maven-plugin:verify-artifact \
- *   -Dfile=artifact.jar \
- *   -Dsignature=artifact.jar.asc \
- *   -Dpqc.fingerprint=ABC123... \
- *   -Dpqc.strict=true
- * }</pre>
- * <p>
- * Example plugin configuration:
- *
- * <pre>{@code
- * <plugin>
- *   <groupId>io.github.aloubyansky.pqc.maven</groupId>
- *   <artifactId>pqc-sign-maven-plugin</artifactId>
- *   <executions>
- *     <execution>
- *       <goals>
- *         <goal>verify-artifact</goal>
- *       </goals>
- *       <configuration>
- *         <file>${project.build.directory}/${project.build.finalName}.jar</file>
- *         <signature>${project.build.directory}/${project.build.finalName}.jar.asc</signature>
- *         <pqcFingerprint>ABC123...</pqcFingerprint>
- *         <strict>true</strict>
- *       </configuration>
- *     </execution>
- *   </executions>
- * </plugin>
- * }</pre>
+ * By default all signatures must pass. In lenient mode
+ * at least one signature must pass and none may fail.
  *
  * @see HybridVerifier
  * @see VerificationReport
@@ -60,85 +22,18 @@ import org.apache.maven.plugins.annotations.Parameter;
 @Mojo(name = "verify-artifact", requiresProject = false, threadSafe = true)
 public class VerifyArtifactMojo extends AbstractMojo {
 
-    /**
-     * The file to verify.
-     * <p>
-     * This is the artifact file that was signed (e.g., a JAR, WAR, or POM file).
-     *
-     */
     @Parameter(property = "file", required = true)
     private File file;
 
-    /**
-     * The detached signature file.
-     * <p>
-     * This is typically the artifact filename with a .asc extension
-     * (e.g., {@code artifact.jar.asc}).
-     *
-     */
     @Parameter(property = "signature", required = true)
     private File signature;
 
-    /**
-     * Expected PQC key fingerprint (64-character hexadecimal).
-     * <p>
-     * If specified, the verifier will check that the PQC signature was
-     * created by this specific key. If not specified, any valid PQC
-     * signature will be accepted.
-     *
-     */
-    @Parameter(property = "pqc.fingerprint")
-    private String pqcFingerprint;
-
-    /**
-     * Path to a PQC certificate file for signature verification.
-     * <p>
-     * When set, PQC verification uses this certificate file directly instead of
-     * looking up a key by fingerprint in the Sequoia keystore. This is useful for
-     * verifying signatures without importing the signer's key.
-     * <p>
-     * Takes precedence over {@link #pqcFingerprint} if both are specified.
-     *
-     */
-    @Parameter(property = "pqc.certFile")
-    private File pqcCertFile;
-
-    /**
-     * Path to the Sequoia home directory containing PQC keys/certificates.
-     * <p>
-     * If not specified, defaults to {@code ~/.local/share/sequoia}.
-     *
-     */
     @Parameter(property = "pqc.sqHome")
     private File sqHome;
 
-    /**
-     * Whether to enforce strict verification mode.
-     * <p>
-     * In strict mode, both GPG and PQC signatures must be present and valid.
-     * In transitional mode (default), only the GPG signature must be valid,
-     * allowing for backward compatibility with classic-only signatures.
-     *
-     */
-    @Parameter(property = "pqc.strict", defaultValue = "false")
-    private boolean strict;
+    @Parameter(property = "pqc.lenient", defaultValue = "false")
+    private boolean lenient;
 
-    /**
-     * Executes the verification process.
-     * <p>
-     * This method orchestrates the entire verification workflow:
-     * <ol>
-     * <li>Validates input files exist</li>
-     * <li>Resolves the Sequoia home directory</li>
-     * <li>Creates the hybrid verifier</li>
-     * <li>Verifies the signature</li>
-     * <li>Logs the verification report</li>
-     * <li>Throws exception if verification fails per policy</li>
-     * </ol>
-     *
-     *
-     * @throws MojoExecutionException if verification fails or files are missing
-     */
     @Override
     public void execute() throws MojoExecutionException {
         validateInputFiles();
@@ -153,11 +48,6 @@ public class VerifyArtifactMojo extends AbstractMojo {
         checkVerificationResult(report);
     }
 
-    /**
-     * Validates that the input files exist and are readable.
-     *
-     * @throws MojoExecutionException if files don't exist
-     */
     private void validateInputFiles() throws MojoExecutionException {
         if (!file.exists()) {
             throw new MojoExecutionException("File does not exist: " + file.getAbsolutePath());
@@ -168,15 +58,6 @@ public class VerifyArtifactMojo extends AbstractMojo {
         }
     }
 
-    /**
-     * Creates a HybridVerifier configured with GPG and Sequoia tools.
-     * <p>
-     * If Sequoia is not available, the verifier will still work but will
-     * only be able to verify GPG signatures (PQC result will be NOT_PRESENT).
-     *
-     * @return a configured HybridVerifier instance
-     * @throws MojoExecutionException if verifier creation fails
-     */
     private HybridVerifier createVerifier() throws MojoExecutionException {
         try {
             GpgRunner gpg = new GpgRunner();
@@ -187,15 +68,6 @@ public class VerifyArtifactMojo extends AbstractMojo {
         }
     }
 
-    /**
-     * Creates a SqRunner if Sequoia is available, otherwise returns null.
-     * <p>
-     * This allows graceful fallback to GPG-only verification when Sequoia
-     * is not installed or not in the PATH.
-     *
-     * @return a SqRunner instance, or null if Sequoia is not available
-     * @throws MojoExecutionException if the Sequoia home directory cannot be resolved
-     */
     private SqRunner createSqRunner() throws MojoExecutionException {
         if (!SqRunner.isAvailable()) {
             getLog().warn("Sequoia (sq) not found - PQC verification will be skipped");
@@ -204,47 +76,15 @@ public class VerifyArtifactMojo extends AbstractMojo {
         return new SqRunner(SequoiaHomeResolver.resolve(sqHome));
     }
 
-    /**
-     * Builds the PQC key configuration from the plugin parameters.
-     * <p>
-     * {@link #pqcCertFile} takes precedence over {@link #pqcFingerprint}.
-     *
-     * @return the PQC key configuration, or null if neither is specified
-     */
-    private PqcKeyConfig buildPqcKeyConfig() {
-        if (pqcCertFile != null) {
-            return PqcKeyConfig.certFile(pqcCertFile.toPath());
-        }
-        if (pqcFingerprint != null && !pqcFingerprint.isEmpty()) {
-            return PqcKeyConfig.fingerprint(pqcFingerprint);
-        }
-        return null;
-    }
-
-    /**
-     * Performs the signature verification.
-     *
-     * @param verifier the hybrid verifier to use
-     * @return the verification report
-     * @throws MojoExecutionException if verification process fails
-     */
     private VerificationReport performVerification(HybridVerifier verifier)
             throws MojoExecutionException {
         try {
-            return verifier.verify(file.toPath(), signature.toPath(), buildPqcKeyConfig());
+            return verifier.verify(file.toPath(), signature.toPath());
         } catch (Exception e) {
             throw new MojoExecutionException("Verification failed", e);
         }
     }
 
-    /**
-     * Logs the verification report to the Maven console.
-     * <p>
-     * The report includes details about both GPG and PQC verification results.
-     *
-     *
-     * @param report the verification report to log
-     */
     private void logReport(VerificationReport report) {
         getLog().info("");
         getLog().info("========================================");
@@ -255,48 +95,26 @@ public class VerifyArtifactMojo extends AbstractMojo {
         getLog().info("");
     }
 
-    /**
-     * Checks the verification result against the configured policy.
-     * <p>
-     * This method enforces the verification policy:
-     * <ul>
-     * <li>In strict mode: both GPG and PQC must pass</li>
-     * <li>In transitional mode: only GPG must pass</li>
-     * <li>Always fails if PQC result is FAIL (regardless of mode)</li>
-     * </ul>
-     *
-     *
-     * @param report the verification report
-     * @throws MojoExecutionException if verification fails per policy
-     */
     private void checkVerificationResult(VerificationReport report)
             throws MojoExecutionException {
-        // Always fail on PQC FAIL (not NO_KEY or NOT_PRESENT)
-        if (report.pqcResult() == VerificationResult.FAIL) {
-            throw new MojoExecutionException(
-                    "PQC signature verification failed - signature is invalid");
+        boolean pass = lenient ? report.isLenientPass() : report.isPass();
+        if (!pass) {
+            throw new MojoExecutionException(failureMessage(report));
         }
-
-        // In strict mode, require both signatures to pass
-        if (strict && !report.isStrictPass()) {
-            if (report.pqcResult() == VerificationResult.NOT_PRESENT) {
-                throw new MojoExecutionException(
-                        "Strict mode requires PQC signature, but only classic signature is present");
-            } else if (report.pqcResult() == VerificationResult.NO_KEY) {
-                throw new MojoExecutionException(
-                        "Strict mode requires PQC signature verification, but PQC key is not available");
-            } else {
-                throw new MojoExecutionException(
-                        "Strict mode requires both signatures to pass");
-            }
-        }
-
-        // In any mode, require at least the classic signature to pass
-        if (!report.isTransitionalPass()) {
-            throw new MojoExecutionException(
-                    "Classic GPG signature verification failed");
-        }
-
         getLog().info("Verification successful!");
+    }
+
+    private String failureMessage(VerificationReport report) {
+        return switch (report.outcome()) {
+            case NONE_PASSED -> report.signatures().isEmpty()
+                    ? "No signatures found in signature file"
+                    : "No signatures could be verified - check that the required keys are available";
+            case PASS_WITH_FAILURES ->
+                "Signature verification failed - one or more signatures are invalid";
+            case PASS_WITH_SKIPS ->
+                "Not all signatures could be verified - use pqc.lenient=true to tolerate skipped signatures";
+            case ALL_PASS ->
+                throw new IllegalStateException("failureMessage called with ALL_PASS outcome");
+        };
     }
 }

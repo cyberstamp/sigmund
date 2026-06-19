@@ -92,14 +92,13 @@ class RoundTripIntegrationTest {
 
     /**
      * Tests the complete round-trip flow: sign with hybrid signer, verify with
-     * hybrid verifier, and validate that both signatures pass.
+     * hybrid verifier, and validate that all signatures pass.
      * <p>
      * This test verifies that:
      * <ul>
      * <li>Hybrid signing produces a valid combined signature file</li>
-     * <li>The classical GPG signature component is valid</li>
-     * <li>The PQC Sequoia signature component is valid</li>
-     * <li>{@link VerificationReport#isStrictPass()} returns true (both components pass)</li>
+     * <li>All signature blocks are independently verified</li>
+     * <li>{@link VerificationReport#isPass()} returns true (all signatures pass)</li>
      * </ul>
      *
      * <p>
@@ -124,15 +123,17 @@ class RoundTripIntegrationTest {
         signer.sign(artifact, signature);
 
         // Act: Verify the signature
-        VerificationReport report = verifier.verify(artifact, signature, PqcKeyConfig.fingerprint(pqcFingerprint));
+        VerificationReport report = verifier.verify(artifact, signature);
 
-        // Assert: Both classic and PQC signatures should pass
-        assertEquals(VerificationResult.PASS, report.classicResult(),
-                "Classic (GPG) signature should be valid");
-        assertEquals(VerificationResult.PASS, report.pqcResult(),
-                "PQC (Sequoia) signature should be valid");
-        assertTrue(report.isStrictPass(),
-                "Strict verification (both signatures) should pass");
+        // Assert: All signatures should pass
+        assertEquals(2, report.signatures().size(),
+                "Should have classic and PQC signatures");
+        assertTrue(report.isPass(),
+                "Strict verification (all signatures) should pass");
+        for (SignatureInfo sig : report.signatures()) {
+            assertEquals(VerificationResult.PASS, sig.result(),
+                    "Signature v" + sig.version() + " should be valid");
+        }
 
         // Print the report for manual inspection
         System.out.println("=== Full Round-Trip Verification Report ===");
@@ -195,8 +196,8 @@ class RoundTripIntegrationTest {
      * <p>
      * This test verifies that:
      * <ul>
-     * <li>Modifying the artifact after signing invalidates both signatures</li>
-     * <li>Both classical and PQC verification results are FAIL</li>
+     * <li>Modifying the artifact after signing invalidates all signatures</li>
+     * <li>Every signature's verification result is FAIL</li>
      * <li>The signature mechanism provides tamper detection</li>
      * </ul>
      *
@@ -221,13 +222,13 @@ class RoundTripIntegrationTest {
 
         // Act: Verify the signature
         HybridVerifier verifier = createHybridVerifier();
-        VerificationReport report = verifier.verify(artifact, signature, PqcKeyConfig.fingerprint(pqcFingerprint));
+        VerificationReport report = verifier.verify(artifact, signature);
 
-        // Assert: Both signatures should fail due to tampering
-        assertEquals(VerificationResult.FAIL, report.classicResult(),
-                "Classic (GPG) signature should fail for tampered artifact");
-        assertEquals(VerificationResult.FAIL, report.pqcResult(),
-                "PQC (Sequoia) signature should fail for tampered artifact");
+        // Assert: All signatures should fail due to tampering
+        for (SignatureInfo sig : report.signatures()) {
+            assertEquals(VerificationResult.FAIL, sig.result(),
+                    "Signature v" + sig.version() + " should fail for tampered artifact");
+        }
 
         System.out.println("=== Tampered Artifact Verification Report ===");
         System.out.println(report.format());

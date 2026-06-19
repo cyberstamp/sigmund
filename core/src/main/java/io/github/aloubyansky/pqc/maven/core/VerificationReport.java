@@ -1,199 +1,160 @@
 package io.github.aloubyansky.pqc.maven.core;
 
+import java.util.List;
+
 /**
- * Represents the combined result of verifying both classic (GPG) and PQC signatures.
+ * Represents the combined result of verifying all signatures in an ASC file.
  * <p>
- * This record encapsulates the verification results from both signature components
- * and provides methods to determine overall verification status under different
- * security policies:
- * <ul>
- * <li><b>Strict mode</b>: Both classic and PQC signatures must pass</li>
- * <li><b>Transitional mode</b>: Only the classic signature must pass (PQC optional)</li>
- * </ul>
+ * Each signature block is parsed, classified by its OpenPGP version, and
+ * verified independently. The report holds the verification result for
+ * every signature found.
  *
- * <p>
- * Example usage:
- *
- * <pre>{@code
- * VerificationReport report = verifier.verify(artifactFile, signatureFile);
- *
- * if (report.isStrictPass()) {
- *     System.out.println("Both signatures valid - quantum-safe!");
- * } else if (report.isTransitionalPass()) {
- *     System.out.println("Classic signature valid - transitional security");
- * } else {
- *     System.err.println("Verification failed!");
- * }
- *
- * System.out.println(report.format());
- * }</pre>
- *
- * @param classicResult the result of classic GPG signature verification
- * @param classicKeyId the GPG key ID that signed the artifact, or null if unavailable
- * @param pqcResult the result of PQC signature verification
- * @param pqcAlgorithm the PQC algorithm used (e.g., "ML-DSA-87+Ed448"), or null if
- *        signature not present
- * @param pqcKeyFingerprint the PQC key fingerprint, or null if unavailable
+ * @param signatures the verification results for each signature block, in order
  *
  * @see HybridVerifier
+ * @see SignatureInfo
  * @see VerificationResult
  */
-public record VerificationReport(
-        VerificationResult classicResult,
-        String classicKeyId,
-        VerificationResult pqcResult,
-        String pqcAlgorithm,
-        String pqcKeyFingerprint) {
+public record VerificationReport(List<SignatureInfo> signatures) {
 
-    /**
-     * Determines if verification passes under strict security policy.
-     * <p>
-     * Strict mode requires both classic and PQC signatures to be present and valid.
-     * This provides quantum-resistant security by ensuring both signature types pass.
-     *
-     *
-     * @return true if both {@link #classicResult} and {@link #pqcResult} are
-     *         {@link VerificationResult#PASS}, false otherwise
-     */
-    public boolean isStrictPass() {
-        return classicResult == VerificationResult.PASS
-                && pqcResult == VerificationResult.PASS;
+    public VerificationReport {
+        signatures = List.copyOf(signatures);
     }
 
     /**
-     * Determines if verification passes under transitional security policy.
-     * <p>
-     * Transitional mode requires only the classic GPG signature to be valid. This
-     * allows for gradual migration to PQC signatures while maintaining backward
-     * compatibility with existing classic-only signatures.
+     * Computes the aggregate outcome from the individual signature results.
      *
-     *
-     * @return true if {@link #classicResult} is {@link VerificationResult#PASS},
-     *         false otherwise (regardless of PQC result)
+     * @return the {@link VerificationOutcome} for this report
      */
-    public boolean isTransitionalPass() {
-        return classicResult == VerificationResult.PASS;
+    public VerificationOutcome outcome() {
+        if (signatures.isEmpty()) {
+            return VerificationOutcome.NONE_PASSED;
+        }
+        boolean anyPass = signatures.stream()
+                .anyMatch(s -> s.result() == VerificationResult.PASS);
+        if (!anyPass) {
+            return VerificationOutcome.NONE_PASSED;
+        }
+        boolean anyFail = signatures.stream()
+                .anyMatch(s -> s.result() == VerificationResult.FAIL);
+        if (anyFail) {
+            return VerificationOutcome.PASS_WITH_FAILURES;
+        }
+        boolean allPass = signatures.stream()
+                .allMatch(s -> s.result() == VerificationResult.PASS);
+        return allPass ? VerificationOutcome.ALL_PASS : VerificationOutcome.PASS_WITH_SKIPS;
+    }
+
+    /**
+     * Determines if verification passes under the default (strict) policy.
+     * <p>
+     * Requires every signature in the file to be verified successfully.
+     * Returns false if there are no signatures.
+     *
+     * @return true if the signature list is non-empty and every signature
+     *         has {@link VerificationResult#PASS}
+     */
+    public boolean isPass() {
+        return outcome() == VerificationOutcome.ALL_PASS;
+    }
+
+    /**
+     * Determines if verification passes under lenient policy.
+     * <p>
+     * Requires at least one signature to pass and no signature to have failed.
+     * Skipped or no-key signatures are tolerated.
+     *
+     * @return true if at least one signature passed and none failed
+     */
+    public boolean isLenientPass() {
+        VerificationOutcome o = outcome();
+        return o == VerificationOutcome.ALL_PASS || o == VerificationOutcome.PASS_WITH_SKIPS;
     }
 
     /**
      * Formats the verification report as a human-readable multi-line string.
      * <p>
-     * The output includes:
-     * <ul>
-     * <li>Classic (GPG) verification result with optional key ID</li>
-     * <li>PQC verification result with algorithm and optional fingerprint</li>
-     * <li>Overall assessment based on both results</li>
-     * </ul>
-     *
-     * <p>
-     * Example output:
-     *
-     * <pre>
-     * Signature Verification Report:
-     *   Classic (GPG):           PASS    [key: 0xABCD1234]
-     *   PQC (ML-DSA-87+Ed448):   PASS    [key: abc123def456]
-     *   Overall: PASS (both signatures valid)
-     * </pre>
+     * Lists each signature with its version, algorithm, verification result,
+     * and key information, followed by an overall assessment.
      *
      * @return a formatted multi-line string describing the verification results
      */
     public String format() {
         StringBuilder sb = new StringBuilder();
         sb.append("Signature Verification Report:\n");
-        formatClassicLine(sb).append("\n");
-        formatPqcLine(sb).append("\n");
+
+        if (signatures.isEmpty()) {
+            sb.append("  No signatures found\n");
+            sb.append("  Overall: FAIL (no valid signatures)");
+            return sb.toString();
+        }
+
+        for (int i = 0; i < signatures.size(); i++) {
+            formatSignatureLine(sb, i + 1, signatures.get(i));
+            sb.append("\n");
+        }
+
         formatOverallLine(sb);
         return sb.toString();
     }
 
-    /**
-     * Appends the classic (GPG) verification result line.
-     * <p>
-     * The line includes the result status and optionally the key ID if available.
-     * The result is left-padded to align with the PQC line.
-     *
-     * @param sb the builder to append to
-     * @return the same builder for chaining
-     */
-    private StringBuilder formatClassicLine(StringBuilder sb) {
-        sb.append("  Classic (GPG):           ");
-        sb.append(String.format("%-11s", classicResult));
+    private void formatSignatureLine(StringBuilder sb, int index, SignatureInfo sig) {
+        sb.append("  [").append(index).append("] ");
+        sb.append(versionLabel(sig.version(), sig.algorithm()));
 
-        if (classicKeyId != null && !classicKeyId.isEmpty()) {
-            sb.append(" [key: ").append(classicKeyId).append("]");
+        String algo = sig.algorithm();
+        if (algo != null && !algo.isEmpty()) {
+            sb.append(" (").append(algo).append(")");
         }
 
-        return sb;
-    }
+        sb.append(": ");
+        sb.append(String.format("%-11s", sig.result()));
 
-    /**
-     * Appends the PQC verification result line.
-     * <p>
-     * The line includes the algorithm name (or "unknown" if not present), the
-     * result status, and optionally the key fingerprint. Special handling for
-     * {@link VerificationResult#NOT_PRESENT} displays a user-friendly message.
-     *
-     * @param sb the builder to append to
-     * @return the same builder for chaining
-     */
-    private StringBuilder formatPqcLine(StringBuilder sb) {
-        String algorithm = (pqcAlgorithm != null) ? pqcAlgorithm : "unknown";
-        sb.append("  PQC (").append(algorithm).append("): ");
-
-        int padding = Math.max(0, SqRunner.DEFAULT_PQC_ALGORITHM.length() - algorithm.length());
-        sb.append(" ".repeat(padding));
-
-        if (pqcResult == VerificationResult.NOT_PRESENT) {
-            sb.append("NOT PRESENT (classic-only signature)");
-        } else {
-            sb.append(String.format("%-11s", pqcResult));
-
-            if (pqcKeyFingerprint != null && !pqcKeyFingerprint.isEmpty()) {
-                sb.append(" [key: ").append(pqcKeyFingerprint).append("]");
-            }
+        if (sig.keyId() != null && !sig.keyId().isEmpty()) {
+            sb.append(" [key: ").append(sig.keyId()).append("]");
         }
 
-        return sb;
+        if (sig.signerUserId() != null && !sig.signerUserId().isEmpty()) {
+            sb.append(" [signer: ").append(sig.signerUserId()).append("]");
+        }
     }
 
-    /**
-     * Appends the overall assessment line based on both results.
-     * <p>
-     * The assessment describes the combined security status:
-     * <ul>
-     * <li>Both PASS: "PASS (both signatures valid)"</li>
-     * <li>Classic PASS, PQC not PASS: "TRANSITIONAL PASS (classic valid, PQC...)"</li>
-     * <li>Classic FAIL: "FAIL (classic signature invalid)"</li>
-     * </ul>
-     *
-     * @param sb the builder to append to
-     * @return the same builder for chaining
-     */
-    private StringBuilder formatOverallLine(StringBuilder sb) {
+    private void formatOverallLine(StringBuilder sb) {
         sb.append("  Overall: ");
-
-        if (isStrictPass()) {
-            sb.append("PASS (both signatures valid)");
-        } else if (isTransitionalPass()) {
-            sb.append("TRANSITIONAL PASS (classic valid, ");
-            if (pqcResult == VerificationResult.NOT_PRESENT) {
-                sb.append("PQC not present");
-            } else if (pqcResult == VerificationResult.NO_KEY) {
-                sb.append("PQC key not available");
-            } else {
-                sb.append("PQC invalid");
+        long passCount = signatures.stream()
+                .filter(s -> s.result() == VerificationResult.PASS).count();
+        switch (outcome()) {
+            case ALL_PASS -> {
+                sb.append("PASS (all ").append(signatures.size()).append(" signature");
+                if (signatures.size() > 1) {
+                    sb.append("s");
+                }
+                sb.append(" valid)");
             }
-            sb.append(")");
-        } else {
-            sb.append("FAIL (");
-            if (classicResult == VerificationResult.NO_KEY) {
-                sb.append("classic key not available");
-            } else {
-                sb.append("classic signature invalid");
+            case PASS_WITH_SKIPS ->
+                sb.append("PASS (").append(passCount).append("/")
+                        .append(signatures.size()).append(" verified)");
+            case PASS_WITH_FAILURES -> {
+                long failCount = signatures.stream()
+                        .filter(s -> s.result() == VerificationResult.FAIL).count();
+                sb.append("FAIL (").append(passCount).append("/")
+                        .append(signatures.size()).append(" passed, ")
+                        .append(failCount).append(" failed)");
             }
-            sb.append(")");
+            case NONE_PASSED ->
+                sb.append("FAIL (no valid signatures)");
         }
+    }
 
-        return sb;
+    static String versionLabel(int version, String algorithm) {
+        if (version > 0 && version <= 4) {
+            return "GPG v" + version;
+        } else if (version > 4) {
+            if (algorithm != null && AscCombiner.isPqcAlgorithmName(algorithm)) {
+                return "PQC v" + version;
+            }
+            return "SQ v" + version;
+        }
+        return "unknown";
     }
 }

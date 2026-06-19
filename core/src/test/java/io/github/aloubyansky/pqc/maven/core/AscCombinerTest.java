@@ -183,12 +183,12 @@ class AscCombinerTest {
         System.arraycopy(fingerprint, 0, v6Sig, 16, 32);
         String armored = AscCombiner.armor(v6Sig);
         String expected = "0102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20";
-        assertEquals(expected, AscCombiner.extractV6IssuerFingerprint(armored));
+        assertEquals(expected, AscCombiner.inspectSignaturePacket(armored).issuerFingerprint());
     }
 
     @Test
     void extractV6IssuerFingerprint_v4ReturnsNull() {
-        assertNull(AscCombiner.extractV6IssuerFingerprint(ARMORED_BLOCK_1));
+        assertNull(AscCombiner.inspectSignaturePacket(ARMORED_BLOCK_1).issuerFingerprint());
     }
 
     @Test
@@ -203,6 +203,85 @@ class AscCombinerTest {
         };
         String armored = AscCombiner.armor(compressedWrapped);
         assertEquals(6, AscCombiner.detectSignatureVersion(armored));
+    }
+
+    @Test
+    void extractPublicKeyAlgorithmIdV4() {
+        // ARMORED_BLOCK_1 packet bytes: 0x88 0x5E 0x04 0x00 0x11 ...
+        // bodyOffset=2, version=0x04, sigType=0x00, pubkeyAlgo=0x11 (17=DSA)
+        assertEquals(0x11, AscCombiner.inspectSignaturePacket(ARMORED_BLOCK_1).algorithmId());
+    }
+
+    @Test
+    void extractPublicKeyAlgorithmIdV6() {
+        byte[] v6Data = new byte[] {
+                (byte) 0x88, 0x10, 0x06, 0x00, 0x1F, 0x08, 0x00, 0x06,
+                0x05, 0x02, 0x61, 0x74, 0x00, 0x09, 0x00, 0x0A, 0x09, 0x10
+        };
+        String armored = AscCombiner.armor(v6Data);
+        assertEquals(0x1F, AscCombiner.inspectSignaturePacket(armored).algorithmId());
+    }
+
+    @Test
+    void extractPublicKeyAlgorithmIdV3() {
+        // v3 signature packet: version(03) hashLen(05) sigType(00)
+        // creationTime(4 bytes) keyId(8 bytes) pubkeyAlgo(01=RSA) hashAlgo(02)
+        byte[] v3Data = new byte[] {
+                (byte) 0x88, 0x20, // tag 2 (signature), old format, 1-byte length
+                0x03, // version 3
+                0x05, // hash material length
+                0x00, // signature type
+                0x61, 0x74, 0x00, 0x00, // creation time
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, // key ID (8 bytes)
+                0x01, // public-key algorithm (1 = RSA)
+                0x02, // hash algorithm
+                0x00, 0x00, // hash prefix
+                // ... (rest of signature data truncated for test)
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        };
+        String armored = AscCombiner.armor(v3Data);
+        AscCombiner.SignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+        assertEquals(3, info.version());
+        assertEquals(1, info.algorithmId()); // RSA
+    }
+
+    @Test
+    void isPqcAlgorithmBoundaries() {
+        assertFalse(AscCombiner.isPqcAlgorithm(28)); // Ed448
+        assertFalse(AscCombiner.isPqcAlgorithm(29)); // unassigned
+        assertTrue(AscCombiner.isPqcAlgorithm(30)); // ML-DSA-65+Ed25519
+        assertTrue(AscCombiner.isPqcAlgorithm(31)); // ML-DSA-87+Ed448
+        assertTrue(AscCombiner.isPqcAlgorithm(36)); // ML-KEM-1024+X448
+        assertFalse(AscCombiner.isPqcAlgorithm(37)); // unassigned
+    }
+
+    @Test
+    void algorithmNameKnown() {
+        assertEquals("RSA", AscCombiner.algorithmName(1));
+        assertEquals("DSA", AscCombiner.algorithmName(17));
+        assertEquals("Ed25519", AscCombiner.algorithmName(27));
+        assertEquals("ML-DSA-87+Ed448", AscCombiner.algorithmName(31));
+    }
+
+    @Test
+    void algorithmNameUnknown() {
+        assertNull(AscCombiner.algorithmName(99));
+        assertNull(AscCombiner.algorithmName(-1));
+    }
+
+    @Test
+    void isPqcAlgorithmNamePqc() {
+        assertTrue(AscCombiner.isPqcAlgorithmName("ML-DSA-87+Ed448"));
+        assertTrue(AscCombiner.isPqcAlgorithmName("ML-DSA-65+Ed25519"));
+        assertTrue(AscCombiner.isPqcAlgorithmName("SLH-DSA-SHAKE-128s"));
+    }
+
+    @Test
+    void isPqcAlgorithmNameClassical() {
+        assertFalse(AscCombiner.isPqcAlgorithmName("RSA"));
+        assertFalse(AscCombiner.isPqcAlgorithmName("Ed25519"));
+        assertFalse(AscCombiner.isPqcAlgorithmName(null));
     }
 
     private int countOccurrences(String text, String pattern) {

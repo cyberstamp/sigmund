@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.bouncycastle.bcpg.ArmoredInputStream;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 
@@ -159,11 +160,39 @@ public final class AscCombiner {
     }
 
     /**
+     * Metadata extracted from a signature packet in a single dearmor pass.
+     *
+     * @param version the OpenPGP signature version (e.g., 4 or 6), or -1 if detection fails
+     * @param algorithmId the public-key algorithm ID, or -1 if extraction fails
+     * @param issuerFingerprint the issuer fingerprint as an uppercase hex string, or null if not found
+     */
+    public record SignaturePacketInfo(int version, int algorithmId, String issuerFingerprint) {
+    }
+
+    /**
+     * Extracts version, algorithm ID, and issuer fingerprint from an armored
+     * block in a single dearmor pass.
+     *
+     * @param armoredBlock a single ASCII-armored OpenPGP block
+     * @return the extracted metadata
+     */
+    public static SignaturePacketInfo inspectSignaturePacket(String armoredBlock) {
+        try {
+            byte[] raw = dearmorInternal(armoredBlock);
+            int version = detectVersionFromPackets(raw);
+            int bodyOffset = packetBodyOffset(raw);
+            int algoId = extractPublicKeyAlgoId(raw, bodyOffset, version);
+            String fingerprint = (version >= 5)
+                    ? extractIssuerFingerprintFromPackets(raw)
+                    : null;
+            return new SignaturePacketInfo(version, algoId, fingerprint);
+        } catch (IOException e) {
+            return new SignaturePacketInfo(-1, -1, null);
+        }
+    }
+
+    /**
      * Detects the OpenPGP signature version from an armored block.
-     * <p>
-     * Parses the packet header to locate the body, where the first byte is the
-     * version. Classical signatures use version 4, post-quantum signatures
-     * use version 6 (RFC 9580).
      *
      * @param armoredBlock a single ASCII-armored OpenPGP block
      * @return the signature version (e.g., 4 or 6), or -1 if detection fails
@@ -177,31 +206,97 @@ public final class AscCombiner {
         }
     }
 
+    // IANA OpenPGP Public Key Algorithms registry (RFC 9580 + RFC 9980)
+    private static final Map<Integer, String> ALGORITHM_NAMES = Map.ofEntries(
+            Map.entry(1, "RSA"),
+            Map.entry(2, "RSA"),
+            Map.entry(3, "RSA"),
+            Map.entry(16, "Elgamal"),
+            Map.entry(17, "DSA"),
+            Map.entry(18, "ECDH"),
+            Map.entry(19, "ECDSA"),
+            Map.entry(22, "EdDSA"),
+            Map.entry(25, "X25519"),
+            Map.entry(26, "X448"),
+            Map.entry(27, "Ed25519"),
+            Map.entry(28, "Ed448"),
+            Map.entry(30, "ML-DSA-65+Ed25519"),
+            Map.entry(31, "ML-DSA-87+Ed448"),
+            Map.entry(32, "SLH-DSA-SHAKE-128s"),
+            Map.entry(33, "SLH-DSA-SHAKE-128f"),
+            Map.entry(34, "SLH-DSA-SHAKE-256s"),
+            Map.entry(35, "ML-KEM-768+X25519"),
+            Map.entry(36, "ML-KEM-1024+X448"));
+
     /**
-     * Extracts the issuer fingerprint from a v6 signature packet's
-     * Issuer Fingerprint subpacket (type 33).
+     * Returns the human-readable name for an OpenPGP public-key algorithm ID.
      *
-     * @param armoredBlock a single ASCII-armored OpenPGP block
-     * @return the issuer fingerprint as an uppercase hex string, or null if not found
+     * @param algorithmId the IANA-registered algorithm ID
+     * @return the algorithm name, or null if the ID is not recognized
      */
-    public static String extractV6IssuerFingerprint(String armoredBlock) {
-        try {
-            byte[] raw = dearmorInternal(armoredBlock);
-            return extractV6IssuerFingerprintFromPackets(raw);
-        } catch (IOException e) {
-            return null;
+    static String algorithmName(int algorithmId) {
+        return ALGORITHM_NAMES.get(algorithmId);
+    }
+
+    /**
+     * Checks whether an OpenPGP public-key algorithm ID designates a
+     * post-quantum composite or standalone algorithm.
+     * <p>
+     * This check is based on the IANA OpenPGP Public Key Algorithms registry
+     * as of RFC 9980. The PQC algorithm IDs are 30-36 (ML-DSA, SLH-DSA,
+     * ML-KEM composites). This range may need updating as new PQC algorithms
+     * are registered with IANA.
+     *
+     * @param algorithmId the IANA-registered algorithm ID
+     * @return true if the algorithm is PQC
+     */
+    static boolean isPqcAlgorithm(int algorithmId) {
+        return algorithmId >= 30 && algorithmId <= 36;
+    }
+
+    /**
+     * Checks whether an algorithm name corresponds to a PQC algorithm.
+     *
+     * @param algorithmName the algorithm name to check
+     * @return true if the name matches a known PQC algorithm
+     */
+    static boolean isPqcAlgorithmName(String algorithmName) {
+        if (algorithmName == null) {
+            return false;
         }
+        for (var entry : ALGORITHM_NAMES.entrySet()) {
+            if (isPqcAlgorithm(entry.getKey()) && algorithmName.equals(entry.getValue())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Extracts the public-key algorithm ID from the signature packet body.
+     * v3 packets have a different layout (algo at offset 15) than v4+ (offset 2).
+     */
+    private static int extractPublicKeyAlgoId(byte[] raw, int bodyOffset, int version) {
+        if (bodyOffset < 0) {
+            return -1;
+        }
+        if (version == 3) {
+            int offset = bodyOffset + 15;
+            return offset < raw.length ? raw[offset] & 0xFF : -1;
+        }
+        int offset = bodyOffset + 2;
+        return offset < raw.length ? raw[offset] & 0xFF : -1;
     }
 
     private static final int SUBPACKET_TYPE_ISSUER_FINGERPRINT = 33;
 
-    private static String extractV6IssuerFingerprintFromPackets(byte[] raw) {
+    private static String extractIssuerFingerprintFromPackets(byte[] raw) {
         int bodyOffset = packetBodyOffset(raw);
         if (bodyOffset < 0 || bodyOffset >= raw.length) {
             return null;
         }
         int version = raw[bodyOffset] & 0xFF;
-        if (version < 6) {
+        if (version < 5) {
             return null;
         }
         // After version, sig type, pubkey algo, hash algo:

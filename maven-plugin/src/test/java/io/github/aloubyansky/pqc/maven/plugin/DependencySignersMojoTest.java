@@ -144,13 +144,15 @@ class DependencySignersMojoTest {
 
             java.lang.reflect.Method method = SignatureInspector.class.getDeclaredMethod(
                     "inspectGpgBlock", String.class, String.class, String.class,
-                    int.class, java.nio.file.Path.class);
+                    io.github.aloubyansky.pqc.maven.core.AscCombiner.SignaturePacketInfo.class,
+                    java.nio.file.Path.class);
             method.setAccessible(true);
 
+            var pktInfo = new io.github.aloubyansky.pqc.maven.core.AscCombiner.SignaturePacketInfo(4, 17, null);
             SignedArtifact entry1 = (SignedArtifact) method.invoke(
-                    inspector, "com.example:lib:1.0", "central", block1, 4, artifactFile);
+                    inspector, "com.example:lib:1.0", "central", block1, pktInfo, artifactFile);
             SignedArtifact entry2 = (SignedArtifact) method.invoke(
-                    inspector, "com.example:lib:1.0", "central", block2, 4, artifactFile);
+                    inspector, "com.example:lib:1.0", "central", block2, pktInfo, artifactFile);
 
             assertEquals("Signer A <a@example.com>", entry1.signatureInfo().signerUserId());
             assertEquals("AAAAAAAAAAAAAAAA", entry1.signatureInfo().keyId());

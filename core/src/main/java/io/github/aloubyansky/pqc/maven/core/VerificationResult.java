@@ -3,10 +3,10 @@ package io.github.aloubyansky.pqc.maven.core;
 /**
  * Represents the outcome of a signature verification operation.
  * <p>
- * This enum is used by {@link HybridVerifier} to report the result of both
- * classic (GPG) and PQC (Sequoia) signature verification. It distinguishes
- * between successful verification, failed verification, missing keys, and
- * absent signatures.
+ * This enum is used by {@link HybridVerifier} to report the result of each
+ * individual signature verification. It distinguishes between successful
+ * verification, failed verification, missing keys, absent signatures,
+ * and intentionally skipped verification.
  *
  *
  * @see HybridVerifier
@@ -50,10 +50,8 @@ public enum VerificationResult {
     /**
      * The signature is not present in the signature file.
      * <p>
-     * This is used specifically for PQC verification when the signature file
-     * contains only a classic GPG signature and no PQC signature. This allows
-     * {@link VerificationReport} to distinguish between classic-only signatures
-     * and hybrid signatures where the PQC component failed.
+     * This indicates that no signature block of the expected type was found
+     * in the signature file.
      *
      */
     NOT_PRESENT,
