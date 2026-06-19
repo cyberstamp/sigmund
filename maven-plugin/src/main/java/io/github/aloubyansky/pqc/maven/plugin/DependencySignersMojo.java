@@ -16,12 +16,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
-import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
-import org.apache.maven.plugins.annotations.ResolutionScope;
 
 /**
  * Reports signer information for all project dependencies by downloading and
@@ -35,7 +33,7 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
  * The signature file is downloaded from the same remote repository that provided the
  * artifact itself, ensuring the reported signer matches the actual artifact in use.
  */
-@Mojo(name = "dependency-signers", defaultPhase = LifecyclePhase.VALIDATE, requiresDependencyResolution = ResolutionScope.TEST, threadSafe = true)
+@Mojo(name = "dependency-signers", defaultPhase = LifecyclePhase.VALIDATE, threadSafe = true)
 public class DependencySignersMojo extends AbstractDependencyMojo {
 
     /**
@@ -74,7 +72,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                 config != null ? config.settings() : TrustConfig.Settings.defaults());
         SignatureInspector inspector = buildInspector(settings);
 
-        Set<Artifact> artifacts = resolveDependencies();
+        List<ArtifactCoords> artifacts = resolveDependencies();
         getLog().info("Inspecting signatures for " + artifacts.size() + " dependency(ies)...");
         getLog().info("");
 

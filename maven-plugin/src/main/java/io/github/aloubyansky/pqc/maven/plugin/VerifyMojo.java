@@ -12,13 +12,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
-import org.apache.maven.plugins.annotations.ResolutionScope;
 
 /**
  * Verifies that all project dependencies are signed by trusted signers as defined
@@ -34,7 +32,7 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
  * @see TrustConfigParser
  * @see SignatureInspector
  */
-@Mojo(name = "verify", defaultPhase = LifecyclePhase.VALIDATE, requiresDependencyResolution = ResolutionScope.TEST, threadSafe = true)
+@Mojo(name = "verify", defaultPhase = LifecyclePhase.VALIDATE, threadSafe = true)
 public class VerifyMojo extends AbstractDependencyMojo {
 
     /**
@@ -68,13 +66,13 @@ public class VerifyMojo extends AbstractDependencyMojo {
         TrustConfig config = loadConfig();
         TrustConfig.Settings settings = mergeSettings(config.settings());
 
-        Set<Artifact> artifacts = resolveDependencies();
+        List<ArtifactCoords> artifacts = resolveDependencies();
         getLog().info("Verifying signers for " + artifacts.size() + " dependency(ies)...");
 
         ArtifactMatcher matcher = new ArtifactMatcher(config);
 
-        List<Artifact> toInspect = new ArrayList<>();
-        List<Artifact> unmatchedArtifacts = new ArrayList<>();
+        List<ArtifactCoords> toInspect = new ArrayList<>();
+        List<ArtifactCoords> unmatchedArtifacts = new ArrayList<>();
         List<String> skippedCoords = new ArrayList<>();
         Map<String, List<String>> matchedSignerRefs = new HashMap<>();
 
@@ -109,12 +107,12 @@ public class VerifyMojo extends AbstractDependencyMojo {
     /**
      * Classifies each artifact as unsigned-allowed, trust-matched, or unmatched.
      */
-    private void classifyArtifacts(Set<Artifact> artifacts, ArtifactMatcher matcher,
-            List<Artifact> toInspect, List<String> skippedCoords,
-            List<Artifact> unmatchedArtifacts,
+    private void classifyArtifacts(List<ArtifactCoords> artifacts, ArtifactMatcher matcher,
+            List<ArtifactCoords> toInspect, List<String> skippedCoords,
+            List<ArtifactCoords> unmatchedArtifacts,
             Map<String, List<String>> matchedSignerRefs) {
-        for (Artifact artifact : artifacts) {
-            String coords = SignatureInspector.formatCoordinates(artifact);
+        for (ArtifactCoords artifact : artifacts) {
+            String coords = artifact.toString();
 
             if (matcher.isUnsigned(artifact)) {
                 skippedCoords.add(coords);
@@ -136,24 +134,21 @@ public class VerifyMojo extends AbstractDependencyMojo {
      * to the same list. If matchedSignerRefs is provided, the POM inherits the same
      * signer refs as the original artifact.
      */
-    void addPomArtifacts(List<Artifact> artifacts,
+    void addPomArtifacts(List<ArtifactCoords> artifacts,
             Map<String, List<String>> matchedSignerRefs) {
-        List<Artifact> poms = new ArrayList<>();
-        for (Artifact artifact : artifacts) {
-            if ("pom".equals(artifact.getType())) {
+        List<ArtifactCoords> poms = new ArrayList<>();
+        for (ArtifactCoords artifact : artifacts) {
+            if ("pom".equals(artifact.type())) {
                 continue;
             }
-            Artifact pom = new org.apache.maven.artifact.DefaultArtifact(
-                    artifact.getGroupId(), artifact.getArtifactId(), artifact.getVersion(),
-                    artifact.getScope(), "pom", "",
-                    new org.apache.maven.artifact.handler.DefaultArtifactHandler("pom"));
+            ArtifactCoords pom = new ArtifactCoords(
+                    artifact.groupId(), artifact.artifactId(), "", "pom", artifact.version());
             poms.add(pom);
             if (matchedSignerRefs != null) {
-                String origCoords = SignatureInspector.formatCoordinates(artifact);
+                String origCoords = artifact.toString();
                 List<String> refs = matchedSignerRefs.get(origCoords);
                 if (refs != null) {
-                    String pomCoords = SignatureInspector.formatCoordinates(pom);
-                    matchedSignerRefs.put(pomCoords, refs);
+                    matchedSignerRefs.put(pom.toString(), refs);
                 }
             }
         }
@@ -166,7 +161,7 @@ public class VerifyMojo extends AbstractDependencyMojo {
      * Signed artifacts are grouped by signer uid for consistent report output.
      */
     private void classifyUnmatched(SignatureInspector inspector,
-            List<Artifact> unmatchedArtifacts, VerificationState state) {
+            List<ArtifactCoords> unmatchedArtifacts, VerificationState state) {
         List<SignedArtifact> inspected = inspector.inspectAll(unmatchedArtifacts);
         Map<String, List<SignedArtifact>> byArtifact = groupByCoordinates(inspected);
 

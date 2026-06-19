@@ -5,8 +5,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.List;
-import org.apache.maven.artifact.DefaultArtifact;
-import org.apache.maven.artifact.handler.DefaultArtifactHandler;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -254,9 +252,8 @@ class ArtifactMatcherTest {
                     trust:
                       com.example:lib:jar:sources:2.0: alice
                     """);
-            var artifact = new DefaultArtifact(
-                    "com.example", "lib", "2.0", "compile", "jar",
-                    "sources", new DefaultArtifactHandler("jar"));
+            var artifact = new ArtifactCoords(
+                    "com.example", "lib", "sources", "jar", "2.0");
             assertEquals(List.of("alice"), matcher.findTrustedSignerRefs(artifact));
         }
 
@@ -268,9 +265,8 @@ class ArtifactMatcherTest {
                     trust:
                       com.example:lib:jar:sources:2.0: alice
                     """);
-            var artifact = new DefaultArtifact(
-                    "com.example", "lib", "2.0", "compile", "jar",
-                    "javadoc", new DefaultArtifactHandler("jar"));
+            var artifact = new ArtifactCoords(
+                    "com.example", "lib", "javadoc", "jar", "2.0");
             assertNull(matcher.findTrustedSignerRefs(artifact));
         }
 
@@ -295,11 +291,9 @@ class ArtifactMatcherTest {
         }
     }
 
-    private static org.apache.maven.artifact.Artifact createArtifact(
+    private static ArtifactCoords createArtifact(
             String groupId, String artifactId, String version) {
-        return new DefaultArtifact(
-                groupId, artifactId, version, "compile", "jar",
-                "", new DefaultArtifactHandler("jar"));
+        return new ArtifactCoords(groupId, artifactId, "", "jar", version);
     }
 
     private ArtifactMatcher matcher(String yaml) throws IOException {

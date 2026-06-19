@@ -8,9 +8,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.apache.maven.artifact.Artifact;
-import org.apache.maven.artifact.DefaultArtifact;
-import org.apache.maven.artifact.handler.DefaultArtifactHandler;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -228,40 +225,37 @@ class VerifyMojoTest {
     @Nested
     class PomVerificationTests {
 
-        private Artifact jarArtifact(String groupId, String artifactId, String version) {
-            return new DefaultArtifact(
-                    groupId, artifactId, version, "compile", "jar", "",
-                    new DefaultArtifactHandler("jar"));
+        private ArtifactCoords jarArtifact(String groupId, String artifactId, String version) {
+            return new ArtifactCoords(groupId, artifactId, "", "jar", version);
         }
 
         @Test
         void addPomArtifactsCreatesPomForEachJar() {
             var mojo = new VerifyMojo();
-            List<Artifact> artifacts = new ArrayList<>();
+            List<ArtifactCoords> artifacts = new ArrayList<>();
             artifacts.add(jarArtifact("com.example", "lib-a", "1.0"));
             artifacts.add(jarArtifact("com.example", "lib-b", "2.0"));
 
             mojo.addPomArtifacts(artifacts, null);
 
             assertEquals(4, artifacts.size());
-            Artifact pomA = artifacts.get(2);
-            assertEquals("com.example", pomA.getGroupId());
-            assertEquals("lib-a", pomA.getArtifactId());
-            assertEquals("pom", pomA.getType());
-            assertEquals("1.0", pomA.getVersion());
+            ArtifactCoords pomA = artifacts.get(2);
+            assertEquals("com.example", pomA.groupId());
+            assertEquals("lib-a", pomA.artifactId());
+            assertEquals("pom", pomA.type());
+            assertEquals("1.0", pomA.version());
 
-            Artifact pomB = artifacts.get(3);
-            assertEquals("lib-b", pomB.getArtifactId());
-            assertEquals("pom", pomB.getType());
+            ArtifactCoords pomB = artifacts.get(3);
+            assertEquals("lib-b", pomB.artifactId());
+            assertEquals("pom", pomB.type());
         }
 
         @Test
         void addPomArtifactsSkipsExistingPomArtifacts() {
             var mojo = new VerifyMojo();
-            List<Artifact> artifacts = new ArrayList<>();
-            artifacts.add(new DefaultArtifact(
-                    "com.example", "parent", "1.0", "compile", "pom", "",
-                    new DefaultArtifactHandler("pom")));
+            List<ArtifactCoords> artifacts = new ArrayList<>();
+            artifacts.add(new ArtifactCoords(
+                    "com.example", "parent", "", "pom", "1.0"));
 
             mojo.addPomArtifacts(artifacts, null);
 
@@ -271,8 +265,8 @@ class VerifyMojoTest {
         @Test
         void addPomArtifactsInheritsSignerRefs() {
             var mojo = new VerifyMojo();
-            Artifact jar = jarArtifact("com.example", "lib", "1.0");
-            List<Artifact> artifacts = new ArrayList<>();
+            ArtifactCoords jar = jarArtifact("com.example", "lib", "1.0");
+            List<ArtifactCoords> artifacts = new ArrayList<>();
             artifacts.add(jar);
 
             Map<String, List<String>> refs = new HashMap<>();

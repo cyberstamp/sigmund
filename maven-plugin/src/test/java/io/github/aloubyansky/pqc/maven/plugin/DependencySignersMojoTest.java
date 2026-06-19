@@ -8,9 +8,6 @@ import io.github.aloubyansky.pqc.maven.plugin.SignatureInspector.SignedArtifact;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
-import org.apache.maven.artifact.Artifact;
-import org.apache.maven.artifact.DefaultArtifact;
-import org.apache.maven.artifact.handler.DefaultArtifactHandler;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -47,33 +44,33 @@ class DependencySignersMojoTest {
         assertEquals(-1, signer.signatureInfo().version());
     }
 
-    // --- formatCoordinates tests ---
+    // --- ArtifactCoords.toString tests ---
 
     @Test
-    void formatCoordinates_simpleJar() {
-        Artifact artifact = createArtifact("com.example", "lib", "1.0");
-        assertEquals("com.example:lib:1.0", SignatureInspector.formatCoordinates(artifact));
+    void artifactCoords_simpleJar() {
+        ArtifactCoords coords = createArtifact("com.example", "lib", "1.0");
+        assertEquals("com.example:lib:1.0", coords.toString());
     }
 
     @Test
-    void formatCoordinates_withClassifier() {
-        Artifact artifact = new DefaultArtifact(
-                "com.example", "lib", "1.0", "compile", "jar", "sources", new DefaultArtifactHandler("jar"));
-        assertEquals("com.example:lib:jar:sources:1.0", SignatureInspector.formatCoordinates(artifact));
+    void artifactCoords_withClassifier() {
+        ArtifactCoords coords = new ArtifactCoords(
+                "com.example", "lib", "sources", "jar", "1.0");
+        assertEquals("com.example:lib:jar:sources:1.0", coords.toString());
     }
 
     @Test
-    void formatCoordinates_nonJarType() {
-        Artifact artifact = new DefaultArtifact(
-                "com.example", "lib", "1.0", "compile", "pom", "", new DefaultArtifactHandler("pom"));
-        assertEquals("com.example:lib:pom:1.0", SignatureInspector.formatCoordinates(artifact));
+    void artifactCoords_nonJarType() {
+        ArtifactCoords coords = new ArtifactCoords(
+                "com.example", "lib", "", "pom", "1.0");
+        assertEquals("com.example:lib:pom:1.0", coords.toString());
     }
 
     @Test
-    void formatCoordinates_nonJarTypeWithClassifier() {
-        Artifact artifact = new DefaultArtifact(
-                "com.example", "lib", "1.0", "compile", "zip", "dist", new DefaultArtifactHandler("zip"));
-        assertEquals("com.example:lib:zip:dist:1.0", SignatureInspector.formatCoordinates(artifact));
+    void artifactCoords_nonJarTypeWithClassifier() {
+        ArtifactCoords coords = new ArtifactCoords(
+                "com.example", "lib", "dist", "zip", "1.0");
+        assertEquals("com.example:lib:zip:dist:1.0", coords.toString());
     }
 
     @Test
@@ -230,8 +227,7 @@ class DependencySignersMojoTest {
         }
     }
 
-    private Artifact createArtifact(String groupId, String artifactId, String version) {
-        return new DefaultArtifact(
-                groupId, artifactId, version, "compile", "jar", "", new DefaultArtifactHandler("jar"));
+    private ArtifactCoords createArtifact(String groupId, String artifactId, String version) {
+        return new ArtifactCoords(groupId, artifactId, "", "jar", version);
     }
 }

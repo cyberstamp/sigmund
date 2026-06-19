@@ -3,7 +3,6 @@ package io.github.aloubyansky.pqc.maven.plugin;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import org.apache.maven.artifact.Artifact;
 
 /**
  * Matches Maven artifacts against a {@link TrustConfig}, resolving artifact group
@@ -27,7 +26,7 @@ class ArtifactMatcher {
     /**
      * Checks whether the given artifact is listed as unsigned (signature not expected).
      */
-    boolean isUnsigned(Artifact artifact) {
+    boolean isUnsigned(ArtifactCoords artifact) {
         for (PatternEntry entry : unsignedEntries) {
             if (entry.matches(artifact)) {
                 return true;
@@ -68,7 +67,7 @@ class ArtifactMatcher {
      *
      * @return the list of signer reference IDs, or null if no pattern matches
      */
-    List<String> findTrustedSignerRefs(Artifact artifact) {
+    List<String> findTrustedSignerRefs(ArtifactCoords artifact) {
         return findBestSignerRefs(
                 entry -> entry.pattern.matchScore(artifact));
     }
@@ -212,7 +211,7 @@ class ArtifactMatcher {
         }
 
         /** @return true if this pattern matches the given artifact */
-        boolean matches(Artifact artifact) {
+        boolean matches(ArtifactCoords artifact) {
             return matchScore(artifact) >= 0;
         }
 
@@ -222,9 +221,9 @@ class ArtifactMatcher {
         }
 
         /** Returns the specificity score if this pattern matches, or -1 if not. */
-        int matchScore(Artifact artifact) {
-            return matchScore(artifact.getGroupId(), artifact.getArtifactId(),
-                    artifact.getType(), artifact.getClassifier(), artifact.getVersion());
+        int matchScore(ArtifactCoords artifact) {
+            return matchScore(artifact.groupId(), artifact.artifactId(),
+                    artifact.type(), artifact.classifier(), artifact.version());
         }
 
         /** Returns the specificity score matching only groupId and artifactId. */
