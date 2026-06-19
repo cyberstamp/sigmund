@@ -405,6 +405,12 @@ Bound to the `verify` phase. Signs all project artifacts (JAR, POM, sources, jav
 mvn verify -Dpqc.fingerprint=<FINGERPRINT>
 ```
 
+| Property | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `pqc.fingerprint` | Yes | — | PQC key fingerprint (from keygen) |
+| `gpg.keyname` | No | GPG default | GPG key ID or email for classic signing |
+| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+
 ### `pqc-sign:verify-artifact`
 
 Verify a single signed artifact (standalone, no project required):
@@ -516,9 +522,61 @@ Summary: 1 passed, 2 failed
 | `pqc.verifyAllSignatures` | No | — | When `true`, unverified signatures on trusted artifacts are reported. Overrides the config file setting. |
 | `pqc.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers. Overrides the config file setting. |
 | `pqc.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated keyserver list. Used when `fetchSignerInfo` is enabled. |
+| `pqc.verifyPomFiles` | No | `false` | Also verify signatures on POM files for each dependency |
 | `pqc.skip` | No | `false` | Skip verification |
 | `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `pqc.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
+
+### `pqc-sign:dependency-signers`
+
+Reports signer information for all project dependencies by downloading and inspecting their `.asc` signature files. Each armored block is reported separately with its OpenPGP version (v4 for classical GPG, v6 for PQC). Classical signatures are verified via GPG; PQC signatures are verified via Sequoia when the signer's certificate is available in the local cert store.
+
+Dependencies are grouped by signer, sorted alphabetically. Each signer block shows the signature type (GPG/PQC) and key ID, followed by the artifacts signed by that signer. Unsigned artifacts and unverified signatures are reported separately.
+
+```bash
+# Report signers
+mvn pqc-sign:dependency-signers
+
+# Generate trust-config.yaml from actual signatures
+mvn pqc-sign:dependency-signers -Dpqc.generateTrustConfig=true -Dpqc.fetchSignerInfo=true
+
+# Update an existing trust-config.yaml with newly added dependencies
+mvn pqc-sign:dependency-signers -Dpqc.updateTrustConfig=true -Dpqc.fetchSignerInfo=true
+```
+
+**Generating a trust config.** Use `-Dpqc.generateTrustConfig=true` to create an initial `trust-config.yaml` from your project's actual dependency signatures. The generated file groups artifacts by signer, collapses common groupId prefixes into wildcard patterns (e.g., `io.quarkus.*`), and lists unsigned artifacts in the `unsigned` section. The file can be used directly with the `verify` goal.
+
+**Updating a trust config.** Use `-Dpqc.updateTrustConfig=true` to add new dependency signers to an existing `trust-config.yaml`. This is useful after adding new dependencies — existing content including comments and formatting is preserved, and new entries are inserted at the end of each section. Review the changes with `git diff`.
+
+Example output:
+
+```
+Signer: Alice <alice@example.com>
+   GPG: 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
+   PQC: D62AAB339E45E5EA2FD036872B01D46A517A2991...
+     com.example:lib-a:1.0
+     com.example:lib-b:2.0
+
+Signer: NOT VERIFIED
+   GPG: DEADBEEFDEADBEEFDEADBEEF
+     com.other:tool:3.0
+
+UNSIGNED
+  com.internal:util:1.0
+
+Summary: All clear: 4 dependencies, 3 GPG signature(s), 1 PQC signature(s), 2 unique key(s)
+```
+
+| Property | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `pqc.skip` | No | `false` | Skip the report |
+| `pqc.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers to resolve signer identities |
+| `pqc.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
+| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory for PQC cert lookup |
+| `pqc.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
+| `pqc.generateTrustConfig` | No | — | Generate a `trust-config.yaml`. Set to `true` to write to the project root, or provide a file path. Fails if the file already exists unless `pqc.overwrite=true`. |
+| `pqc.overwrite` | No | `false` | Allow overwriting an existing generated trust config file |
+| `pqc.updateTrustConfig` | No | — | Update an existing `trust-config.yaml` by appending unconfigured signers and artifacts. Set to `true` for the default location, or provide a file path. |
 
 ## Testing
 
@@ -609,8 +667,6 @@ The Sequoia PGP team [plans to release stable PQC support](https://sequoia-pgp.o
 ### `sequoia-openpgp` PQC crate not on crates.io
 
 The PQC-enabled `sequoia-openpgp` (version `2.2.0-pqc.1`) is not published on crates.io. Building `sq` from source requires a `[patch.crates-io]` section in `Cargo.toml` to redirect dependency resolution to the PQC branch of the main Sequoia repository. This is expected to be resolved once the PQC support is merged into mainline Sequoia.
-
-### No classic key ID extraction from GPG output
 
 ## Project Structure
 
@@ -721,57 +777,6 @@ mvn pqc-sign:verify-artifact \
 ```
 
 The `--strict` / `pqc.strict=true` flag requires both the classic GPG and PQC signatures to be present and valid. Without it, only the classic GPG signature is required (transitional mode).
-
-### `pqc-sign:dependency-signers`
-
-Reports signer information for all project dependencies by downloading and inspecting their `.asc` signature files. Each armored block is reported separately with its OpenPGP version (v4 for classical GPG, v6 for PQC). Classical signatures are verified via GPG; PQC signatures are verified via Sequoia when the signer's certificate is available in the local cert store.
-
-Dependencies are grouped by signer, sorted alphabetically. Each signer block shows the signature type (GPG/PQC) and key ID, followed by the artifacts signed by that signer. Unsigned artifacts and unverified signatures are reported separately.
-
-```bash
-# Report signers
-mvn pqc-sign:dependency-signers
-
-# Generate trust-config.yaml from actual signatures
-mvn pqc-sign:dependency-signers -Dpqc.generateTrustConfig=true -Dpqc.fetchSignerInfo=true
-
-# Update an existing trust-config.yaml with newly added dependencies
-mvn pqc-sign:dependency-signers -Dpqc.updateTrustConfig=true -Dpqc.fetchSignerInfo=true
-```
-
-**Generating a trust config.** Use `-Dpqc.generateTrustConfig=true` to create an initial `trust-config.yaml` from your project's actual dependency signatures. The generated file groups artifacts by signer, collapses common groupId prefixes into wildcard patterns (e.g., `io.quarkus.*`), and lists unsigned artifacts in the `unsigned` section. The file can be used directly with the `verify` goal.
-
-**Updating a trust config.** Use `-Dpqc.updateTrustConfig=true` to add new dependency signers to an existing `trust-config.yaml`. This is useful after adding new dependencies — existing content including comments and formatting is preserved, and new entries are inserted at the end of each section. Review the changes with `git diff`.
-
-Example output:
-
-```
-Signer: Alice <alice@example.com>
-   GPG: 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
-   PQC: D62AAB339E45E5EA2FD036872B01D46A517A2991...
-     com.example:lib-a:1.0
-     com.example:lib-b:2.0
-
-Signer: NOT VERIFIED
-   GPG: DEADBEEFDEADBEEFDEADBEEF
-     com.other:tool:3.0
-
-UNSIGNED
-  com.internal:util:1.0
-
-Summary: All clear: 4 dependencies, 3 GPG signature(s), 1 PQC signature(s), 2 unique key(s)
-```
-
-| Property | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `pqc.skip` | No | `false` | Skip the report |
-| `pqc.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers to resolve signer identities |
-| `pqc.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
-| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory for PQC cert lookup |
-| `pqc.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
-| `pqc.generateTrustConfig` | No | — | Generate a `trust-config.yaml`. Set to `true` to write to the project root, or provide a file path. Fails if the file already exists unless `pqc.overwrite=true`. |
-| `pqc.overwrite` | No | `false` | Allow overwriting an existing generated trust config file |
-| `pqc.updateTrustConfig` | No | — | Update an existing `trust-config.yaml` by appending unconfigured signers and artifacts. Set to `true` for the default location, or provide a file path. |
 
 ## References
 
