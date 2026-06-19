@@ -3,8 +3,6 @@ package io.github.aloubyansky.pqc.maven.plugin;
 import io.github.aloubyansky.pqc.maven.core.SignatureInfo;
 import io.github.aloubyansky.pqc.maven.core.VerificationResult;
 import io.github.aloubyansky.pqc.maven.plugin.SignatureInspector.SignedArtifact;
-import java.io.File;
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -38,12 +36,6 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
  */
 @Mojo(name = "verify", defaultPhase = LifecyclePhase.VALIDATE, requiresDependencyResolution = ResolutionScope.TEST, threadSafe = true)
 public class VerifyMojo extends AbstractDependencyMojo {
-
-    /**
-     * Path to the trust configuration file.
-     */
-    @Parameter(property = "pqc.trustConfig", defaultValue = "${project.basedir}/trust-config.yaml")
-    private File trustConfigFile;
 
     /**
      * Policy when an artifact is signed by an untrusted signer: {@code fail} or {@code warn}.
@@ -396,35 +388,27 @@ public class VerifyMojo extends AbstractDependencyMojo {
     // ── Config loading ──────────────────────────────────────
 
     private TrustConfig loadConfig() throws MojoExecutionException {
-        if (trustConfigFile == null) {
-            throw new MojoExecutionException(
-                    "trustConfig file is not configured. "
-                            + "Create a trust-config.yaml in the project root or set -Dpqc.trustConfig=<path>");
-        }
-        if (!trustConfigFile.exists()) {
+        TrustConfig config = loadTrustConfig();
+        if (config == null) {
+            if (trustConfigFile == null) {
+                throw new MojoExecutionException(
+                        "trustConfig file is not configured. "
+                                + "Create a trust-config.yaml in the project root or set -Dpqc.trustConfig=<path>");
+            }
             throw new MojoExecutionException(
                     "trustConfig file not found at "
                             + Path.of("").toAbsolutePath()
                                     .relativize(trustConfigFile.toPath().toAbsolutePath()));
         }
-        try {
-            return TrustConfigParser.parse(trustConfigFile.toPath());
-        } catch (IOException e) {
-            throw new MojoExecutionException("Failed to parse trust configuration", e);
-        } catch (IllegalArgumentException e) {
-            throw new MojoExecutionException(e.getMessage(), e);
-        }
+        return config;
     }
 
-    /**
-     * Merges settings from the config file with mojo parameters.
-     * Mojo parameters take precedence when explicitly set.
-     */
     private TrustConfig.Settings mergeSettings(TrustConfig.Settings fileSettings)
             throws MojoExecutionException {
+        TrustConfig.Settings resolved = resolveSettings(fileSettings);
         String effectiveOnUntrusted = onUntrusted != null
                 ? onUntrusted
-                : fileSettings.onUntrusted();
+                : resolved.onUntrusted();
         if (!TrustConfig.Settings.isValidOnUntrusted(effectiveOnUntrusted)) {
             throw new MojoExecutionException(
                     "Invalid pqc.onUntrusted value '" + effectiveOnUntrusted
@@ -432,33 +416,10 @@ public class VerifyMojo extends AbstractDependencyMojo {
         }
         boolean effectiveVerifyAll = verifyAllSignatures != null
                 ? verifyAllSignatures
-                : fileSettings.verifyAllSignatures();
-
-        List<String> effectiveKeyservers = fileSettings.keyservers();
-        boolean effectiveFetchInfo = fileSettings.fetchSignerInfo();
-
-        if (fetchSignerInfo) {
-            effectiveFetchInfo = true;
-            effectiveKeyservers = SignatureInspector.parseKeyservers(keyservers);
-        }
-
+                : resolved.verifyAllSignatures();
         return new TrustConfig.Settings(
-                effectiveKeyservers, effectiveOnUntrusted,
-                effectiveVerifyAll, effectiveFetchInfo);
-    }
-
-    private SignatureInspector buildInspector(TrustConfig.Settings settings)
-            throws MojoExecutionException {
-        var builder = SignatureInspector.builder()
-                .log(getLog())
-                .repoSystem(repoSystem).repoSession(repoSession).remoteRepos(remoteRepos)
-                .sqHome(sqHome);
-        if (settings.fetchSignerInfo()) {
-            for (String server : settings.keyservers()) {
-                builder.addKeyServer(server);
-            }
-        }
-        return builder.build();
+                resolved.keyservers(), effectiveOnUntrusted,
+                effectiveVerifyAll, resolved.fetchSignerInfo());
     }
 
     // ── Reporting ───────────────────────────────────────────
@@ -695,8 +656,8 @@ public class VerifyMojo extends AbstractDependencyMojo {
                 });
 
         if (!unverifiedKeys.isEmpty()) {
-            logLine(logLevel, "Signer: NOT VERIFIED");
-            unverifiedKeys.forEach(k -> logLine(logLevel, "   " + k));
+            logLine(LOG_WARN, "Signer: NOT VERIFIED");
+            unverifiedKeys.forEach(k -> logLine(LOG_WARN, "   " + k));
         }
 
         coordsList.stream().sorted().forEach(c -> logLine(logLevel, "     " + c));

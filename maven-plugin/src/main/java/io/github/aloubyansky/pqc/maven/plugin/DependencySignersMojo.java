@@ -69,16 +69,10 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             return;
         }
 
-        var builder = SignatureInspector.builder()
-                .log(getLog())
-                .repoSystem(repoSystem).repoSession(repoSession).remoteRepos(remoteRepos)
-                .sqHome(sqHome);
-        if (fetchSignerInfo) {
-            for (String server : SignatureInspector.parseKeyservers(keyservers)) {
-                builder.addKeyServer(server);
-            }
-        }
-        SignatureInspector inspector = builder.build();
+        TrustConfig config = loadTrustConfig();
+        TrustConfig.Settings settings = resolveSettings(
+                config != null ? config.settings() : TrustConfig.Settings.defaults());
+        SignatureInspector inspector = buildInspector(settings);
 
         Set<Artifact> artifacts = resolveDependencies();
         getLog().info("Inspecting signatures for " + artifacts.size() + " dependency(ies)...");
