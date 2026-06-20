@@ -2,17 +2,17 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.github.aloubyansky.pqc.maven</groupId>
-        <artifactId>pqc-maven-parent</artifactId>
+        <groupId>io.github.aloubyansky.sigmund</groupId>
+        <artifactId>sigmund-parent</artifactId>
         <version>0.0.3-SNAPSHOT</version>
     </parent>
-    <artifactId>pqc-sign-maven-plugin</artifactId>
+    <artifactId>sigmund-maven-plugin</artifactId>
     <packaging>maven-plugin</packaging>
-    <name>PQC Sign :: Maven Plugin</name>
+    <name>Sigmund :: Maven Plugin</name>
     <dependencies>
         <dependency>
-            <groupId>io.github.aloubyansky.pqc.maven</groupId>
-            <artifactId>pqc-sign-core</artifactId>
+            <groupId>io.github.aloubyansky.sigmund</groupId>
+            <artifactId>sigmund-core</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>

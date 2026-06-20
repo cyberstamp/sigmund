@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <groupId>io.github.aloubyansky.pqc.maven</groupId>
-    <artifactId>pqc-maven-parent</artifactId>
+    <groupId>io.github.aloubyansky.sigmund</groupId>
+    <artifactId>sigmund-parent</artifactId>
     <version>0.0.3-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <name>PQC Sign :: Parent</name>
-    <description>Tooling for Maven artifact PQC-based signing and signature verification</description>
+    <name>Sigmund :: Parent</name>
+    <description>Sigmund - hybrid PQC signing for Maven artifacts</description>
     <url>https://github.com/aloubyansky/pqc-maven-sign</url>
     <licenses>
         <license>
@@ -271,7 +271,7 @@
                                     <executable>bash</executable>
                                     <arguments>
                                         <argument>-c</argument>
-                                        <argument>echo '${project.version}' | grep -q SNAPSHOT || sed -i '/pqc-sign-maven-plugin/{n;s/&lt;version&gt;[^&lt;]*&lt;\/version&gt;/&lt;version&gt;${project.version}&lt;\/version&gt;/}' ${project.basedir}/README.md</argument>
+                                        <argument>echo '${project.version}' | grep -q SNAPSHOT || sed -i '/sigmund-maven-plugin/{n;s/&lt;version&gt;[^&lt;]*&lt;\/version&gt;/&lt;version&gt;${project.version}&lt;\/version&gt;/}' ${project.basedir}/README.md</argument>
                                     </arguments>
                                 </configuration>
                             </execution>

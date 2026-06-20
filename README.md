@@ -1,4 +1,4 @@
-# PQC Hybrid Signing for Maven Artifacts
+# Sigmund — Hybrid PQC Signing for Maven Artifacts
 
 ## Overview
 
@@ -135,7 +135,7 @@ mvn clean install -DskipTests
 ### 2. Generate a PQC key
 
 ```bash
-java -jar cli/target/pqc-sign.jar keygen \
+java -jar cli/target/sigmund.jar keygen \
   --userid "Your Name <you@example.com>"
 ```
 
@@ -162,7 +162,7 @@ Note: the user ID must be in canonical form (`Name <email>`). Bare email address
 ### 3. Sign an artifact
 
 ```bash
-java -jar cli/target/pqc-sign.jar sign \
+java -jar cli/target/sigmund.jar sign \
   --file target/my-artifact-1.0.jar \
   --pqc-fingerprint <FINGERPRINT>
 ```
@@ -172,7 +172,7 @@ This produces `my-artifact-1.0.jar.asc` containing the classic GPG and PQC signa
 ### 4. Verify a signature
 
 ```bash
-java -jar cli/target/pqc-sign.jar verify \
+java -jar cli/target/sigmund.jar verify \
   --file target/my-artifact-1.0.jar \
   --signature target/my-artifact-1.0.jar.asc
 ```
@@ -295,12 +295,12 @@ The `.asc` file starts with a standard armored block containing only the classic
 
 ## CLI Reference
 
-### `pqc-sign keygen`
+### `sigmund keygen`
 
 Generate a PQC hybrid keypair.
 
 ```
-pqc-sign keygen --userid <USER_ID> [--cipher-suite <SUITE>] [--sq-home <DIR>]
+sigmund keygen --userid <USER_ID> [--cipher-suite <SUITE>] [--sq-home <DIR>]
 ```
 
 | Option | Required | Default | Description |
@@ -309,12 +309,12 @@ pqc-sign keygen --userid <USER_ID> [--cipher-suite <SUITE>] [--sq-home <DIR>]
 | `--cipher-suite` | No | `mldsa87-ed448` | PQC cipher suite (e.g., `mldsa65-ed25519` for ML-DSA-65) |
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 
-### `pqc-sign sign`
+### `sigmund sign`
 
 Create a hybrid signature (classic GPG + PQC).
 
 ```
-pqc-sign sign --file <FILE> --pqc-fingerprint <FP> [options]
+sigmund sign --file <FILE> --pqc-fingerprint <FP> [options]
 ```
 
 | Option | Required | Default | Description |
@@ -325,12 +325,12 @@ pqc-sign sign --file <FILE> --pqc-fingerprint <FP> [options]
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `--output` | No | `<file>.asc` | Output signature file path |
 
-### `pqc-sign verify`
+### `sigmund verify`
 
 Verify a hybrid signature.
 
 ```
-pqc-sign verify --file <FILE> --signature <ASC> [options]
+sigmund verify --file <FILE> --signature <ASC> [options]
 ```
 
 | Option | Required | Default | Description |
@@ -340,12 +340,12 @@ pqc-sign verify --file <FILE> --signature <ASC> [options]
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `--lenient` | No | `false` | Pass if at least one signature is valid and none failed |
 
-### `pqc-sign export-cert`
+### `sigmund export-cert`
 
 Export a PQC public certificate for distribution.
 
 ```
-pqc-sign export-cert --fingerprint <FP> [options]
+sigmund export-cert --fingerprint <FP> [options]
 ```
 
 | Option | Required | Default | Description |
@@ -362,8 +362,8 @@ Add to your project's `pom.xml`:
 
 ```xml
 <plugin>
-  <groupId>io.github.aloubyansky.pqc.maven</groupId>
-  <artifactId>pqc-sign-maven-plugin</artifactId>
+  <groupId>io.github.aloubyansky.sigmund</groupId>
+  <artifactId>sigmund-maven-plugin</artifactId>
   <version>0.0.2</version>
   <executions>
     <execution>
@@ -371,7 +371,7 @@ Add to your project's `pom.xml`:
     </execution>
   </executions>
   <configuration>
-    <pqcFingerprint>${pqc.fingerprint}</pqcFingerprint>
+    <pqcFingerprint>${sigmund.fingerprint}</pqcFingerprint>
     <!-- optional: <gpgKeyName>0xABCD1234</gpgKeyName> -->
   </configuration>
 </plugin>
@@ -387,26 +387,26 @@ Add to your project's `pom.xml`:
 
 This way `mvn verify` picks up the fingerprint automatically — no `-D` flag needed.
 
-### `pqc-sign:sign`
+### `sigmund:sign`
 
 Bound to the `verify` phase. Signs all project artifacts (JAR, POM, sources, javadoc) with classic GPG and PQC, and attaches the `.asc` files for deployment. The `pqcFingerprint` parameter is required — the build will fail if it is not configured.
 
 ```bash
-mvn verify -Dpqc.fingerprint=<FINGERPRINT>
+mvn verify -Dsigmund.fingerprint=<FINGERPRINT>
 ```
 
 | Property | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `pqc.fingerprint` | Yes | — | PQC key fingerprint (from keygen) |
+| `sigmund.fingerprint` | Yes | — | PQC key fingerprint (from keygen) |
 | `gpg.keyname` | No | GPG default | GPG key ID or email for classic signing |
-| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 
-### `pqc-sign:verify-artifact`
+### `sigmund:verify-artifact`
 
 Verify a single signed artifact (standalone, no project required):
 
 ```bash
-mvn pqc-sign:verify-artifact \
+mvn sigmund:verify-artifact \
   -Dfile=artifact.jar \
   -Dsignature=artifact.jar.asc
 ```
@@ -415,15 +415,15 @@ mvn pqc-sign:verify-artifact \
 |----------|----------|---------|-------------|
 | `file` | Yes | — | Artifact file to verify |
 | `signature` | Yes | — | Signature `.asc` file |
-| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
-| `pqc.lenient` | No | `false` | Pass if at least one signature is valid and none failed |
+| `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `sigmund.lenient` | No | `false` | Pass if at least one signature is valid and none failed |
 
-### `pqc-sign:verify`
+### `sigmund:verify`
 
 Verifies that all project dependencies are signed by trusted signers as defined in a `trust-config.yaml` file. Matching is done by GPG/PQC fingerprint when available, falling back to signer user ID. Artifacts listed in the `unsigned` section are skipped.
 
 ```bash
-mvn pqc-sign:verify
+mvn sigmund:verify
 ```
 
 The goal looks for `trust-config.yaml` in the project root by default. The config file uses YAML and has five sections:
@@ -476,9 +476,9 @@ unsigned:
 
 **Unsigned** lists artifact patterns for which no signature is expected.
 
-**Generating the config.** Use `dependency-signers` with `-Dpqc.generateTrustConfig=true` to generate an initial `trust-config.yaml` from your project's actual dependency signatures.
+**Generating the config.** Use `dependency-signers` with `-Dsigmund.generateTrustConfig=true` to generate an initial `trust-config.yaml` from your project's actual dependency signatures.
 
-**Updating the config.** Use `dependency-signers` with `-Dpqc.updateTrustConfig=true` to append any newly added dependencies to an existing config.
+**Updating the config.** Use `dependency-signers` with `-Dsigmund.updateTrustConfig=true` to append any newly added dependencies to an existing config.
 
 Example output:
 
@@ -503,17 +503,17 @@ Summary: 1 passed, 2 failed
 
 | Property | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `pqc.trustConfig` | No | `${project.basedir}/trust-config.yaml` | Path to the trust configuration file |
-| `pqc.onUntrusted` | No | — | Policy for untrusted artifacts: `fail` or `warn`. Overrides the config file setting. |
-| `pqc.verifyAllSignatures` | No | — | When `true`, unverified signatures on trusted artifacts are reported. Overrides the config file setting. |
-| `pqc.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers. Overrides the config file setting. |
-| `pqc.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated keyserver list. Used when `fetchSignerInfo` is enabled. |
-| `pqc.verifyPomFiles` | No | `false` | Also verify signatures on POM files for each dependency |
-| `pqc.skip` | No | `false` | Skip verification |
-| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
-| `pqc.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
+| `sigmund.trustConfig` | No | `${project.basedir}/trust-config.yaml` | Path to the trust configuration file |
+| `sigmund.onUntrusted` | No | — | Policy for untrusted artifacts: `fail` or `warn`. Overrides the config file setting. |
+| `sigmund.verifyAllSignatures` | No | — | When `true`, unverified signatures on trusted artifacts are reported. Overrides the config file setting. |
+| `sigmund.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers. Overrides the config file setting. |
+| `sigmund.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated keyserver list. Used when `fetchSignerInfo` is enabled. |
+| `sigmund.verifyPomFiles` | No | `false` | Also verify signatures on POM files for each dependency |
+| `sigmund.skip` | No | `false` | Skip verification |
+| `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `sigmund.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
 
-### `pqc-sign:dependency-signers`
+### `sigmund:dependency-signers`
 
 Reports signer information for all project dependencies by downloading and inspecting their `.asc` signature files. Each armored block is reported separately with its OpenPGP version (v4 for classical GPG, v6 for PQC). Classical signatures are verified via GPG; PQC signatures are verified via Sequoia when the signer's certificate is available in the local cert store.
 
@@ -521,18 +521,18 @@ Dependencies are grouped by signer, sorted alphabetically. Each signer block sho
 
 ```bash
 # Report signers
-mvn pqc-sign:dependency-signers
+mvn sigmund:dependency-signers
 
 # Generate trust-config.yaml from actual signatures
-mvn pqc-sign:dependency-signers -Dpqc.generateTrustConfig=true -Dpqc.fetchSignerInfo=true
+mvn sigmund:dependency-signers -Dsigmund.generateTrustConfig=true -Dsigmund.fetchSignerInfo=true
 
 # Update an existing trust-config.yaml with newly added dependencies
-mvn pqc-sign:dependency-signers -Dpqc.updateTrustConfig=true -Dpqc.fetchSignerInfo=true
+mvn sigmund:dependency-signers -Dsigmund.updateTrustConfig=true -Dsigmund.fetchSignerInfo=true
 ```
 
-**Generating a trust config.** Use `-Dpqc.generateTrustConfig=true` to create an initial `trust-config.yaml` from your project's actual dependency signatures. The generated file groups artifacts by signer, collapses common groupId prefixes into wildcard patterns (e.g., `io.quarkus.*`), and lists unsigned artifacts in the `unsigned` section. The file can be used directly with the `verify` goal.
+**Generating a trust config.** Use `-Dsigmund.generateTrustConfig=true` to create an initial `trust-config.yaml` from your project's actual dependency signatures. The generated file groups artifacts by signer, collapses common groupId prefixes into wildcard patterns (e.g., `io.quarkus.*`), and lists unsigned artifacts in the `unsigned` section. The file can be used directly with the `verify` goal.
 
-**Updating a trust config.** Use `-Dpqc.updateTrustConfig=true` to add new dependency signers to an existing `trust-config.yaml`. This is useful after adding new dependencies — existing content including comments and formatting is preserved, and new entries are inserted at the end of each section. Review the changes with `git diff`.
+**Updating a trust config.** Use `-Dsigmund.updateTrustConfig=true` to add new dependency signers to an existing `trust-config.yaml`. This is useful after adding new dependencies — existing content including comments and formatting is preserved, and new entries are inserted at the end of each section. Review the changes with `git diff`.
 
 Example output:
 
@@ -555,14 +555,14 @@ Summary: All clear: 4 dependencies, 3 GPG signature(s), 1 PQC signature(s), 2 un
 
 | Property | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `pqc.skip` | No | `false` | Skip the report |
-| `pqc.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers to resolve signer identities |
-| `pqc.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
-| `pqc.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory for PQC cert lookup |
-| `pqc.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
-| `pqc.generateTrustConfig` | No | — | Generate a `trust-config.yaml`. Set to `true` to write to the project root, or provide a file path. Fails if the file already exists unless `pqc.overwrite=true`. |
-| `pqc.overwrite` | No | `false` | Allow overwriting an existing generated trust config file |
-| `pqc.updateTrustConfig` | No | — | Update an existing `trust-config.yaml` by appending unconfigured signers and artifacts. Set to `true` for the default location, or provide a file path. |
+| `sigmund.skip` | No | `false` | Skip the report |
+| `sigmund.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers to resolve signer identities |
+| `sigmund.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
+| `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory for PQC cert lookup |
+| `sigmund.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
+| `sigmund.generateTrustConfig` | No | — | Generate a `trust-config.yaml`. Set to `true` to write to the project root, or provide a file path. Fails if the file already exists unless `sigmund.overwrite=true`. |
+| `sigmund.overwrite` | No | `false` | Allow overwriting an existing generated trust config file |
+| `sigmund.updateTrustConfig` | No | — | Update an existing `trust-config.yaml` by appending unconfigured signers and artifacts. Set to `true` for the default location, or provide a file path. |
 
 ## Testing
 
@@ -638,7 +638,7 @@ With the default ML-DSA-87+Ed448 cipher suite, the PQC signature adds ~4.6 KB pe
 
 ## Upstream Contribution Path
 
-This PoC uses `io.github.aloubyansky.pqc.maven` as its groupId. The code is structured for future contribution to `maven-gpg-plugin`:
+This PoC uses `io.github.aloubyansky.sigmund` as its groupId. The code is structured for future contribution to `maven-gpg-plugin`:
 
 - `HybridSigner` would extend `AbstractGpgSigner` as a new `signer=hybrid` option
 - Configuration parameters (`pqcFingerprint`, `sqHome`) would be added to the existing `sign` goal
@@ -696,7 +696,7 @@ Consumers need the signer's GPG public key in their keyring and the PQC certific
 **CLI:**
 
 ```bash
-java -jar pqc-sign.jar verify \
+java -jar sigmund.jar verify \
   --file my-artifact-1.0.jar \
   --signature my-artifact-1.0.jar.asc
 ```
@@ -704,12 +704,12 @@ java -jar pqc-sign.jar verify \
 **Maven plugin:**
 
 ```bash
-mvn pqc-sign:verify-artifact \
+mvn sigmund:verify-artifact \
   -Dfile=my-artifact-1.0.jar \
   -Dsignature=my-artifact-1.0.jar.asc
 ```
 
-By default, every signature in the `.asc` file must pass verification. Use `--lenient` / `pqc.lenient=true` to tolerate skipped or no-key signatures (at least one must pass and none may fail).
+By default, every signature in the `.asc` file must pass verification. Use `--lenient` / `sigmund.lenient=true` to tolerate skipped or no-key signatures (at least one must pass and none may fail).
 
 ## References
 

@@ -89,7 +89,7 @@ jobs:
           Key-Type: RSA
           Key-Length: 2048
           Name-Real: CI Test
-          Name-Email: ci@pqc-sign.test
+          Name-Email: ci@sigmund.test
           Expire-Date: 0
           EOF
 

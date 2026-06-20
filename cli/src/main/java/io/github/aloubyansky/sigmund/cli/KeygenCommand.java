@@ -1,0 +1,160 @@
+package io.github.aloubyansky.sigmund.cli;
+
+import io.github.aloubyansky.sigmund.core.SqRunner;
+import java.nio.file.Path;
+import java.util.concurrent.Callable;
+import picocli.CommandLine;
+
+/**
+ * Command-line interface for generating new PQC keys.
+ * <p>
+ * This command generates a new post-quantum cryptographic key using the Sequoia
+ * (sq) tool with a hybrid cipher suite as specified in RFC 9580. The cipher
+ * suite defaults to {@code mldsa87-ed448} (ML-DSA-87 + Ed448) and can be
+ * overridden with {@code --cipher-suite}. The generated key is stored in the
+ * Sequoia home directory and can be used for subsequent signing operations.
+ *
+ * <p>
+ * Example usage:
+ *
+ * <pre>
+ * # Generate a key with default Sequoia home (~/.local/share/sequoia)
+ * sigmund keygen --userid "Alice &lt;alice@example.org&gt;"
+ *
+ * # Generate a key with custom Sequoia home
+ * sigmund keygen --userid "Bob &lt;bob@example.org&gt;" --sq-home /path/to/sq-home
+ * </pre>
+ *
+ * <p>
+ * On successful key generation, the command outputs:
+ * <ul>
+ * <li>The 64-character hexadecimal fingerprint of the generated key</li>
+ * <li>The path to the Sequoia home directory where the key is stored</li>
+ * </ul>
+ *
+ * <p>
+ * Note: This command requires the {@code sq} executable to be available on the
+ * system PATH. Use {@code sq version} to verify installation.
+ *
+ *
+ * @see SqRunner#generateKey(String, String)
+ */
+@CommandLine.Command(name = "keygen", description = "Generate a new PQC key for signing", mixinStandardHelpOptions = true)
+public class KeygenCommand implements Callable<Integer> {
+
+    /**
+     * The user ID for the generated key.
+     * <p>
+     * This should typically be in the format "Name &lt;email@example.org&gt;", though
+     * any string identifier is technically valid. The user ID will be associated
+     * with the generated key and can be used to identify the key owner.
+     *
+     */
+    @CommandLine.Option(names = {
+            "--userid" }, required = true, description = "User ID for the key (e.g., \"Alice <alice@example.org>\")")
+    private String userId;
+
+    @CommandLine.Option(names = {
+            "--cipher-suite" }, defaultValue = SqRunner.DEFAULT_CIPHER_SUITE, description = "PQC cipher suite (default: ${DEFAULT-VALUE})")
+    private String cipherSuite;
+
+    @CommandLine.Mixin
+    private SqHomeMixin sqHomeMixin;
+
+    /**
+     * Executes the key generation command.
+     * <p>
+     * This method performs the following steps:
+     * <ol>
+     * <li>Resolves the Sequoia home directory (using default if not specified)</li>
+     * <li>Creates an {@link SqRunner} instance</li>
+     * <li>Generates the PQC key with the specified user ID</li>
+     * <li>Prints the fingerprint and key storage location</li>
+     * </ol>
+     *
+     * <p>
+     * On error, this method catches all exceptions, prints a user-friendly error
+     * message to stderr, and returns exit code 1.
+     *
+     *
+     * @return 0 on success, 1 on error
+     */
+    @Override
+    public Integer call() {
+        try {
+            Path sqHomeDir = sqHomeMixin.resolveSequoiaHome();
+            SqRunner sq = new SqRunner(sqHomeDir);
+
+            String fingerprint = sq.generateKey(userId, cipherSuite);
+
+            printSuccessMessage(fingerprint, sqHomeDir);
+            return 0;
+        } catch (Exception e) {
+            printErrorMessage(e);
+            return 1;
+        }
+    }
+
+    /**
+     * Prints a success message with the generated key fingerprint and storage location.
+     * <p>
+     * Example output:
+     *
+     * <pre>
+     * PQC key generated successfully!
+     *
+     * Fingerprint: ABC123DEF456...
+     * Stored in:   /home/user/.local/share/sequoia
+     *
+     * Use this fingerprint with the 'sign' command.
+     * </pre>
+     *
+     *
+     * @param fingerprint the fingerprint of the generated key
+     * @param sqHomeDir the Sequoia home directory where the key is stored
+     */
+    private void printSuccessMessage(String fingerprint, Path sqHomeDir) {
+        System.out.println("PQC key generated successfully!");
+        System.out.println();
+        System.out.println("Fingerprint: " + fingerprint);
+        System.out.println("Stored in:   " + sqHomeDir.toAbsolutePath());
+        System.out.println();
+        System.out.println("Use this fingerprint with the 'sign' command.");
+    }
+
+    /**
+     * Prints a user-friendly error message to stderr.
+     * <p>
+     * This method extracts the most relevant error message from the exception
+     * chain and displays it in a clear format. The full stack trace is not
+     * printed to avoid overwhelming the user.
+     *
+     *
+     * @param e the exception that occurred during key generation
+     */
+    private void printErrorMessage(Exception e) {
+        System.err.println("Error generating PQC key:");
+        System.err.println("  " + extractErrorMessage(e));
+        System.err.println();
+        System.err.println("Make sure the 'sq' command is installed and available on your PATH.");
+    }
+
+    /**
+     * Extracts a user-friendly error message from an exception.
+     * <p>
+     * If the exception has a message, it is returned. Otherwise, the simple
+     * class name of the exception is returned (e.g., "IOException" instead of
+     * "java.io.IOException").
+     *
+     *
+     * @param e the exception to extract the message from
+     * @return a user-friendly error message
+     */
+    private String extractErrorMessage(Exception e) {
+        String message = e.getMessage();
+        if (message != null && !message.isEmpty()) {
+            return message;
+        }
+        return e.getClass().getSimpleName();
+    }
+}

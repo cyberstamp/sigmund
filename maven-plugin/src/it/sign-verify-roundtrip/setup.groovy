@@ -15,7 +15,7 @@ sqHome.mkdirs()
 
 def pb = new ProcessBuilder(
         "sq", "key", "generate",
-        "--userid", "IT Test <it@pqc-sign.test>",
+        "--userid", "IT Test <it@sigmund.test>",
         "--cipher-suite", "mldsa87-ed448",
         "--profile", "rfc9580",
         "--own-key",
@@ -37,5 +37,5 @@ def fingerprint = matcher.group(1)
 println "Generated PQC key: ${fingerprint}"
 
 def props = new File(basedir, "test.properties")
-props.text = "pqc.fingerprint=${fingerprint}\npqc.sqHome=${sqHome.absolutePath}\n"
+props.text = "sigmund.fingerprint=${fingerprint}\nsigmund.sqHome=${sqHome.absolutePath}\n"
 return true

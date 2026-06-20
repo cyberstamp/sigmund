@@ -2,13 +2,13 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.github.aloubyansky.pqc.maven</groupId>
-        <artifactId>pqc-maven-parent</artifactId>
+        <groupId>io.github.aloubyansky.sigmund</groupId>
+        <artifactId>sigmund-parent</artifactId>
         <version>0.0.3-SNAPSHOT</version>
     </parent>
-    <artifactId>pqc-sign</artifactId>
+    <artifactId>sigmund</artifactId>
     <packaging>quarkus</packaging>
-    <name>PQC Sign :: CLI</name>
+    <name>Sigmund :: CLI</name>
     <properties>
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
     </properties>
@@ -25,8 +25,8 @@
     </dependencyManagement>
     <dependencies>
         <dependency>
-            <groupId>io.github.aloubyansky.pqc.maven</groupId>
-            <artifactId>pqc-sign-core</artifactId>
+            <groupId>io.github.aloubyansky.sigmund</groupId>
+            <artifactId>sigmund-core</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>

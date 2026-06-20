@@ -3,7 +3,7 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <groupId>io.github.aloubyansky.pqc.maven.it</groupId>
+    <groupId>io.github.aloubyansky.sigmund.it</groupId>
     <artifactId>sign-verify-roundtrip</artifactId>
     <version>1.0-SNAPSHOT</version>
     <properties>
@@ -13,8 +13,8 @@
     <build>
         <plugins>
             <plugin>
-                <groupId>io.github.aloubyansky.pqc.maven</groupId>
-                <artifactId>pqc-sign-maven-plugin</artifactId>
+                <groupId>io.github.aloubyansky.sigmund</groupId>
+                <artifactId>sigmund-maven-plugin</artifactId>
                 <version>@project.version@</version>
                 <executions>
                     <execution>
@@ -22,8 +22,8 @@
                     </execution>
                 </executions>
                 <configuration>
-                    <pqcFingerprint>${pqc.fingerprint}</pqcFingerprint>
-                    <sqHome>${pqc.sqHome}</sqHome>
+                    <pqcFingerprint>${sigmund.fingerprint}</pqcFingerprint>
+                    <sqHome>${sigmund.sqHome}</sqHome>
                 </configuration>
             </plugin>
         </plugins>
