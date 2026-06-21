@@ -56,7 +56,6 @@ public interface SignatureFormat {
 
 ```java
 public class VerificationUnit {
-    String format();        // which format produced this unit
     String rawContent();    // the signature data to verify
 }
 ```
@@ -132,6 +131,25 @@ Backend implementations:
 - **SqRunner** implements `SignatureTool, KeyGenerator, CertExporter`
 - **SigstoreTool** implements just `SignatureTool` (keyless — no key management)
 
+### SigningResult
+
+`sign()` returns a `SigningResult` carrying metadata about each produced file, so callers like the Maven plugin can associate signature files with their tool and algorithm:
+
+```java
+public record SigningResult(List<SignedFile> files) {
+}
+
+public record SignedFile(
+    Path path,              // the signature file
+    String toolName,        // "gpg", "sq", "sigstore"
+    String format,          // "openpgp", "sigstore"
+    String algorithm        // "RSA", "ML-DSA-87+Ed448", etc.
+) {
+}
+```
+
+CLI callers that only need paths can use `result.files().stream().map(SignedFile::path)`.
+
 ### VerifyResult hierarchy
 
 Verification results use typed per-backend classes with a common base:
@@ -196,8 +214,7 @@ public class Sigmund {
     // Signs with all tools where canSign() is true.
     // Groups results by signatureFormat(), combines compatible formats,
     // writes separate files for incompatible formats.
-    // Returns the list of signature files produced.
-    List<Path> sign(Path artifactFile, Path outputDir) throws IOException;
+    SigningResult sign(Path artifactFile, Path outputDir) throws IOException;
 
     // --- Verification ---
     // Reads signature file, detects format, parses into units,
