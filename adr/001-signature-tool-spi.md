@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Superseded by [ADR-002](002-identity-first-verification.md)
 
 ## Context
 
