@@ -63,7 +63,7 @@
       }
     },
     "signer": {
-      "description": "A signer definition in one of three forms: minimal (uid string), short (single-key object), or full (object with members array).",
+      "description": "A signer definition in one of three forms: minimal (email string), short (single-key object), or full (object with members array).",
       "oneOf": [
         {
           "$ref": "#/$defs/signerMinimal"
@@ -78,31 +78,31 @@
     },
     "signerMinimal": {
       "type": "string",
-      "description": "Minimal form: a uid string (e.g. \"Jane Doe <jane@example.com>\"). Matches by signer identity only."
+      "description": "Minimal form: an email address (e.g. \"jane@example.com\")."
     },
     "signerShort": {
       "type": "object",
-      "description": "Short form: a single-key signer with gpg/pqc fingerprint and/or uid directly on the object.",
+      "description": "Short form: a single-key signer with pgp4/pgp6 fingerprint and/or email directly on the object.",
       "properties": {
-        "gpg": {
+        "pgp4": {
           "type": "string",
-          "description": "GPG key fingerprint (hex, minimum 16 characters).",
+          "description": "PGP4 key fingerprint (hex, minimum 16 characters).",
           "pattern": "^[0-9A-Fa-f]{16,}$"
         },
-        "pqc": {
+        "pgp6": {
           "type": "string",
-          "description": "PQC key fingerprint (hex).",
+          "description": "PGP6 key fingerprint (hex).",
           "pattern": "^[0-9A-Fa-f]+$"
         },
-        "uid": {
+        "email": {
           "type": "string",
-          "description": "Signer user ID in \"Name <email>\" format."
+          "description": "Signer email address."
         }
       },
       "anyOf": [
-        { "required": ["gpg"] },
-        { "required": ["pqc"] },
-        { "required": ["uid"] }
+        { "required": ["pgp4"] },
+        { "required": ["pgp6"] },
+        { "required": ["email"] }
       ],
       "not": {
         "required": ["members"]
@@ -133,25 +133,25 @@
       "type": "object",
       "description": "A single signer credential within a signer group.",
       "properties": {
-        "gpg": {
+        "pgp4": {
           "type": "string",
-          "description": "GPG key fingerprint (hex, minimum 16 characters).",
+          "description": "PGP4 key fingerprint (hex, minimum 16 characters).",
           "pattern": "^[0-9A-Fa-f]{16,}$"
         },
-        "pqc": {
+        "pgp6": {
           "type": "string",
-          "description": "PQC key fingerprint (hex).",
+          "description": "PGP6 key fingerprint (hex).",
           "pattern": "^[0-9A-Fa-f]+$"
         },
-        "uid": {
+        "email": {
           "type": "string",
-          "description": "Signer user ID in \"Name <email>\" format."
+          "description": "Signer email address."
         }
       },
       "anyOf": [
-        { "required": ["gpg"] },
-        { "required": ["pqc"] },
-        { "required": ["uid"] }
+        { "required": ["pgp4"] },
+        { "required": ["pgp6"] },
+        { "required": ["email"] }
       ],
       "additionalProperties": false
     },

@@ -43,8 +43,8 @@ public record TrustConfig(
     /**
      * A named signer definition, normalized from any of the three config forms:
      * <ul>
-     * <li><b>Minimal:</b> a uid string (e.g. {@code "Jane Doe <jane@example.com>"})</li>
-     * <li><b>Short:</b> an object with {@code gpg}/{@code pqc}/{@code uid} directly</li>
+     * <li><b>Minimal:</b> an email string (e.g. {@code "jane@example.com"})</li>
+     * <li><b>Short:</b> an object with {@code pgp4}/{@code pgp6}/{@code email} directly</li>
      * <li><b>Full:</b> an object with optional {@code name} and a {@code members} array</li>
      * </ul>
      * All forms are normalized to a list of {@link Member} entries.
@@ -53,9 +53,9 @@ public record TrustConfig(
     }
 
     /**
-     * A single signer credential with optional GPG fingerprint, PQC fingerprint, and user ID.
+     * A single signer credential with optional PGP4 fingerprint, PGP6 fingerprint, and email.
      * At least one of the three fields is always present.
      */
-    public record Member(String gpg, String pqc, String uid) {
+    public record Member(String pgp4, String pgp6, String email) {
     }
 }

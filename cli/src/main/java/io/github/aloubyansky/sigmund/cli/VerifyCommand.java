@@ -1,9 +1,9 @@
 package io.github.aloubyansky.sigmund.cli;
 
 import io.github.aloubyansky.sigmund.core.GpgRunner;
-import io.github.aloubyansky.sigmund.core.HybridVerifier;
+import io.github.aloubyansky.sigmund.core.Sigmund;
+import io.github.aloubyansky.sigmund.core.SignatureVerificationReport;
 import io.github.aloubyansky.sigmund.core.SqRunner;
-import io.github.aloubyansky.sigmund.core.VerificationReport;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.Callable;
@@ -18,9 +18,6 @@ import picocli.CommandLine;
  * <li><b>Default mode</b>: All signatures must pass.</li>
  * <li><b>Lenient mode</b> (--lenient flag): At least one signature must pass, none may fail.</li>
  * </ul>
- *
- * @see HybridVerifier
- * @see VerificationReport
  */
 @CommandLine.Command(name = "verify", description = "Verify a hybrid signature", mixinStandardHelpOptions = true)
 public class VerifyCommand implements Callable<Integer> {
@@ -44,11 +41,14 @@ public class VerifyCommand implements Callable<Integer> {
             Path artifactFile = Paths.get(file);
             Path signatureFile = Paths.get(this.signature);
 
-            GpgRunner gpgRunner = new GpgRunner();
-            SqRunner sqRunner = createSqRunnerIfAvailable();
-            HybridVerifier verifier = new HybridVerifier(gpgRunner, sqRunner);
+            Sigmund.Builder builder = Sigmund.builder();
+            builder.addTool(new GpgRunner());
+            if (SqRunner.isToolAvailable()) {
+                builder.addTool(new SqRunner(sqHomeMixin.resolveSequoiaHome()));
+            }
+            Sigmund sigmund = builder.build();
 
-            VerificationReport report = verifier.verify(artifactFile, signatureFile);
+            SignatureVerificationReport report = sigmund.verify(artifactFile, signatureFile);
 
             System.out.println(report.format());
 
@@ -60,14 +60,6 @@ public class VerifyCommand implements Callable<Integer> {
             printErrorMessage(e);
             return 1;
         }
-    }
-
-    private SqRunner createSqRunnerIfAvailable() {
-        if (!SqRunner.isAvailable()) {
-            return null;
-        }
-        Path sqHomeDir = sqHomeMixin.resolveSequoiaHome();
-        return new SqRunner(sqHomeDir);
     }
 
     private void printErrorMessage(Exception e) {

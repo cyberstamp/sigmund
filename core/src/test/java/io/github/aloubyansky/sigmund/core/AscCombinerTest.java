@@ -108,39 +108,39 @@ class AscCombinerTest {
         assertEquals(1, blocks.size());
     }
 
-    // --- detectSignatureVersion ---
+    // --- inspectSignaturePacket version detection ---
 
     @Test
-    void detectSignatureVersion_v4() {
+    void inspectSignaturePacket_v4() {
         // ARMORED_BLOCK_1 has packet bytes starting with 0x88 0x5E 0x04
         // old format tag 2, 1-byte length, version 4
-        assertEquals(4, AscCombiner.detectSignatureVersion(ARMORED_BLOCK_1));
+        assertEquals(4, AscCombiner.inspectSignaturePacket(ARMORED_BLOCK_1).version());
     }
 
     @Test
-    void detectSignatureVersion_v6() {
+    void inspectSignaturePacket_v6() {
         // Create a block with version 6: old format tag 2, 1-byte length, version 6
         byte[] v6Data = new byte[] {
                 (byte) 0x88, 0x10, 0x06, 0x00, 0x11, 0x08, 0x00, 0x06,
                 0x05, 0x02, 0x61, 0x74, 0x00, 0x09, 0x00, 0x0A, 0x09, 0x10
         };
         String armored = AscCombiner.armor(v6Data);
-        assertEquals(6, AscCombiner.detectSignatureVersion(armored));
+        assertEquals(6, AscCombiner.inspectSignaturePacket(armored).version());
     }
 
     @Test
-    void detectSignatureVersion_newFormat() {
+    void inspectSignaturePacket_newFormat() {
         // New format: 0xC2 = new format tag 2, 1-byte length < 192, version 4
         byte[] newFormatData = new byte[] {
                 (byte) 0xC2, 0x10, 0x04, 0x00, 0x11, 0x08, 0x00, 0x06,
                 0x05, 0x02, 0x61, 0x74, 0x00, 0x09, 0x00, 0x0A, 0x09, 0x10
         };
         String armored = AscCombiner.armor(newFormatData);
-        assertEquals(4, AscCombiner.detectSignatureVersion(armored));
+        assertEquals(4, AscCombiner.inspectSignaturePacket(armored).version());
     }
 
     @Test
-    void detectSignatureVersion_compressedDataWrapper() {
+    void inspectSignaturePacket_compressedDataWrapper() {
         // Compressed data packet (tag 8, old format, indeterminate length)
         // wrapping an uncompressed (algo=0) v4 signature packet
         byte[] compressedWrapped = new byte[] {
@@ -152,7 +152,7 @@ class AscCombinerTest {
                 0x05, 0x02, 0x61, 0x74, 0x00, 0x09, 0x00, 0x0A, 0x09, 0x10
         };
         String armored = AscCombiner.armor(compressedWrapped);
-        assertEquals(4, AscCombiner.detectSignatureVersion(armored));
+        assertEquals(4, AscCombiner.inspectSignaturePacket(armored).version());
     }
 
     @Test
@@ -187,12 +187,12 @@ class AscCombinerTest {
     }
 
     @Test
-    void extractV6IssuerFingerprint_v4ReturnsNull() {
+    void issuerFingerprint_v4WithoutSubpacketReturnsNull() {
         assertNull(AscCombiner.inspectSignaturePacket(ARMORED_BLOCK_1).issuerFingerprint());
     }
 
     @Test
-    void detectSignatureVersion_compressedDataWrapper_v6() {
+    void inspectSignaturePacket_compressedDataWrapper_v6() {
         byte[] compressedWrapped = new byte[] {
                 (byte) 0xA3, // tag 8, old format, indeterminate length
                 0x00, // compression algo = 0 (uncompressed)
@@ -202,7 +202,7 @@ class AscCombinerTest {
                 0x05, 0x02, 0x61, 0x74, 0x00, 0x09, 0x00, 0x0A, 0x09, 0x10
         };
         String armored = AscCombiner.armor(compressedWrapped);
-        assertEquals(6, AscCombiner.detectSignatureVersion(armored));
+        assertEquals(6, AscCombiner.inspectSignaturePacket(armored).version());
     }
 
     @Test
@@ -241,47 +241,9 @@ class AscCombinerTest {
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
         };
         String armored = AscCombiner.armor(v3Data);
-        AscCombiner.SignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
         assertEquals(3, info.version());
         assertEquals(1, info.algorithmId()); // RSA
-    }
-
-    @Test
-    void isPqcAlgorithmBoundaries() {
-        assertFalse(AscCombiner.isPqcAlgorithm(28)); // Ed448
-        assertFalse(AscCombiner.isPqcAlgorithm(29)); // unassigned
-        assertTrue(AscCombiner.isPqcAlgorithm(30)); // ML-DSA-65+Ed25519
-        assertTrue(AscCombiner.isPqcAlgorithm(31)); // ML-DSA-87+Ed448
-        assertTrue(AscCombiner.isPqcAlgorithm(36)); // ML-KEM-1024+X448
-        assertFalse(AscCombiner.isPqcAlgorithm(37)); // unassigned
-    }
-
-    @Test
-    void algorithmNameKnown() {
-        assertEquals("RSA", AscCombiner.algorithmName(1));
-        assertEquals("DSA", AscCombiner.algorithmName(17));
-        assertEquals("Ed25519", AscCombiner.algorithmName(27));
-        assertEquals("ML-DSA-87+Ed448", AscCombiner.algorithmName(31));
-    }
-
-    @Test
-    void algorithmNameUnknown() {
-        assertNull(AscCombiner.algorithmName(99));
-        assertNull(AscCombiner.algorithmName(-1));
-    }
-
-    @Test
-    void isPqcAlgorithmNamePqc() {
-        assertTrue(AscCombiner.isPqcAlgorithmName("ML-DSA-87+Ed448"));
-        assertTrue(AscCombiner.isPqcAlgorithmName("ML-DSA-65+Ed25519"));
-        assertTrue(AscCombiner.isPqcAlgorithmName("SLH-DSA-SHAKE-128s"));
-    }
-
-    @Test
-    void isPqcAlgorithmNameClassical() {
-        assertFalse(AscCombiner.isPqcAlgorithmName("RSA"));
-        assertFalse(AscCombiner.isPqcAlgorithmName("Ed25519"));
-        assertFalse(AscCombiner.isPqcAlgorithmName(null));
     }
 
     private int countOccurrences(String text, String pattern) {

@@ -34,6 +34,7 @@
     </modules>
     <properties>
         <bouncycastle.version>1.84</bouncycastle.version>
+        <jackson.version>2.18.3</jackson.version>
         <cli-assured.version>0.0.1</cli-assured.version>
         <compiler-plugin.version>3.14.1</compiler-plugin.version>
         <formatter-plugin.version>2.29.0</formatter-plugin.version>
@@ -62,6 +63,11 @@
                 <groupId>org.bouncycastle</groupId>
                 <artifactId>bcpg-jdk18on</artifactId>
                 <version>${bouncycastle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.dataformat</groupId>
+                <artifactId>jackson-dataformat-yaml</artifactId>
+                <version>${jackson.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.junit.jupiter</groupId>

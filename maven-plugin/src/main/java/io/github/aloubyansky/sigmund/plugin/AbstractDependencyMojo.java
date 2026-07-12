@@ -1,9 +1,12 @@
 package io.github.aloubyansky.sigmund.plugin;
 
+import io.github.aloubyansky.sigmund.core.DiscoveryConfig;
+import io.github.aloubyansky.sigmund.core.Sigmund;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import javax.inject.Inject;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.AbstractMojo;
@@ -44,11 +47,14 @@ abstract class AbstractDependencyMojo extends AbstractMojo {
     @Parameter(property = "sigmund.fetchSignerInfo")
     protected Boolean fetchSignerInfo;
 
-    @Parameter(property = "sigmund.keyservers", defaultValue = "hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org")
+    @Parameter(property = "sigmund.keyservers")
     protected String keyservers;
 
     @Parameter(property = "sigmund.sqHome")
     protected File sqHome;
+
+    @Parameter(property = "sigmund.gpgHome")
+    protected File gpgHome;
 
     @Parameter(property = "sigmund.includeTestDependencies", defaultValue = "false")
     protected boolean includeTestDependencies;
@@ -148,23 +154,40 @@ abstract class AbstractDependencyMojo extends AbstractMojo {
         boolean effectiveFetch = fetchSignerInfo != null
                 ? fetchSignerInfo
                 : fileSettings.fetchSignerInfo();
-        List<String> effectiveKeyservers = fileSettings.keyservers();
+        List<String> effectiveKeyservers = keyservers != null
+                ? SignatureInspector.parseKeyservers(keyservers)
+                : fileSettings.keyservers();
         if (effectiveFetch && effectiveKeyservers.isEmpty()) {
-            effectiveKeyservers = SignatureInspector.parseKeyservers(keyservers);
+            effectiveKeyservers = List.of(DiscoveryConfig.DEFAULT_KEYSERVER);
         }
         return new TrustConfig.Settings(
                 effectiveKeyservers, fileSettings.onUntrusted(),
                 fileSettings.verifyAllSignatures(), effectiveFetch);
     }
 
-    /**
-     * Builds a {@link SignatureInspector} configured with keyservers according to the
-     * given settings.
-     */
+    protected Sigmund buildSigmund(TrustConfig.Settings settings) throws MojoExecutionException {
+        return Sigmund.builder()
+                .discover()
+                .discoveryConfig(new DiscoveryConfig(
+                        settings.fetchSignerInfo(), false,
+                        settings.keyservers(), toolOverrides()))
+                .build();
+    }
+
+    protected Map<String, Map<String, String>> toolOverrides() {
+        var overrides = new java.util.HashMap<>(SequoiaHomeResolver.toolOverrides(sqHome));
+        if (gpgHome != null) {
+            overrides.put("gpg", Map.of("home", gpgHome.toPath().toString()));
+        }
+        return overrides;
+    }
+
     protected SignatureInspector buildInspector(TrustConfig.Settings settings)
             throws MojoExecutionException {
+        Sigmund sigmund = buildSigmund(settings);
         var builder = SignatureInspector.builder()
                 .log(getLog())
+                .sigmund(sigmund)
                 .repoSystem(repoSystem).repoSession(repoSession).remoteRepos(remoteRepos)
                 .sqHome(sqHome);
         if (settings.fetchSignerInfo()) {

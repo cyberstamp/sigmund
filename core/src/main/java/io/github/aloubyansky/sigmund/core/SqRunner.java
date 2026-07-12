@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -57,11 +58,12 @@ import java.util.regex.Pattern;
  *
  * @see #isAvailable()
  */
-public class SqRunner {
+public class SqRunner implements SignatureTool, KeyGenerator, CertExporter {
 
     public static final String DEFAULT_CIPHER_SUITE = "mldsa87-ed448";
-    public static final String DEFAULT_PQC_ALGORITHM = "ML-DSA-87+Ed448";
 
+    private static final Set<String> SUPPORTED_CREDENTIAL_TYPES = Set.of(Credential.TYPE_OPENPGP_V4,
+            Credential.TYPE_OPENPGP_V6);
     private static final Pattern FINGERPRINT_PATTERN = Pattern.compile("(?i)(?:fingerprint:?\\s*)?([0-9A-F]{64})");
     private static final Pattern INSPECT_ALGO_PATTERN = Pattern.compile("Public-key algo:\\s+(.+)");
     private static final Pattern INSPECT_USERID_PATTERN = Pattern.compile("UserID:\\s+(.+)");
@@ -69,6 +71,9 @@ public class SqRunner {
 
     private final String sqExecutable;
     private final Path sequoiaHome;
+    private final String signingFingerprint;
+    private final OpenPgpSignatureFormat format;
+    private volatile String detectedAlgorithm;
 
     /**
      * Returns the default Sequoia home directory ({@code ~/.local/share/sequoia}).
@@ -84,17 +89,17 @@ public class SqRunner {
     }
 
     /**
-     * Constructs an SqRunner using the default "sq" executable.
+     * Constructs a verify-only SqRunner using the default "sq" executable.
      *
      * @param sequoiaHome the directory to use as SEQUOIA_HOME for key/cert storage
      * @throws IllegalArgumentException if sequoiaHome is null
      */
     public SqRunner(Path sequoiaHome) {
-        this("sq", sequoiaHome);
+        this("sq", sequoiaHome, null);
     }
 
     /**
-     * Constructs an SqRunner with a custom sq executable path.
+     * Constructs an SqRunner with a custom sq executable path (verify-only).
      *
      * @param sqExecutable the path to the sq executable (e.g., "sq" or "/usr/local/bin/sq")
      * @param sequoiaHome the directory to use as SEQUOIA_HOME for key/cert storage
@@ -102,6 +107,22 @@ public class SqRunner {
      *         sqExecutable is empty
      */
     public SqRunner(String sqExecutable, Path sequoiaHome) {
+        this(sqExecutable, sequoiaHome, null);
+    }
+
+    /**
+     * Constructs an SqRunner with a signing fingerprint.
+     * <p>
+     * When {@code signingFingerprint} is non-null, {@link #canSign()} returns {@code true}
+     * and the SPI {@link #sign(Path, Path)} method uses this fingerprint.
+     *
+     * @param sqExecutable the path to the sq executable
+     * @param sequoiaHome the directory to use as SEQUOIA_HOME for key/cert storage
+     * @param signingFingerprint the fingerprint to sign with, or {@code null} for verify-only
+     * @throws IllegalArgumentException if sqExecutable or sequoiaHome is null, or if
+     *         sqExecutable is empty
+     */
+    public SqRunner(String sqExecutable, Path sequoiaHome, String signingFingerprint) {
         if (sqExecutable == null || sqExecutable.isEmpty()) {
             throw new IllegalArgumentException("sqExecutable cannot be null or empty");
         }
@@ -110,6 +131,8 @@ public class SqRunner {
         }
         this.sqExecutable = sqExecutable;
         this.sequoiaHome = sequoiaHome;
+        this.signingFingerprint = signingFingerprint;
+        this.format = new OpenPgpSignatureFormat();
     }
 
     /**
@@ -439,15 +462,186 @@ public class SqRunner {
      * succeeds (exit code 0). This can be used to verify that Sequoia is properly
      * installed before attempting to use the runner.
      *
-     *
      * @return true if sq is available and responds to version command, false otherwise
      */
-    public static boolean isAvailable() {
+    public static boolean isToolAvailable() {
         try {
             CliTool.Result result = CliTool.run("sq", "version");
             return result.exitCode() == 0;
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    @Override
+    public String name() {
+        return "sq";
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Checks availability by running {@code sq version}.
+     */
+    @Override
+    public boolean isAvailable() {
+        return SqRunner.isToolAvailable();
+    }
+
+    @Override
+    public boolean canSign() {
+        return signingFingerprint != null && !signingFingerprint.isEmpty();
+    }
+
+    @Override
+    public SignatureFormat signatureFormat() {
+        return format;
+    }
+
+    @Override
+    public Set<String> supportedCredentialTypes() {
+        return SUPPORTED_CREDENTIAL_TYPES;
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Accepts {@link OpenPgpVerificationUnit}s with {@code packetVersion >= 5}.
+     */
+    @Override
+    public boolean canVerify(VerificationUnit unit) {
+        return unit instanceof OpenPgpVerificationUnit opgu
+                && opgu.packetVersion() >= 5;
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Signs using the stored fingerprint (provided at construction time).
+     *
+     * @throws IllegalStateException if no signing fingerprint was configured
+     */
+    @Override
+    public SignResult sign(Path artifactFile, Path outputSig) {
+        if (!canSign()) {
+            throw new IllegalStateException("No signing fingerprint configured");
+        }
+        sign(artifactFile, outputSig, signingFingerprint);
+        if (detectedAlgorithm == null) {
+            try {
+                String armored = java.nio.file.Files.readString(outputSig);
+                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+                String name = Algorithms.algorithmName(info.algorithmId());
+                detectedAlgorithm = name != null ? name : "unknown";
+            } catch (java.io.IOException e) {
+                detectedAlgorithm = "unknown";
+            }
+        }
+        return new SignResult(detectedAlgorithm);
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Verifies an OpenPGP v5+ signature block by resolving the issuer certificate
+     * from the Sequoia cert store.
+     */
+    @Override
+    public VerifyResult verify(Path artifactFile, VerificationUnit unit) {
+        if (!(unit instanceof OpenPgpVerificationUnit opgu)) {
+            return new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, -1, null, null);
+        }
+        return verifyOpenPgpUnit(artifactFile, opgu);
+    }
+
+    @Override
+    public List<Credential> extractCredentials(VerifyResult result) {
+        if (result.verdict() != Verdict.PASS) {
+            return List.of();
+        }
+        if (result instanceof OpenPgpVerifyResult opvr && opvr.fingerprint() != null) {
+            String credType = opvr.version() < 6 ? Credential.TYPE_OPENPGP_V4 : Credential.TYPE_OPENPGP_V6;
+            List<Credential> creds = new ArrayList<>(2);
+            creds.add(new FingerprintCredential(credType, opvr.fingerprint()));
+            String email = GpgRunner.extractEmail(result.signerDisplayName());
+            if (email != null) {
+                creds.add(new EmailCredential(email));
+            }
+            return List.copyOf(creds);
+        }
+        return List.of();
+    }
+
+    private OpenPgpVerifyResult verifyOpenPgpUnit(Path artifactFile, OpenPgpVerificationUnit opgu) {
+        int version = opgu.packetVersion();
+        String fingerprint = opgu.issuerFingerprint();
+        int algoId = opgu.algorithmId();
+        String algorithm = resolveAlgorithm(algoId);
+
+        if (fingerprint == null) {
+            return new OpenPgpVerifyResult(Verdict.SKIPPED, null, algorithm,
+                    version, fingerprint, fingerprint);
+        }
+
+        CertInfo certInfo = inspectCert(fingerprint);
+        if (certInfo == null) {
+            return new OpenPgpVerifyResult(Verdict.NO_KEY, null, algorithm,
+                    version, fingerprint, fingerprint);
+        }
+
+        if (certInfo.algorithm() != null) {
+            algorithm = certInfo.algorithm();
+        }
+
+        Path certFile = resolveCertFile(certInfo, fingerprint);
+        if (certFile == null) {
+            return new OpenPgpVerifyResult(Verdict.NO_KEY, certInfo.userId(), algorithm,
+                    version, fingerprint, fingerprint);
+        }
+
+        return verifyWithCertFile(artifactFile, opgu.armoredBlock(), certFile,
+                version, fingerprint, algorithm, certInfo.userId());
+    }
+
+    private String resolveAlgorithm(int algoId) {
+        String algorithm = Algorithms.algorithmName(algoId);
+        if (algorithm == null && algoId >= 0) {
+            algorithm = "unknown(" + algoId + ")";
+        }
+        return algorithm;
+    }
+
+    private Path resolveCertFile(CertInfo certInfo, String fingerprint) {
+        Path certFile = certInfo.certFile();
+        if (certFile == null) {
+            certFile = findCertFile(fingerprint);
+        }
+        return certFile;
+    }
+
+    private OpenPgpVerifyResult verifyWithCertFile(Path artifactFile, String armoredBlock,
+            Path certFile, int version, String fingerprint, String algorithm, String userId) {
+        Path sigFile = null;
+        try {
+            sigFile = Files.createTempFile("sq-verify-", ".asc");
+            Files.writeString(sigFile, armoredBlock);
+            boolean verified = verifyCertFile(artifactFile, sigFile, certFile);
+            return new OpenPgpVerifyResult(
+                    verified ? Verdict.PASS : Verdict.FAIL,
+                    userId, algorithm, version, fingerprint, fingerprint);
+        } catch (IOException e) {
+            throw new ToolExecutionException("Failed to create temp file for SQ verification", e);
+        } finally {
+            deleteSilently(sigFile);
+        }
+    }
+
+    private static void deleteSilently(Path file) {
+        if (file != null) {
+            try {
+                Files.deleteIfExists(file);
+            } catch (IOException ignored) {
+            }
         }
     }
 

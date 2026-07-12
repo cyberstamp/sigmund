@@ -1,12 +1,10 @@
 package io.github.aloubyansky.sigmund.plugin;
 
-import io.github.aloubyansky.sigmund.core.SqRunner;
 import java.io.File;
-import java.nio.file.Path;
-import org.apache.maven.plugin.MojoExecutionException;
+import java.util.Map;
 
 /**
- * Resolves the Sequoia home directory from plugin configuration or the default location.
+ * Builds tool setting overrides for the Sequoia home directory.
  */
 final class SequoiaHomeResolver {
 
@@ -14,20 +12,15 @@ final class SequoiaHomeResolver {
     }
 
     /**
-     * Resolves the Sequoia home directory.
+     * Returns discovery tool overrides for the sq home directory.
      *
-     * @param sqHome the configured sqHome parameter, or null for the default
-     * @return the resolved path
-     * @throws MojoExecutionException if the default cannot be determined
+     * @param sqHome the configured sqHome parameter, or {@code null} if not set
+     * @return tool overrides map (empty if sqHome is null)
      */
-    static Path resolve(File sqHome) throws MojoExecutionException {
-        if (sqHome != null) {
-            return sqHome.toPath();
+    static Map<String, Map<String, String>> toolOverrides(File sqHome) {
+        if (sqHome == null) {
+            return Map.of();
         }
-        Path defaultHome = SqRunner.defaultHome();
-        if (defaultHome == null) {
-            throw new MojoExecutionException("Cannot resolve Sequoia home: user.home not set");
-        }
-        return defaultHome;
+        return Map.of("sq", Map.of("home", sqHome.toPath().toString()));
     }
 }

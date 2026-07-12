@@ -1,25 +1,20 @@
 package io.github.aloubyansky.sigmund.core;
 
 /**
- * Represents the outcome of a signature verification operation.
+ * The outcome of a signature verification operation.
  * <p>
- * This enum is used by {@link HybridVerifier} to report the result of each
- * individual signature verification. It distinguishes between successful
- * verification, failed verification, missing keys, absent signatures,
- * and intentionally skipped verification.
+ * Distinguishes between successful verification, failed verification,
+ * missing keys, and skipped verification.
  *
- *
- * @see HybridVerifier
- * @see VerificationReport
+ * @see SignatureTool#verify(java.nio.file.Path, VerificationUnit)
  */
-public enum VerificationResult {
+public enum Verdict {
 
     /**
      * The signature is valid and verification passed.
      * <p>
      * This indicates that the signature was successfully verified against the
      * expected public key and the signed data matches the signature.
-     *
      */
     PASS,
 
@@ -32,7 +27,6 @@ public enum VerificationResult {
      * <li>The signature was created by a different key than expected</li>
      * <li>The signed data has been modified since signing</li>
      * </ul>
-     *
      */
     FAIL,
 
@@ -43,26 +37,16 @@ public enum VerificationResult {
      * public key needed to verify the signature. This is distinct from
      * {@link #FAIL}, as it represents a configuration issue rather than an
      * invalid signature.
-     *
      */
     NO_KEY,
 
     /**
-     * The signature is not present in the signature file.
+     * Verification was not attempted.
      * <p>
-     * This indicates that no signature block of the expected type was found
-     * in the signature file.
-     *
-     */
-    NOT_PRESENT,
-
-    /**
-     * Verification was intentionally skipped.
-     * <p>
-     * This is used when the keys map entry indicates that no signature is
-     * expected (e.g., {@code noSig}), so verification was never attempted.
-     * This is distinct from {@link #PASS}, which indicates that verification
-     * was performed and succeeded.
+     * This indicates that no signature was present or the tool could not
+     * handle the verification unit. This is distinct from {@link #FAIL},
+     * which indicates that verification was attempted and the signature
+     * was invalid.
      */
     SKIPPED
 }

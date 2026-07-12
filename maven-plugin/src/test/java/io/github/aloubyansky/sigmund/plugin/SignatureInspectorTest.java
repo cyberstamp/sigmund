@@ -12,23 +12,23 @@ class SignatureInspectorTest {
     class VersionLabelTests {
 
         @Test
-        void v4ReturnsGPG() {
-            assertEquals("GPG", SignatureInspector.versionLabel(4));
+        void v4ReturnsPGP4() {
+            assertEquals("PGP4", SignatureInspector.versionLabel(4));
         }
 
         @Test
-        void v6ReturnsPQC() {
-            assertEquals("PQC", SignatureInspector.versionLabel(6));
+        void v6ReturnsPGP6() {
+            assertEquals("PGP6", SignatureInspector.versionLabel(6));
         }
 
         @Test
-        void v3ReturnsOpenPGPv3() {
-            assertEquals("OpenPGP v3", SignatureInspector.versionLabel(3));
+        void v3ReturnsPGP3() {
+            assertEquals("PGP3", SignatureInspector.versionLabel(3));
         }
 
         @Test
-        void v5ReturnsOpenPGPv5() {
-            assertEquals("OpenPGP v5", SignatureInspector.versionLabel(5));
+        void v5ReturnsPGP5() {
+            assertEquals("PGP5", SignatureInspector.versionLabel(5));
         }
 
         @Test

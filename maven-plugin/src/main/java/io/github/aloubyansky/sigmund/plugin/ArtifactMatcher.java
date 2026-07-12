@@ -194,7 +194,7 @@ class ArtifactMatcher {
         /**
          * Parses a coordinate pattern string into segments.
          * Supported formats: groupId, groupId:artifactId, groupId:artifactId:version,
-         * groupId:artifactId:type:classifier:version.
+         * groupId:artifactId:type:version, groupId:artifactId:type:classifier:version.
          */
         static PatternEntry parse(String pattern) {
             String[] segments = pattern.split(":");
@@ -202,11 +202,12 @@ class ArtifactMatcher {
                 case 1 -> new PatternEntry(segments[0], null, null, null, null);
                 case 2 -> new PatternEntry(segments[0], segments[1], null, null, null);
                 case 3 -> new PatternEntry(segments[0], segments[1], null, null, segments[2]);
+                case 4 -> new PatternEntry(segments[0], segments[1], segments[2], null, segments[3]);
                 case 5 -> new PatternEntry(segments[0], segments[1], segments[2],
                         segments[3], segments[4]);
                 default -> throw new IllegalArgumentException(
                         "Invalid pattern '" + pattern
-                                + "': expected 1, 2, 3, or 5 colon-separated segments");
+                                + "': expected 1-5 colon-separated segments");
             };
         }
 

@@ -285,9 +285,18 @@ class ArtifactMatcherTest {
         }
 
         @Test
+        void fourSegmentsParsesAsGroupArtifactTypeVersion() {
+            var entry = ArtifactMatcher.PatternEntry.parse("com.example:lib:jar:2.0");
+            assertTrue(entry.matches(
+                    new ArtifactCoords("com.example", "lib", "", "jar", "2.0")));
+            assertFalse(entry.matches(
+                    new ArtifactCoords("com.example", "lib", "", "pom", "2.0")));
+        }
+
+        @Test
         void invalidSegmentCountThrows() {
             assertThrows(IllegalArgumentException.class,
-                    () -> ArtifactMatcher.PatternEntry.parse("a:b:c:d"));
+                    () -> ArtifactMatcher.PatternEntry.parse("a:b:c:d:e:f"));
         }
     }
 

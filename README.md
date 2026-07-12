@@ -181,9 +181,9 @@ Output:
 
 ```
 Signature Verification Report:
-  [1] GPG v4 (RSA):              PASS        [key: <key-id>]
-  [2] PQC v6 (ML-DSA-87+Ed448): PASS        [key: <fingerprint>]
-  Overall: PASS (all 2 signatures valid)
+  [1] PASS (RSA) [key: <key-id>]
+  [2] PASS (ML-DSA-87+Ed448) [key: <fingerprint>]
+  Overall: ALL_PASS
 ```
 
 ### 5. Verify backward compatibility
@@ -214,7 +214,7 @@ artifact.jar
     |
     +-- sq sign --signature-file --> pqc.sig       (v6 PQC signature packet)
     |
-    +-- AscCombiner.combine() -----> artifact.jar.asc
+    +-- OpenPgpSignatureFormat.combine() -> artifact.jar.asc
 ```
 
 **Stage 1 — Classic GPG signature.** `GpgRunner` invokes GnuPG as an external process:
@@ -233,7 +233,7 @@ sq --overwrite sign --signer <fingerprint> --signature-file <sig> <artifact>
 
 Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP signature packet with the configured PQC hybrid cipher suite (ML-DSA-87+Ed448 by default) per RFC 9980. The PQC key must be in Sequoia's keystore (set via the `SEQUOIA_HOME` environment variable). The `--overwrite` flag is always passed to handle cases where the output file already exists (e.g., temp files).
 
-**Stage 3 — Combine.** `AscCombiner` concatenates the signatures into a single `.asc` file as separate armored blocks, classic first:
+**Stage 3 — Combine.** `OpenPgpSignatureFormat` concatenates the signatures into a single `.asc` file as separate armored blocks, classic first:
 
 ```
 -----BEGIN PGP SIGNATURE-----
@@ -254,14 +254,14 @@ artifact.jar + artifact.jar.asc
     +-- extract all armored blocks
     |
     +-- for each block:
-    |     version <= 4 --> gpg --verify ---------> SignatureInfo (PASS/FAIL/NO_KEY)
-    |     version  5+  --> sq verify (cert store) -> SignatureInfo (PASS/FAIL/NO_KEY/SKIPPED)
+    |     version <= 4 --> gpg --verify ---------> VerifyResult (PASS/FAIL/NO_KEY)
+    |     version  5+  --> sq verify (cert store) -> VerifyResult (PASS/FAIL/NO_KEY/SKIPPED)
     |     unparseable  --> FAIL
     |
-    +-- VerificationReport (all results)
+    +-- SignatureVerificationReport (all results)
 ```
 
-Each armored block is extracted into a temporary file and verified independently by `SignatureBlockVerifier`, which routes based on the OpenPGP signature version.
+Each armored block is parsed into a `VerificationUnit` and verified independently by the appropriate `SignatureTool`, routed via `canVerify()` based on the OpenPGP signature version.
 
 **Classic verification (v1-v4).** Runs `gpg --verify` against the local keyring.
 
@@ -441,17 +441,17 @@ signers:
   apache:
     name: "Apache Software Foundation"
     members:
-      - gpg: "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"
-        uid: "Maven PMC <dev@maven.apache.org>"
-      - gpg: "BBE7232D7991050B54C8EA0ADC08637CA615D22C"
+      - pgp4: "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"
+        email: "dev@maven.apache.org"
+      - pgp4: "BBE7232D7991050B54C8EA0ADC08637CA615D22C"
 
   # Short form: single-key signer
   jane:
-    gpg: "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF"
-    uid: "Jane Doe <jane@example.com>"
+    pgp4: "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF"
+    email: "jane@example.com"
 
-  # Minimal form: uid only
-  jackson-dev: "Tatu Saloranta <tatu@fasterxml.com>"
+  # Minimal form: email only
+  jackson-dev: "tatu@fasterxml.com"
 
 artifacts:
   apache-stack:
@@ -468,7 +468,7 @@ unsigned:
   - com.internal.*
 ```
 
-**Signers** define trusted identities in three forms: full (organization with multiple members), short (single key), or minimal (uid string only). Each member can specify a GPG fingerprint (`gpg`), PQC fingerprint (`pqc`), and/or user ID (`uid`). Fingerprints are matched first; uid is used as a fallback.
+**Signers** define trusted identities in three forms: full (organization with multiple members), short (single key), or minimal (email string only). Each member can specify a PGP4 fingerprint (`pgp4`), PGP6 fingerprint (`pgp6`), and/or email address (`email`). Fingerprints are matched first; email is used as a fallback.
 
 **Artifacts** define named groups of coordinate patterns, referenced by name in `trust`.
 
@@ -484,12 +484,12 @@ Example output:
 
 ```
 Signer: Jane Doe <jane@example.com>
-   GPG: DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF
+   PGP4 (RSA): DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF
      com.example:lib:1.0
 
 UNTRUSTED
   Signer: Unknown <unknown@example.com> (not trusted)
-     GPG: DEADBEEFDEADBEEF
+     PGP4: DEADBEEFDEADBEEF
        com.other:tool:3.0
 
   UNSIGNED
@@ -538,13 +538,13 @@ Example output:
 
 ```
 Signer: Alice <alice@example.com>
-   GPG: 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
-   PQC: D62AAB339E45E5EA2FD036872B01D46A517A2991...
+   PGP4 (RSA): 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
+   PGP6 (ML-DSA-65+Ed25519): D62AAB339E45E5EA2FD036872B01D46A517A2991...
      com.example:lib-a:1.0
      com.example:lib-b:2.0
 
-Signer: NOT VERIFIED
-   GPG: DEADBEEFDEADBEEFDEADBEEF
+Signer: UNKNOWN (key not in keyring)
+   PGP4 (RSA): DEADBEEFDEADBEEFDEADBEEF
      com.other:tool:3.0
 
 UNSIGNED
@@ -597,7 +597,7 @@ The Maven plugin includes invoker tests under `maven-plugin/src/it/` covering de
 
 GnuPG returns exit code 2 (rather than 0) when verifying an `.asc` file that contains a v6 PQC packet. GPG processes all armored blocks in the file and warns about the unknown packet version. The signature itself is valid — GPG reports "Good signature" in its output.
 
-The `HybridVerifier` handles this by checking for "Good signature" in stderr when the exit code is 2. However, other tools or CI systems that check GPG's exit code strictly may interpret exit code 2 as a failure.
+`GpgRunner` handles this by checking for "Good signature" in stderr when the exit code is 2. However, other tools or CI systems that check GPG's exit code strictly may interpret exit code 2 as a failure.
 
 ### PQC key passphrase protection
 
@@ -611,7 +611,7 @@ The Sequoia PGP team [plans to release stable PQC support](https://sequoia-pgp.o
 
 ### PQC algorithm ID range
 
-The verifier classifies v5+ signature packets as PQC based on the public-key algorithm ID in the IANA OpenPGP Public Key Algorithms registry. As of RFC 9980, PQC algorithm IDs are 30-36 (ML-DSA, SLH-DSA, ML-KEM composites). This range is hardcoded in `AscCombiner.isPqcAlgorithm()` and will need updating if IANA registers additional PQC algorithms beyond this range.
+The verifier classifies v5+ signature packets as PQC based on the public-key algorithm ID in the IANA OpenPGP Public Key Algorithms registry. As of RFC 9980, PQC algorithm IDs are 30-36 (ML-DSA, SLH-DSA, ML-KEM composites). This range is hardcoded in `Algorithms.isPqcAlgorithm()` and will need updating if IANA registers additional PQC algorithms beyond this range.
 
 ### `sequoia-openpgp` PQC crate not on crates.io
 
@@ -640,7 +640,7 @@ With the default ML-DSA-87+Ed448 cipher suite, the PQC signature adds ~4.6 KB pe
 
 This PoC uses `io.github.aloubyansky.sigmund` as its groupId. The code is structured for future contribution to `maven-gpg-plugin`:
 
-- `HybridSigner` would extend `AbstractGpgSigner` as a new `signer=hybrid` option
+- `Signer` would extend `AbstractGpgSigner` as a new `signer=hybrid` option
 - Configuration parameters (`pqcFingerprint`, `sqHome`) would be added to the existing `sign` goal
 - The `verify` goal would be contributed as a new goal
 - Sequoia `sq` would become an optional dependency alongside GnuPG

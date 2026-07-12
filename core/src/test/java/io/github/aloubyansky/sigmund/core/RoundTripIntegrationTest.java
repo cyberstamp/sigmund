@@ -27,16 +27,16 @@ import org.junit.jupiter.api.io.TempDir;
  * Test flow:
  * <ol>
  * <li>Generate a PQC key using Sequoia's PQC hybrid cipher suite</li>
- * <li>Sign artifacts using {@link HybridSigner} (GPG + Sequoia)</li>
- * <li>Verify signatures using {@link HybridVerifier}</li>
+ * <li>Sign artifacts using {@link Signer} (GPG + Sequoia)</li>
+ * <li>Verify signatures using {@link Sigmund#verify(Path, Path)}</li>
  * <li>Validate backward compatibility with GPG-only verification</li>
  * <li>Verify tamper detection capabilities</li>
  * </ol>
  *
  *
- * @see HybridSigner
- * @see HybridVerifier
- * @see VerificationReport
+ * @see Sigmund
+ * @see Signer
+ * @see SignatureVerificationReport
  */
 @EnabledIf("toolsAvailable")
 class RoundTripIntegrationTest {
@@ -57,7 +57,7 @@ class RoundTripIntegrationTest {
      * @return true if both {@code gpg} and PQC-enabled {@code sq} are available
      */
     static boolean toolsAvailable() {
-        if (!GpgRunner.isAvailable() || !SqRunner.isAvailable()) {
+        if (!GpgRunner.isToolAvailable() || !SqRunner.isToolAvailable()) {
             return false;
         }
         // Check that sq actually supports PQC cipher suites
@@ -91,19 +91,19 @@ class RoundTripIntegrationTest {
     }
 
     /**
-     * Tests the complete round-trip flow: sign with hybrid signer, verify with
-     * hybrid verifier, and validate that all signatures pass.
+     * Tests the complete round-trip flow: sign with {@link Signer}, verify with
+     * {@link Sigmund#verify(Path, Path)}, and validate that all signatures pass.
      * <p>
      * This test verifies that:
      * <ul>
      * <li>Hybrid signing produces a valid combined signature file</li>
      * <li>All signature blocks are independently verified</li>
-     * <li>{@link VerificationReport#isPass()} returns true (all signatures pass)</li>
+     * <li>{@link SignatureVerificationReport#isPass()} returns true (all signatures pass)</li>
      * </ul>
      *
      * <p>
      * The verification report is printed to stdout to aid in debugging and to
-     * demonstrate the human-readable format of {@link VerificationReport#format()}.
+     * demonstrate the human-readable format of {@link SignatureVerificationReport#format()}.
      *
      *
      * @param tempDir a temporary directory for test artifacts
@@ -113,26 +113,31 @@ class RoundTripIntegrationTest {
     void fullRoundTrip_signAndVerify(@TempDir Path tempDir) throws Exception {
         // Arrange: Create test artifact
         Path artifact = createTestArtifact(tempDir, "test-artifact.jar");
-        Path signature = tempDir.resolve("test-artifact.jar.asc");
 
-        // Arrange: Create hybrid signer and verifier
-        HybridSigner signer = createHybridSigner();
-        HybridVerifier verifier = createHybridVerifier();
+        // Arrange: Create Sigmund facade and signer
+        Sigmund sigmund = createSigningSigmund();
+        Signer signer = sigmund.signer();
 
         // Act: Sign the artifact
-        signer.sign(artifact, signature);
+        SigningOutput output = signer.sign(artifact, tempDir);
+
+        // Assert: Algorithms are detected correctly from the produced signatures
+        assertEquals(1, output.files().size());
+        assertEquals("RSA+ML-DSA-87+Ed448", output.files().get(0).algorithm());
+
+        Path signature = output.files().get(0).path();
 
         // Act: Verify the signature
-        VerificationReport report = verifier.verify(artifact, signature);
+        SignatureVerificationReport report = sigmund.verify(artifact, signature);
 
         // Assert: All signatures should pass
-        assertEquals(2, report.signatures().size(),
+        assertEquals(2, report.files().get(0).results().size(),
                 "Should have classic and PQC signatures");
         assertTrue(report.isPass(),
                 "Strict verification (all signatures) should pass");
-        for (SignatureInfo sig : report.signatures()) {
-            assertEquals(VerificationResult.PASS, sig.result(),
-                    "Signature v" + sig.version() + " should be valid");
+        for (VerifyResult r : report.files().get(0).results()) {
+            assertEquals(Verdict.PASS, r.verdict(),
+                    "Signature (" + r.algorithm() + ") should be valid");
         }
 
         // Print the report for manual inspection
@@ -163,9 +168,9 @@ class RoundTripIntegrationTest {
     void backwardCompat_gpgVerifiesCombinedAsc(@TempDir Path tempDir) throws Exception {
         // Arrange: Create and sign test artifact
         Path artifact = createTestArtifact(tempDir, "compat-test.jar");
-        Path signature = tempDir.resolve("compat-test.jar.asc");
-        HybridSigner signer = createHybridSigner();
-        signer.sign(artifact, signature);
+        Signer signer = createSigningSigmund().signer();
+        SigningOutput output = signer.sign(artifact, tempDir);
+        Path signature = output.files().get(0).path();
 
         // Act: Verify with GPG command-line tool directly
         CliTool.Result result = CliTool.run(
@@ -213,21 +218,21 @@ class RoundTripIntegrationTest {
     void tamperedArtifact_verificationFails(@TempDir Path tempDir) throws Exception {
         // Arrange: Create and sign test artifact
         Path artifact = createTestArtifact(tempDir, "tamper-test.jar");
-        Path signature = tempDir.resolve("tamper-test.jar.asc");
-        HybridSigner signer = createHybridSigner();
-        signer.sign(artifact, signature);
+        Signer signer = createSigningSigmund().signer();
+        SigningOutput output = signer.sign(artifact, tempDir);
+        Path signature = output.files().get(0).path();
 
         // Act: Tamper with the artifact after signing
         Files.writeString(artifact, "TAMPERED CONTENT - THIS SHOULD FAIL VERIFICATION");
 
         // Act: Verify the signature
-        HybridVerifier verifier = createHybridVerifier();
-        VerificationReport report = verifier.verify(artifact, signature);
+        Sigmund sigmund = createVerifySigmund();
+        SignatureVerificationReport report = sigmund.verify(artifact, signature);
 
         // Assert: All signatures should fail due to tampering
-        for (SignatureInfo sig : report.signatures()) {
-            assertEquals(VerificationResult.FAIL, sig.result(),
-                    "Signature v" + sig.version() + " should fail for tampered artifact");
+        for (VerifyResult r : report.files().get(0).results()) {
+            assertEquals(Verdict.FAIL, r.verdict(),
+                    "Signature (" + r.algorithm() + ") should fail for tampered artifact");
         }
 
         System.out.println("=== Tampered Artifact Verification Report ===");
@@ -255,34 +260,39 @@ class RoundTripIntegrationTest {
     }
 
     /**
-     * Creates a {@link HybridSigner} configured with the default GPG key and
-     * the PQC key generated in {@link #generatePqcKey(Path)}.
+     * Creates a {@link Sigmund} instance configured for signing with the default
+     * GPG key and the PQC key generated in {@link #generatePqcKey(Path)}.
      * <p>
-     * This helper method encapsulates the signer creation logic and ensures
+     * This helper method encapsulates the Sigmund creation logic and ensures
      * consistent configuration across all test methods.
      *
      *
-     * @return a configured HybridSigner instance
+     * @return a configured Sigmund instance with signing capabilities
      */
-    private HybridSigner createHybridSigner() {
-        GpgRunner gpg = new GpgRunner(); // null = use default GPG key
-        SqRunner sq = new SqRunner(sqHome);
-        return new HybridSigner(gpg, sq, pqcFingerprint);
+    private Sigmund createSigningSigmund() {
+        GpgRunner gpg = new GpgRunner(); // use default GPG key
+        SqRunner sq = new SqRunner("sq", sqHome, pqcFingerprint);
+        return Sigmund.builder()
+                .addTool(gpg)
+                .addTool(sq)
+                .build();
     }
 
     /**
-     * Creates a {@link HybridVerifier} configured with the default GPG key and
-     * the PQC key generated in {@link #generatePqcKey(Path)}.
+     * Creates a {@link Sigmund} instance configured for verification only.
      * <p>
-     * This helper method encapsulates the verifier creation logic and ensures
-     * consistent configuration across all test methods.
+     * This helper method encapsulates the verify-only Sigmund creation logic
+     * and ensures consistent configuration across all test methods.
      *
      *
-     * @return a configured HybridVerifier instance
+     * @return a configured Sigmund instance for verification
      */
-    private HybridVerifier createHybridVerifier() {
+    private Sigmund createVerifySigmund() {
         GpgRunner gpg = new GpgRunner();
         SqRunner sq = new SqRunner(sqHome);
-        return new HybridVerifier(gpg, sq);
+        return Sigmund.builder()
+                .addTool(gpg)
+                .addTool(sq)
+                .build();
     }
 }

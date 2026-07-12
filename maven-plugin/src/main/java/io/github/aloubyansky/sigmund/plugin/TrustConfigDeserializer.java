@@ -62,14 +62,14 @@ class TrustConfigDeserializer extends StdDeserializer<TrustConfig> {
     /**
      * Parses a single signer definition from one of three forms:
      * <ul>
-     * <li>String → minimal (uid only)</li>
+     * <li>String → minimal (email only)</li>
      * <li>Object with "members" → full form</li>
      * <li>Object without "members" → short form (single credential)</li>
      * </ul>
      */
     private TrustConfig.Signer parseSigner(String id, JsonNode node) {
         if (node.isTextual()) {
-            return parseMinimalSigner(node);
+            return parseMinimalSigner(id, node);
         }
         if (!node.isObject()) {
             throw new IllegalArgumentException(
@@ -82,9 +82,13 @@ class TrustConfigDeserializer extends StdDeserializer<TrustConfig> {
         return parseShortSigner(id, obj);
     }
 
-    private TrustConfig.Signer parseMinimalSigner(JsonNode node) {
-        var member = new TrustConfig.Member(null, null, node.asText());
-        return new TrustConfig.Signer(null, List.of(member));
+    private TrustConfig.Signer parseMinimalSigner(String id, JsonNode node) {
+        String email = node.asText();
+        if (email.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Signer '" + id + "' must not be empty");
+        }
+        return new TrustConfig.Signer(null, List.of(new TrustConfig.Member(null, null, email)));
     }
 
     private TrustConfig.Signer parseFullSigner(String id, ObjectNode obj) {
@@ -111,14 +115,18 @@ class TrustConfigDeserializer extends StdDeserializer<TrustConfig> {
             throw new IllegalArgumentException(
                     "Member entry in signer '" + signerId + "' must be an object");
         }
-        String gpg = node.has("gpg") ? node.get("gpg").asText() : null;
-        String pqc = node.has("pqc") ? node.get("pqc").asText() : null;
-        String uid = node.has("uid") ? node.get("uid").asText() : null;
-        if (gpg == null && pqc == null && uid == null) {
+        String pgp4 = textOrDefault(node, "pgp4", null);
+        String pgp6 = textOrDefault(node, "pgp6", null);
+        String email = textOrDefault(node, "email", null);
+        if (pgp4 == null && pgp6 == null && email == null) {
             throw new IllegalArgumentException(
-                    "Member entry in signer '" + signerId + "' must have at least one of: gpg, pqc, uid");
+                    "Member entry in signer '" + signerId + "' must have at least one of: pgp4, pgp6, email");
         }
-        return new TrustConfig.Member(gpg, pqc, uid);
+        if (email != null && email.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Member entry in signer '" + signerId + "' has an empty email");
+        }
+        return new TrustConfig.Member(pgp4, pgp6, email);
     }
 
     private Map<String, List<String>> parseArtifacts(JsonNode node) {

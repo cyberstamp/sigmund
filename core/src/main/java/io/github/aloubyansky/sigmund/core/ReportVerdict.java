@@ -1,13 +1,13 @@
 package io.github.aloubyansky.sigmund.core;
 
 /**
- * Aggregate outcome of verifying all signatures in a report.
+ * Aggregate verdict for all signatures in a report.
  *
- * @see VerificationReport#outcome()
+ * @see SignatureVerificationReport#verdict()
  */
-public enum VerificationOutcome {
+public enum ReportVerdict {
 
-    /** Every signature in the report has {@link VerificationResult#PASS}. */
+    /** Every signature in the report has {@link Verdict#PASS}. */
     ALL_PASS,
 
     /** At least one signature passed; none failed (some were skipped or had no key). */

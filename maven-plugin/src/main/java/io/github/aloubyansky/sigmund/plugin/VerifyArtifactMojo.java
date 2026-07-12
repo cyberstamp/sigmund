@@ -1,10 +1,11 @@
 package io.github.aloubyansky.sigmund.plugin;
 
-import io.github.aloubyansky.sigmund.core.GpgRunner;
-import io.github.aloubyansky.sigmund.core.HybridVerifier;
-import io.github.aloubyansky.sigmund.core.SqRunner;
-import io.github.aloubyansky.sigmund.core.VerificationReport;
+import io.github.aloubyansky.sigmund.core.DiscoveryConfig;
+import io.github.aloubyansky.sigmund.core.Sigmund;
+import io.github.aloubyansky.sigmund.core.SignatureVerificationReport;
 import java.io.File;
+import java.util.List;
+import java.util.Map;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Mojo;
@@ -16,8 +17,8 @@ import org.apache.maven.plugins.annotations.Parameter;
  * By default all signatures must pass. In lenient mode
  * at least one signature must pass and none may fail.
  *
- * @see HybridVerifier
- * @see VerificationReport
+ * @see Sigmund
+ * @see SignatureVerificationReport
  */
 @Mojo(name = "verify-artifact", requiresProject = false, threadSafe = true)
 public class VerifyArtifactMojo extends AbstractMojo {
@@ -41,11 +42,11 @@ public class VerifyArtifactMojo extends AbstractMojo {
         getLog().info("Verifying signature for: " + file.getName());
         getLog().info("Using signature file: " + signature.getName());
 
-        HybridVerifier verifier = createVerifier();
-        VerificationReport report = performVerification(verifier);
+        Sigmund sigmund = createSigmund();
+        SignatureVerificationReport report = performVerification(sigmund);
 
         logReport(report);
-        checkVerificationResult(report);
+        checkVerdict(report);
     }
 
     private void validateInputFiles() throws MojoExecutionException {
@@ -58,34 +59,28 @@ public class VerifyArtifactMojo extends AbstractMojo {
         }
     }
 
-    private HybridVerifier createVerifier() throws MojoExecutionException {
+    private Sigmund createSigmund() throws MojoExecutionException {
         try {
-            GpgRunner gpg = new GpgRunner();
-            SqRunner sq = createSqRunner();
-            return new HybridVerifier(gpg, sq);
+            Map<String, Map<String, String>> toolOverrides = SequoiaHomeResolver.toolOverrides(sqHome);
+            return Sigmund.builder()
+                    .discover()
+                    .discoveryConfig(new DiscoveryConfig(true, false, List.of(), toolOverrides))
+                    .build();
         } catch (Exception e) {
-            throw new MojoExecutionException("Failed to create hybrid verifier", e);
+            throw new MojoExecutionException("Failed to create verifier", e);
         }
     }
 
-    private SqRunner createSqRunner() throws MojoExecutionException {
-        if (!SqRunner.isAvailable()) {
-            getLog().warn("Sequoia (sq) not found - PQC verification will be skipped");
-            return null;
-        }
-        return new SqRunner(SequoiaHomeResolver.resolve(sqHome));
-    }
-
-    private VerificationReport performVerification(HybridVerifier verifier)
+    private SignatureVerificationReport performVerification(Sigmund sigmund)
             throws MojoExecutionException {
         try {
-            return verifier.verify(file.toPath(), signature.toPath());
+            return sigmund.verify(file.toPath(), signature.toPath());
         } catch (Exception e) {
             throw new MojoExecutionException("Verification failed", e);
         }
     }
 
-    private void logReport(VerificationReport report) {
+    private void logReport(SignatureVerificationReport report) {
         getLog().info("");
         getLog().info("========================================");
         for (String line : report.format().split("\n")) {
@@ -95,7 +90,7 @@ public class VerifyArtifactMojo extends AbstractMojo {
         getLog().info("");
     }
 
-    private void checkVerificationResult(VerificationReport report)
+    private void checkVerdict(SignatureVerificationReport report)
             throws MojoExecutionException {
         boolean pass = lenient ? report.isLenientPass() : report.isPass();
         if (!pass) {
@@ -104,9 +99,11 @@ public class VerifyArtifactMojo extends AbstractMojo {
         getLog().info("Verification successful!");
     }
 
-    private String failureMessage(VerificationReport report) {
-        return switch (report.outcome()) {
-            case NONE_PASSED -> report.signatures().isEmpty()
+    private String failureMessage(SignatureVerificationReport report) {
+        boolean hasResults = report.files().stream()
+                .anyMatch(f -> !f.results().isEmpty());
+        return switch (report.verdict()) {
+            case NONE_PASSED -> !hasResults
                     ? "No signatures found in signature file"
                     : "No signatures could be verified - check that the required keys are available";
             case PASS_WITH_FAILURES ->
