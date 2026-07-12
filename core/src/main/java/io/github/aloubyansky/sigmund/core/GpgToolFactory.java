@@ -22,12 +22,12 @@ final class GpgToolFactory implements SignatureToolFactory {
         if (keyName == null && credential instanceof FingerprintCredential fp) {
             keyName = fp.fingerprint();
         }
-        return new GpgRunner(executable, keyName);
+        return new GpgRunner(executable, keyName, settings.get("home"));
     }
 
     @Override
     public SignatureTool createVerifyOnly(Map<String, String> settings) {
         String executable = settings.getOrDefault("executable", "gpg");
-        return new GpgRunner(executable, null);
+        return new GpgRunner(executable, null, settings.get("home"));
     }
 }

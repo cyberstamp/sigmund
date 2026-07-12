@@ -53,6 +53,9 @@ abstract class AbstractDependencyMojo extends AbstractMojo {
     @Parameter(property = "sigmund.sqHome")
     protected File sqHome;
 
+    @Parameter(property = "sigmund.gpgHome")
+    protected File gpgHome;
+
     @Parameter(property = "sigmund.includeTestDependencies", defaultValue = "false")
     protected boolean includeTestDependencies;
 
@@ -154,6 +157,9 @@ abstract class AbstractDependencyMojo extends AbstractMojo {
         List<String> effectiveKeyservers = keyservers != null
                 ? SignatureInspector.parseKeyservers(keyservers)
                 : fileSettings.keyservers();
+        if (effectiveFetch && effectiveKeyservers.isEmpty()) {
+            effectiveKeyservers = List.of(DiscoveryConfig.DEFAULT_KEYSERVER);
+        }
         return new TrustConfig.Settings(
                 effectiveKeyservers, fileSettings.onUntrusted(),
                 fileSettings.verifyAllSignatures(), effectiveFetch);
@@ -164,12 +170,16 @@ abstract class AbstractDependencyMojo extends AbstractMojo {
                 .discover()
                 .discoveryConfig(new DiscoveryConfig(
                         settings.fetchSignerInfo(), false,
-                        settings.keyservers(), sqHomeOverrides()))
+                        settings.keyservers(), toolOverrides()))
                 .build();
     }
 
-    protected Map<String, Map<String, String>> sqHomeOverrides() {
-        return SequoiaHomeResolver.toolOverrides(sqHome);
+    protected Map<String, Map<String, String>> toolOverrides() {
+        var overrides = new java.util.HashMap<>(SequoiaHomeResolver.toolOverrides(sqHome));
+        if (gpgHome != null) {
+            overrides.put("gpg", Map.of("home", gpgHome.toPath().toString()));
+        }
+        return overrides;
     }
 
     protected SignatureInspector buildInspector(TrustConfig.Settings settings)

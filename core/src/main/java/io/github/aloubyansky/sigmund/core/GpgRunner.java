@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -120,6 +121,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
 
     private final String gpgExecutable;
     private final String keyName;
+    private final Map<String, String> env;
     private final OpenPgpSignatureFormat format;
     private volatile String detectedAlgorithm;
 
@@ -127,7 +129,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      * Constructs a GpgRunner using the default "gpg" executable and default key.
      */
     public GpgRunner() {
-        this("gpg", null);
+        this("gpg", null, null);
     }
 
     /**
@@ -137,7 +139,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      *        GPG's default key
      */
     public GpgRunner(String keyName) {
-        this("gpg", keyName);
+        this("gpg", keyName, null);
     }
 
     /**
@@ -149,11 +151,25 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      * @throws IllegalArgumentException if gpgExecutable is null or empty
      */
     public GpgRunner(String gpgExecutable, String keyName) {
+        this(gpgExecutable, keyName, null);
+    }
+
+    /**
+     * Constructs a GpgRunner with a custom GPG executable path and home directory.
+     *
+     * @param gpgExecutable the path to the gpg executable (e.g., "gpg" or "/usr/bin/gpg")
+     * @param keyName the key name/ID to use with --local-user, or null to use
+     *        GPG's default key
+     * @param home the GPG home directory, or null to use the default
+     * @throws IllegalArgumentException if gpgExecutable is null or empty
+     */
+    public GpgRunner(String gpgExecutable, String keyName, String home) {
         if (gpgExecutable == null || gpgExecutable.isEmpty()) {
             throw new IllegalArgumentException("gpgExecutable cannot be null or empty");
         }
         this.gpgExecutable = gpgExecutable;
         this.keyName = keyName;
+        this.env = home != null ? Map.of("GNUPGHOME", home) : null;
         this.format = new OpenPgpSignatureFormat();
     }
 
@@ -179,7 +195,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
         }
 
         String[] command = buildSignCommand(artifactFile, outputSig);
-        CliTool.Result result = CliTool.run(command);
+        CliTool.Result result = CliTool.run(env, command);
         if (result.exitCode() != 0) {
             throw new ToolExecutionException("'" + String.join(" ", command)
                     + "' failed with exit code " + result.exitCode()
@@ -218,7 +234,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
             throw new IllegalArgumentException("signatureFile cannot be null");
         }
 
-        CliTool.Result result = CliTool.run(
+        CliTool.Result result = CliTool.run(env,
                 gpgExecutable,
                 "--verify",
                 signatureFile.toString(),
@@ -250,7 +266,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      * @return true if the key was successfully received, false otherwise
      */
     public boolean receiveKey(String keyId, String keyserver) {
-        CliTool.Result result = CliTool.run(
+        CliTool.Result result = CliTool.run(env,
                 gpgExecutable,
                 "--keyserver", keyserver,
                 "--recv-keys", keyId);
@@ -267,7 +283,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      * @return the user ID string (e.g., "Name &lt;email@example.com&gt;"), or null if not found
      */
     public String listKeyUserId(String keyId) {
-        CliTool.Result result = CliTool.run(
+        CliTool.Result result = CliTool.run(env,
                 gpgExecutable,
                 "--list-keys",
                 "--with-colons",

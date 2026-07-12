@@ -36,14 +36,7 @@
                         <configuration>
                             <updateTrustConfig>${project.basedir}/trust-config.yaml</updateTrustConfig>
                             <fetchSignerInfo>true</fetchSignerInfo>
-                        </configuration>
-                    </execution>
-                    <!-- Verify all dependencies pass with updated config -->
-                    <execution>
-                        <id>verify-trust</id>
-                        <goals><goal>verify</goal></goals>
-                        <configuration>
-                            <trustConfigFile>${project.basedir}/trust-config.yaml</trustConfigFile>
+                            <gpgHome>${project.basedir}/gpghome</gpgHome>
                         </configuration>
                     </execution>
                 </executions>

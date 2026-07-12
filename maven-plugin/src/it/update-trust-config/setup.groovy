@@ -1,3 +1,14 @@
+// Create a clean GPG home so the test doesn't depend on the user's keyring state.
+// The jspecify key is not served with UID by keys.openpgp.org, so GPG will skip it.
+def gpghome = new File(basedir, "gpghome")
+gpghome.mkdirs()
+gpghome.setReadable(false, false)
+gpghome.setReadable(true, true)
+gpghome.setWritable(false, false)
+gpghome.setWritable(true, true)
+gpghome.setExecutable(false, false)
+gpghome.setExecutable(true, true)
+
 // Create a partial trust-config.yaml that only covers commons-lang3.
 // Includes a comment that should be preserved after update.
 // The update goal should add the missing jspecify signer.
@@ -14,4 +25,5 @@ trust:
   org.apache.commons:commons-lang3: gary-gregory
 """
 println "Created partial trust-config.yaml (commons-lang3 only, with comments)"
+println "Created clean GNUPGHOME at ${gpghome}"
 return true
