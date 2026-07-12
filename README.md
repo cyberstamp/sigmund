@@ -362,9 +362,9 @@ Add to your project's `pom.xml`:
 
 ```xml
 <plugin>
-  <groupId>io.github.aloubyansky.sigmund</groupId>
+  <groupId>io.github.cyberstamp.sigmund</groupId>
   <artifactId>sigmund-maven-plugin</artifactId>
-  <version>0.0.2</version>
+  <version>0.0.1-SNAPSHOT</version>
   <executions>
     <execution>
       <goals><goal>sign</goal></goals>
@@ -640,7 +640,7 @@ With the default ML-DSA-87+Ed448 cipher suite, the PQC signature adds ~4.6 KB pe
 
 ## Upstream Contribution Path
 
-This PoC uses `io.github.aloubyansky.sigmund` as its groupId. The code is structured for future contribution to `maven-gpg-plugin`:
+This project uses `io.github.cyberstamp.sigmund` as its groupId. The code is structured for future contribution to `maven-gpg-plugin`:
 
 - `Signer` would extend `AbstractGpgSigner` as a new `signer=hybrid` option
 - Configuration parameters (`pqcFingerprint`, `sqHome`) would be added to the existing `sign` goal

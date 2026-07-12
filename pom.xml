@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <groupId>io.github.aloubyansky.sigmund</groupId>
+    <groupId>io.github.cyberstamp.sigmund</groupId>
     <artifactId>sigmund-parent</artifactId>
-    <version>0.0.3-SNAPSHOT</version>
+    <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Sigmund :: Parent</name>
     <description>Sigmund - hybrid PQC signing for Maven artifacts</description>
-    <url>https://github.com/aloubyansky/pqc-maven-sign</url>
+    <url>https://github.com/cyberstamp/sigmund</url>
     <licenses>
         <license>
             <name>Apache License, Version 2.0</name>
@@ -15,9 +15,9 @@
         </license>
     </licenses>
     <scm>
-        <connection>scm:git:git://github.com/aloubyansky/pqc-maven-sign.git</connection>
-        <developerConnection>scm:git:ssh://github.com/aloubyansky/pqc-maven-sign.git</developerConnection>
-        <url>https://github.com/aloubyansky/pqc-maven-sign</url>
+        <connection>scm:git:git://github.com/cyberstamp/sigmund.git</connection>
+        <developerConnection>scm:git:ssh://github.com/cyberstamp/sigmund.git</developerConnection>
+        <url>https://github.com/cyberstamp/sigmund</url>
       <tag>HEAD</tag>
   </scm>
     <developers>
