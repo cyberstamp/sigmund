@@ -474,6 +474,8 @@ unsigned:
 
 **Trust** maps artifact patterns or artifact group names to signer references. If a key matches a name in `artifacts`, it is expanded; otherwise it is treated as a Maven coordinate pattern. Patterns support: `groupId`, `groupId:artifactId`, `groupId:artifactId:version`, or `groupId:artifactId:type:classifier:version`. Wildcards (`*`) and group prefixes (`org.apache.*`) are supported. When multiple patterns match, the most specific wins.
 
+**Keyservers** default to `hkps://keys.openpgp.org` because it is the only major keyserver that verifies email addresses before publishing, preventing impersonation via unverified key uploads. Other keyservers (e.g. `keyserver.ubuntu.com`) accept uploads without identity verification and can be added explicitly if needed.
+
 **Unsigned** lists artifact patterns for which no signature is expected.
 
 **Generating the config.** Use `dependency-signers` with `-Dsigmund.generateTrustConfig=true` to generate an initial `trust-config.yaml` from your project's actual dependency signatures.
@@ -507,7 +509,7 @@ Summary: 1 passed, 2 failed
 | `sigmund.onUntrusted` | No | — | Policy for untrusted artifacts: `fail` or `warn`. Overrides the config file setting. |
 | `sigmund.verifyAllSignatures` | No | — | When `true`, unverified signatures on trusted artifacts are reported. Overrides the config file setting. |
 | `sigmund.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers. Overrides the config file setting. |
-| `sigmund.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated keyserver list. Used when `fetchSignerInfo` is enabled. |
+| `sigmund.keyservers` | No | `hkps://keys.openpgp.org` | Comma-separated keyserver list. Used when `fetchSignerInfo` is enabled. |
 | `sigmund.verifyPomFiles` | No | `false` | Also verify signatures on POM files for each dependency |
 | `sigmund.skip` | No | `false` | Skip verification |
 | `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
@@ -557,7 +559,7 @@ Summary: All clear: 4 dependencies, 3 GPG signature(s), 1 PQC signature(s), 2 un
 |----------|----------|---------|-------------|
 | `sigmund.skip` | No | `false` | Skip the report |
 | `sigmund.fetchSignerInfo` | No | `false` | Fetch unknown GPG keys from keyservers to resolve signer identities |
-| `sigmund.keyservers` | No | `hkps://keyserver.ubuntu.com,hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
+| `sigmund.keyservers` | No | `hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
 | `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory for PQC cert lookup |
 | `sigmund.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
 | `sigmund.generateTrustConfig` | No | — | Generate a `trust-config.yaml`. Set to `true` to write to the project root, or provide a file path. Fails if the file already exists unless `sigmund.overwrite=true`. |
