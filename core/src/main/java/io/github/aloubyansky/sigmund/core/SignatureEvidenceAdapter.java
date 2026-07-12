@@ -53,16 +53,32 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
         this.discoveryConfig = discoveryConfig != null ? discoveryConfig : DiscoveryConfig.DEFAULT;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @return the name of the underlying {@link SignatureFormat}
+     */
     @Override
     public String name() {
         return format.name();
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Returns {@code true} if at least one of the registered {@link SignatureTool}s
+     * is available on the current system.
+     */
     @Override
     public boolean isAvailable() {
         return tools.stream().anyMatch(SignatureTool::isAvailable);
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Delegates to the underlying {@link SignatureFormat#canHandle(Path)}.
+     */
     @Override
     public boolean canHandle(Path evidenceFile) {
         return format.canHandle(evidenceFile);
@@ -85,14 +101,31 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
         return results;
     }
 
+    /**
+     * Parses the evidence file into individual verification units using the underlying format.
+     *
+     * @param evidenceFile path to the signature/evidence file
+     * @return the parsed verification units
+     */
     private List<VerificationUnit> parseUnits(Path evidenceFile) {
         return format.parse(evidenceFile);
     }
 
+    /**
+     * Verifies a single verification unit against the artifact file.
+     * <p>
+     * Routes the unit to the appropriate tool, performs verification,
+     * attempts key fetching on {@link VerificationResult#NO_KEY}, and wraps
+     * the result as an {@link EvidenceResult}.
+     *
+     * @param artifactFile the artifact whose signature is being verified
+     * @param unit the verification unit to verify
+     * @return the evidence result for this unit
+     */
     private EvidenceResult verifyUnit(Path artifactFile, VerificationUnit unit) {
         SignatureTool tool = routeUnitToTool(unit);
         if (tool == null) {
-            return new EvidenceResult(VerificationResult.SKIPPED, List.of(), format.name());
+            return new EvidenceResult(VerificationResult.SKIPPED, List.of(), name());
         }
 
         VerifyResult result = tool.verify(artifactFile, unit);
@@ -104,6 +137,12 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
         return wrapAsEvidence(tool, result);
     }
 
+    /**
+     * Finds the first registered tool that can verify the given unit.
+     *
+     * @param unit the verification unit to route
+     * @return the matching tool, or {@code null} if no tool supports this unit
+     */
     private SignatureTool routeUnitToTool(VerificationUnit unit) {
         for (SignatureTool tool : tools) {
             if (tool.canVerify(unit)) {
@@ -113,6 +152,18 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
         return null;
     }
 
+    /**
+     * Attempts to fetch a missing key from configured keyservers and re-verify.
+     * <p>
+     * If key fetching is disabled in {@link DiscoveryConfig}, or the key ID cannot be
+     * extracted, or the import fails on all keyservers, the original result is returned unchanged.
+     *
+     * @param artifactFile the artifact being verified
+     * @param unit the verification unit whose key is missing
+     * @param tool the tool to retry verification with
+     * @param originalResult the original {@link VerificationResult#NO_KEY} result
+     * @return the result of re-verification after import, or the original result if fetching failed
+     */
     private VerifyResult fetchKeyAndRetry(Path artifactFile, VerificationUnit unit,
             SignatureTool tool, VerifyResult originalResult) {
         if (!discoveryConfig.fetchSignerInfo()) {
@@ -132,6 +183,12 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
         return tool.verify(artifactFile, unit);
     }
 
+    /**
+     * Extracts the key ID (fingerprint) from a verification unit, if available.
+     *
+     * @param unit the verification unit
+     * @return the issuer fingerprint for OpenPGP units, or {@code null} for unsupported unit types
+     */
     private String extractKeyIdFromUnit(VerificationUnit unit) {
         if (unit instanceof OpenPgpVerificationUnit opgu) {
             return opgu.issuerFingerprint();
@@ -139,6 +196,14 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
         return null;
     }
 
+    /**
+     * Attempts to import a key by its ID from the configured keyservers.
+     * <p>
+     * Tries each keyserver in order and returns on the first successful import.
+     *
+     * @param keyId the key fingerprint to import
+     * @return {@code true} if the key was successfully imported from any keyserver
+     */
     private boolean tryImportKey(String keyId) {
         KeyImporter importer = findKeyImporter();
         if (importer == null) {
@@ -153,6 +218,11 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
         return false;
     }
 
+    /**
+     * Finds a {@link KeyImporter} among the registered tools.
+     *
+     * @return the first tool that implements {@link KeyImporter}, or {@code null} if none does
+     */
     private KeyImporter findKeyImporter() {
         for (SignatureTool tool : tools) {
             if (tool instanceof KeyImporter ki) {
@@ -162,8 +232,16 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
         return null;
     }
 
+    /**
+     * Wraps a verification result into an {@link EvidenceResult} by extracting
+     * proven credentials from the tool.
+     *
+     * @param tool the tool that performed the verification
+     * @param result the verification result to wrap
+     * @return the evidence result containing the verification outcome and extracted credentials
+     */
     private EvidenceResult wrapAsEvidence(SignatureTool tool, VerifyResult result) {
         List<Credential> credentials = tool.extractCredentials(result);
-        return new EvidenceResult(result.result(), credentials, format.name());
+        return new EvidenceResult(result.result(), credentials, name());
     }
 }

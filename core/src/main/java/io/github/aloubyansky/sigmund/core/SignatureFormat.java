@@ -1,6 +1,9 @@
 package io.github.aloubyansky.sigmund.core;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 
 /**
@@ -94,14 +97,12 @@ public interface SignatureFormat {
     default void combine(List<Path> signatures, Path output) {
         if (signatures.size() == 1) {
             try {
-                java.nio.file.Files.copy(signatures.get(0), output,
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            } catch (java.io.IOException e) {
+                Files.copy(signatures.get(0), output, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
                 throw new ToolExecutionException("Failed to copy signature file", e);
             }
             return;
         }
-        throw new UnsupportedOperationException(
-                name() + " format does not support combining signatures");
+        throw new UnsupportedOperationException(name() + " format does not support combining signatures");
     }
 }
