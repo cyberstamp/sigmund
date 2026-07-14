@@ -22,7 +22,7 @@ class FingerprintCredentialTest {
         }
 
         @Test
-        void suffixMatch_shortIsSubsetOfLong() {
+        void suffixMatchShortIsSubsetOfLong() {
             var full = new FingerprintCredential("openpgp4",
                     "AB01CD23EF45678901234AEE18F83AFDEB230042");
             var shortFp = new FingerprintCredential("openpgp4",
@@ -39,28 +39,28 @@ class FingerprintCredentialTest {
         }
 
         @Test
-        void tooShort_noMatch() {
+        void tooShortNoMatch() {
             var a = new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23");
             var b = new FingerprintCredential("openpgp4", "3AFDEB23");
             assertFalse(a.matches(b));
         }
 
         @Test
-        void differentType_noMatch() {
+        void differentTypeNoMatch() {
             var v4 = new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23");
             var v6 = new FingerprintCredential("openpgp6", "4AEE18F83AFDEB23");
             assertFalse(v4.matches(v6));
         }
 
         @Test
-        void differentFingerprint_noMatch() {
+        void differentFingerprintNoMatch() {
             var a = new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23");
             var b = new FingerprintCredential("openpgp4", "AAEE18F83AFDEB23");
             assertFalse(a.matches(b));
         }
 
         @Test
-        void crossType_noMatch() {
+        void crossTypeNoMatch() {
             var fp = new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23");
             var email = new EmailCredential("alice@example.com");
             assertFalse(fp.matches(email));
@@ -77,7 +77,7 @@ class FingerprintCredentialTest {
         }
 
         @Test
-        void displayName_returnsFingerprint() {
+        void displayNameReturnsFingerprint() {
             var cred = new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23");
             assertEquals("4AEE18F83AFDEB23", cred.displayName());
         }
@@ -87,13 +87,13 @@ class FingerprintCredentialTest {
     class Validation {
 
         @Test
-        void nullType_throws() {
+        void nullTypeThrows() {
             assertThrows(IllegalArgumentException.class,
                     () -> new FingerprintCredential(null, "4AEE18F83AFDEB23"));
         }
 
         @Test
-        void blankFingerprint_throws() {
+        void blankFingerprintThrows() {
             assertThrows(IllegalArgumentException.class,
                     () -> new FingerprintCredential("openpgp4", "  "));
         }

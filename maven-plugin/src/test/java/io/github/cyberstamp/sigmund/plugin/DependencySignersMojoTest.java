@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 class DependencySignersMojoTest {
 
     @Test
-    void signedArtifact_v4WithSigner() {
+    void signedArtifactV4WithSigner() {
         VerifyResult vr = new OpenPgpVerifyResult(Verdict.PASS,
                 "User <user@example.com>", "RSA", 4, "ABCD1234", "ABCD1234");
         SignedArtifact signer = new SignedArtifact(
@@ -31,7 +31,7 @@ class DependencySignersMojoTest {
     }
 
     @Test
-    void signedArtifact_v6Detected() {
+    void signedArtifactV6Detected() {
         VerifyResult vr = new OpenPgpVerifyResult(Verdict.SKIPPED,
                 null, null, 6, null, null);
         SignedArtifact signer = new SignedArtifact(
@@ -43,7 +43,7 @@ class DependencySignersMojoTest {
     }
 
     @Test
-    void signedArtifact_noSignature() {
+    void signedArtifactNoSignature() {
         SignedArtifact signer = new SignedArtifact(
                 "com.example:lib:1.0", null, Verdict.SKIPPED);
         assertNull(signer.repoId());
@@ -54,27 +54,27 @@ class DependencySignersMojoTest {
     // --- ArtifactCoords.toString tests ---
 
     @Test
-    void artifactCoords_simpleJar() {
+    void artifactCoordsSimpleJar() {
         ArtifactCoords coords = createArtifact("com.example", "lib", "1.0");
         assertEquals("com.example:lib:1.0", coords.toString());
     }
 
     @Test
-    void artifactCoords_withClassifier() {
+    void artifactCoordsWithClassifier() {
         ArtifactCoords coords = new ArtifactCoords(
                 "com.example", "lib", "sources", "jar", "1.0");
         assertEquals("com.example:lib:jar:sources:1.0", coords.toString());
     }
 
     @Test
-    void artifactCoords_nonJarType() {
+    void artifactCoordsNonJarType() {
         ArtifactCoords coords = new ArtifactCoords(
                 "com.example", "lib", "", "pom", "1.0");
         assertEquals("com.example:lib:pom:1.0", coords.toString());
     }
 
     @Test
-    void artifactCoords_nonJarTypeWithClassifier() {
+    void artifactCoordsNonJarTypeWithClassifier() {
         ArtifactCoords coords = new ArtifactCoords(
                 "com.example", "lib", "dist", "zip", "1.0");
         assertEquals("com.example:lib:zip:dist:1.0", coords.toString());

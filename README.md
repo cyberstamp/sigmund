@@ -2,16 +2,18 @@
 
 ## Overview
 
-This tool adds post-quantum cryptographic (PQC) signatures to Maven artifacts alongside classic GPG signatures. Each `.asc` signature file can contain any number of OpenPGP signature blocks. A typical hybrid file contains:
+This tool adds post-quantum cryptographic (PQC) signatures to Maven artifacts alongside classic OpenPGP signatures. Each `.asc` signature file can contain any number of OpenPGP signature blocks. A typical hybrid file contains:
 
-- A **classic v4 signature** (RSA/EdDSA via GnuPG) — backward-compatible, verifiable by all existing tools
+- A **classic v4 signature** (RSA/EdDSA) — backward-compatible, verifiable by all existing tools
 - A **PQC v6 signature** (ML-DSA-87+Ed448 via Sequoia, default; configurable) — quantum-resistant, CNSA 2.0 compliant, per [RFC 9980](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/)
 
 The signatures are stored as **separate armored blocks** in the same `.asc` file, classic first. Existing tools (GPG, Maven Central) see only the classic signature and work as before. PQC-aware tools can verify all blocks.
 
 ## Prerequisites
 
-### JDK 17+
+### Required
+
+**JDK 17+**
 
 Required for building and running.
 
@@ -19,9 +21,19 @@ Required for building and running.
 java -version
 ```
 
-### GnuPG
+**Maven 3.9+**
 
-Required for classic GPG signing. You must have at least one signing key configured.
+Required for building the project and using the Maven plugin.
+
+```bash
+mvn -version
+```
+
+### Optional External Tools
+
+Sigmund includes a pure-Java Bouncy Castle backend that requires no external tools. GnuPG and Sequoia sq are optional and only needed for specific use cases:
+
+**GnuPG** — required only if you want to sign with existing GPG keys or verify legacy GPG signatures that BC cannot handle.
 
 ```bash
 # Check installation
@@ -31,13 +43,13 @@ gpg --version
 gpg --list-secret-keys
 ```
 
-If you don't have a GPG key, generate one:
+If you don't have a GPG key and want to use GPG for signing, generate one:
 
 ```bash
 gpg --full-generate-key
 ```
 
-### Sequoia sq (PQC-enabled)
+**Sequoia sq (PQC-enabled)** — required only for PQC hybrid signing (classic + PQC in one file).
 
 **Version 1.4.0-pqc.1 or later is required.** The standard `sq` release (1.3.x) does not include PQC cipher suites. You need the PQC-enabled pre-release built from the `pqc` branch.
 
@@ -57,7 +69,7 @@ sq key generate --help | grep mldsa
 export PATH=~/.cargo/bin:$PATH
 ```
 
-#### Building from source
+#### Building Sequoia sq from source
 
 The PQC-enabled `sequoia-openpgp` crate is not yet published on crates.io, so a simple `cargo install --git` does not resolve dependencies correctly. You must clone the repository and add a `[patch]` section to point Cargo at the PQC-enabled `sequoia-openpgp` from the main Sequoia repository:
 
@@ -120,58 +132,50 @@ cargo install --path . --features crypto-openssl --no-default-features
 
 **On RHEL 10.1+**, a PQC-enabled Sequoia package may be available as a system package.
 
-### Maven 3.9+
-
-Required for building the project and using the Maven plugin.
-
 ## Quick Start
 
-### 1. Build the project
+### BC-only (zero dependencies, programmatic API)
+
+Sign and verify using only the pure-Java Bouncy Castle backend — no external tools required.
+
+```java
+// Generate a v6 Ed25519 key
+Sigmund sigmund = Sigmund.builder().discover().build();
+KeyGenerator keygen = sigmund.findTool(KeyGenerator.class, "bc");
+String fingerprint = keygen.generateKey("You <you@example.com>", "ed25519");
+
+// Sign an artifact (uses all available signing tools)
+Signer signer = sigmund.signer();
+SigningOutput output = signer.sign(artifactPath, outputDir);
+
+// Verify a signature
+SignatureVerificationReport report = sigmund.verify(artifactPath, signaturePath);
+```
+
+The BC tool is discovered automatically and takes priority over external tools. No `gpg` or `sq` installation needed.
+
+### Build the project
 
 ```bash
 mvn clean install -DskipTests
 ```
 
-### 2. Generate a PQC key
+### Hybrid signing (classic GPG + PQC, CLI)
+
+Combine a classic GPG signature with a PQC signature in one `.asc` file. Requires GnuPG and PQC-enabled Sequoia sq.
 
 ```bash
+# 1. Generate a PQC key
 java -jar cli/target/sigmund.jar keygen \
   --userid "Your Name <you@example.com>"
-```
+# Outputs: Generated key: D62AAB339E45E5EA2FD036872B01D46A517A2991...
 
-This generates a PQC hybrid keypair (ML-DSA-87+Ed448 by default) in Sequoia's keystore and prints the fingerprint. Save the fingerprint — you'll need it for signing. Use `--cipher-suite mldsa65-ed25519` to generate a key with the ML-DSA-65 cipher suite instead.
-
-**Storing the fingerprint.** Add it to your shell profile for convenient reuse:
-
-```bash
-export PQC_FINGERPRINT=<FINGERPRINT>
-```
-
-Then pass it as `--pqc-fingerprint $PQC_FINGERPRINT` in subsequent commands. For team or CI environments, consider storing it in a secret manager and injecting it at runtime:
-
-```bash
-# 1Password
---pqc-fingerprint $(op read "op://Vault/PQC Key/fingerprint")
-
-# Bitwarden
---pqc-fingerprint $(bw get notes pqc-fingerprint)
-```
-
-Note: the user ID must be in canonical form (`Name <email>`). Bare email addresses are not accepted by `sq`.
-
-### 3. Sign an artifact
-
-```bash
+# 2. Sign with hybrid classic+PQC
 java -jar cli/target/sigmund.jar sign \
   --file target/my-artifact-1.0.jar \
-  --pqc-fingerprint <FINGERPRINT>
-```
+  --pqc-fingerprint D62AAB339E45E5EA2FD036872B01D46A517A2991...
 
-This produces `my-artifact-1.0.jar.asc` containing the classic GPG and PQC signatures as separate armored blocks (Maven Central compatible).
-
-### 4. Verify a signature
-
-```bash
+# 3. Verify all signatures
 java -jar cli/target/sigmund.jar verify \
   --file target/my-artifact-1.0.jar \
   --signature target/my-artifact-1.0.jar.asc
@@ -181,14 +185,14 @@ Output:
 
 ```
 Signature Verification Report:
-  [1] PASS (RSA) [key: <key-id>]
-  [2] PASS (ML-DSA-87+Ed448) [key: <fingerprint>]
+  [1] PASS (RSA) [key: 41A21977...]
+  [2] PASS (ML-DSA-87+Ed448) [key: D62AAB33...]
   Overall: ALL_PASS
 ```
 
-### 5. Verify backward compatibility
+### Verify backward compatibility
 
-Standard GPG can verify the hybrid `.asc` — it reads the classic v4 packet and ignores the PQC v6 packet:
+Standard GPG can verify hybrid `.asc` files — it reads the classic v4 packet and ignores the PQC v6 packet:
 
 ```bash
 gpg --verify target/my-artifact-1.0.jar.asc target/my-artifact-1.0.jar
@@ -203,6 +207,169 @@ gpg:                using RSA key 41A2197725BD63EB00D071D46A7F5DB1C68BDB81
 gpg: Good signature from "Your Name <you@example.com>" [ultimate]
 ```
 
+## Architecture
+
+### Three-Tool System
+
+Sigmund supports three OpenPGP backends, each with distinct capabilities:
+
+| Tool | Availability | v4 Support | v6 Support | PQC Support | Process Deps |
+|------|--------------|------------|------------|-------------|--------------|
+| **BC** | Always (pure Java) | Sign, verify | Sign, verify (classic algos) | Phase 2 planned | None |
+| **sq** | Optional | Verify | Sign, verify | Sign, verify (RFC 9980) | Sequoia CLI |
+| **gpg** | Optional | Sign, verify | None | None | GnuPG CLI |
+
+**BC (Bouncy Castle)** is the default first-choice tool. It requires no external process dependencies and works on any JVM. BC generates v6 keys for Ed25519, Ed448, and RSA using Bouncy Castle 1.85's `BcOpenPGPApi`. ECDSA keys (P-256, P-384, P-521) use a JCA-based fallback and produce v4 keys.
+
+**sq (Sequoia)** is used for PQC hybrid signing when available. The PQC-enabled version (1.4.0-pqc.1+) implements RFC 9980 and can generate and verify ML-DSA composite signatures.
+
+**gpg (GnuPG)** provides compatibility with existing GPG-based workflows and reads GPG keyrings. GnuPG follows LibrePGP and does not support v6 keys.
+
+### Tool Priority
+
+Verification units are routed to tools based on a configurable priority list. The default priority is:
+
+```
+[bc, sq, gpg]
+```
+
+BC attempts verification first. If BC cannot verify a signature (e.g., missing key or unsupported algorithm), the next tool in the priority list is tried. This ensures maximum use of the zero-dependency backend while maintaining compatibility with external tools when needed.
+
+Configure priority in `sigmund.yaml`:
+
+```yaml
+discovery:
+  tool-priority: [bc, sq, gpg]
+```
+
+### OpenPGP Key Structure
+
+**EdDSA keys** (Ed25519, Ed448) have a three-key structure:
+- **Primary key** — Certify-only, signs subkeys
+- **Encryption subkey** — X25519 or X448, used for encryption
+- **Signing subkey** — Ed25519 or Ed448, used for signatures
+
+**RSA keys** are singleton keys with all flags (certify + sign + encrypt) on the primary key.
+
+**ECDSA keys** (P-256, P-384, P-521) generated by BC use a singleton structure similar to RSA.
+
+Key flags determine which key in the ring is used for each operation. Sigmund's signing flow prefers subkeys over the primary key, selecting the first signing-capable subkey if one exists, otherwise falling back to the primary key if it has the sign flag.
+
+### Key Management
+
+**BC key store** manages keys across three sources, searched in order:
+
+1. **GnuPG pubring** (`~/.gnupg/pubring.gpg`) — read-only. BC can read public keys from GnuPG's keyring for verification.
+
+2. **Shared cert-d** (`~/.local/share/openpgp-cert-d/`) — read/write for public certificates. Uses the standard OpenPGP cert-d two-level directory layout (fingerprint `ABCDEF...` is stored at `AB/CDEF...`). Public certificates written here are visible to `sq` and other tools that support cert-d.
+
+3. **BC private store** (`~/.local/share/openpgp-cert-d/bc-private/`) — read/write for private keys. BC-generated private keys are stored in standard OpenPGP transferable secret key format in a subdirectory under cert-d.
+
+**Sequoia keystore** is managed by `sq` and controlled by the `SEQUOIA_HOME` environment variable (defaults to `~/.local/share/sequoia`). Keys generated with `sq key generate` are stored here and used for signing with the `sq` tool.
+
+**GnuPG keyring** is the standard GnuPG keyring at `~/.gnupg/`. Keys managed by `gpg` are stored here.
+
+### Interoperability Matrix
+
+| From → To | BC | sq | gpg |
+|-----------|----|----|-----|
+| **BC v6 keys** | Yes | Yes | No (v6 not supported) |
+| **BC v4 keys** | Yes | Yes | Yes |
+| **sq v6 classic** | Yes | Yes | No |
+| **sq v6 PQC** | Phase 2 | Yes | No |
+| **gpg v4** | Yes | Yes | Yes |
+
+**BC → sq interop** works for v6 keys because both support RFC 9580 (OpenPGP v6). BC-generated public certs are written to the shared cert-d so `sq` can see them.
+
+**BC → gpg interop** works only for v4 keys. BC can read GPG's `pubring.gpg` for verification. BC v6 keys cannot be imported into GPG because GPG follows LibrePGP and does not support v6.
+
+**sq → BC interop** works for v6 classic algorithm signatures (Ed25519, Ed448, RSA). PQC signatures (algorithm IDs 30-36) cannot be parsed by BC yet (Phase 2).
+
+## Configuration
+
+Sigmund configuration uses a `sigmund.yaml` file with four main sections: `signing`, `discovery`, `trust`, and `signers`.
+
+### Signing Configuration
+
+The `signing` section configures which identity to sign as and which tools to use.
+
+```yaml
+signing:
+  signer: my-identity
+  tools:
+    bc:
+      signing-fingerprint: "ABCDEF1234567890ABCDEF1234567890ABCDEF12"
+      cipher-suite: ed448
+    sq:
+      home: ~/.local/share/sequoia
+    gpg:
+      key: 0x12345678
+  profiles:
+    classic:
+      - openpgp4
+    v6-only:
+      - openpgp6
+    hybrid:
+      - openpgp4
+      - openpgp6
+  default-profile: hybrid
+```
+
+**BC tool settings:**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `gnupg-home` | `~/.gnupg` | GnuPG home for reading `pubring.gpg` |
+| `cert-d-home` | `~/.local/share/openpgp-cert-d` | Shared cert-d directory |
+| `bc-private-home` | `<cert-d-home>/bc-private` | BC private key store |
+| `signing-fingerprint` | — | Fingerprint of key to sign with |
+| `tsk-file` | — | Path to exported TSK file for signing |
+| `cipher-suite` | `ed25519` | Default algorithm for key generation |
+
+**Supported cipher suites (BC):**
+
+Classic algorithms (Phase 1):
+- `ed25519` — EdDSA with Ed25519 curve (default)
+- `ed448` — EdDSA with Ed448 curve
+- `rsa4096` — RSA with 4096-bit modulus
+- `nistp256` — ECDSA with P-256 curve
+- `nistp384` — ECDSA with P-384 curve
+- `nistp521` — ECDSA with P-521 curve
+
+PQC composite (Phase 2, in development):
+- `mldsa87-ed448` — ML-DSA-87 + Ed448 hybrid
+- `mldsa65-ed25519` — ML-DSA-65 + Ed25519 hybrid
+
+### Discovery Configuration
+
+The `discovery` section controls tool priority, keyserver access, and per-tool verification settings.
+
+```yaml
+discovery:
+  tool-priority: [bc, sq, gpg]
+  fetch-signer-info: true
+  import-to-keyring: false
+  keyservers:
+    - hkps://keys.openpgp.org
+  tools:
+    bc:
+      gnupg-home: /custom/gnupg
+      cert-d-home: /custom/cert-d
+```
+
+**Discovery settings:**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `tool-priority` | `[bc, sq, gpg]` | Preferred tool order for verification. Listed tools are tried first; unlisted tools are still discovered after them. |
+| `fetch-signer-info` | `true` | Fetch missing keys from keyservers during verification |
+| `import-to-keyring` | `false` | Persist fetched keys into tool keyrings. When `false` (default), BC caches keys in memory for the session without writing to disk. GPG cannot do ephemeral imports, so key fetch is skipped entirely — use `true` if GPG is the primary tool and you want key auto-fetch. Note: `keys.openpgp.org` may serve keys without user IDs; BC can use these for verification, but GPG cannot import them. |
+| `keyservers` | `hkps://keys.openpgp.org` | Keyserver URLs for key discovery |
+
+### Trust Configuration
+
+The `trust` section maps artifact patterns to trusted signers. See the [Maven Plugin](#maven-plugin) section for details.
+
 ## How It Works
 
 ### Signing Pipeline
@@ -210,41 +377,41 @@ gpg: Good signature from "Your Name <you@example.com>" [ultimate]
 ```
 artifact.jar
     |
-    +-- gpg --detach-sign --armor --> classic.asc  (v4 signature packet)
+    +-- bc / gpg --detach-sign --> classic.asc  (v4 or v6 signature packet)
     |
-    +-- sq sign --signature-file --> pqc.sig       (v6 PQC signature packet)
+    +-- sq sign --signature-file --> pqc.sig    (v6 PQC signature packet)
     |
     +-- OpenPgpSignatureFormat.combine() -> artifact.jar.asc
 ```
 
-**Stage 1 — Classic GPG signature.** `GpgRunner` invokes GnuPG as an external process:
+**Stage 1 — Classic signature.** The signing tool (BC by default, or GPG if configured) produces a detached ASCII-armored signature. BC uses Bouncy Castle's `PGPSignatureGenerator` to create the signature in pure Java. GPG invokes the external `gpg` process:
 
 ```
 gpg --batch --yes --armor --detach-sign [--local-user <keyId>] --output <sig> <artifact>
 ```
 
-This produces a standard ASCII-armored `.asc` file containing a v4 OpenPGP signature packet. The user's existing GPG keyring and configuration are used as-is.
+The signature version (v4 or v6) is determined by the key version. BC generates v6 signatures for v6 keys and v4 signatures for v4 keys. GPG always produces v4 signatures.
 
-**Stage 2 — PQC signature.** `SqRunner` invokes Sequoia `sq` as an external process:
+**Stage 2 — PQC signature (optional).** If PQC signing is configured and `sq` is available, `SqRunner` invokes Sequoia `sq` as an external process:
 
 ```
 sq --overwrite sign --signer <fingerprint> --signature-file <sig> <artifact>
 ```
 
-Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP signature packet with the configured PQC hybrid cipher suite (ML-DSA-87+Ed448 by default) per RFC 9980. The PQC key must be in Sequoia's keystore (set via the `SEQUOIA_HOME` environment variable). The `--overwrite` flag is always passed to handle cases where the output file already exists (e.g., temp files).
+Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP signature packet with the configured PQC hybrid cipher suite (ML-DSA-87+Ed448 by default) per RFC 9980. The `--overwrite` flag is always passed to handle cases where the output file already exists.
 
 **Stage 3 — Combine.** `OpenPgpSignatureFormat` concatenates the signatures into a single `.asc` file as separate armored blocks, classic first:
 
 ```
 -----BEGIN PGP SIGNATURE-----
-(classic v4 signature — exactly as GPG produced it)
+(classic signature — exactly as the tool produced it)
 -----END PGP SIGNATURE-----
 -----BEGIN PGP SIGNATURE-----
-(PQC v6 signature — exactly as Sequoia produced it)
+(PQC signature — exactly as Sequoia produced it)
 -----END PGP SIGNATURE-----
 ```
 
-Neither signature is re-armored — each is preserved byte-for-byte as its respective tool produced it. Verifiers that parse only the first armored block (including Maven Central) see only the classic v4 signature and succeed. PQC-aware tools process all blocks.
+Neither signature is re-armored — each is preserved byte-for-byte as its respective tool produced it. Verifiers that parse only the first armored block (including Maven Central) see only the classic signature and succeed. PQC-aware tools process all blocks.
 
 ### Verification Pipeline
 
@@ -254,50 +421,43 @@ artifact.jar + artifact.jar.asc
     +-- extract all armored blocks
     |
     +-- for each block:
-    |     version <= 4 --> gpg --verify ---------> VerifyResult (PASS/FAIL/NO_KEY)
-    |     version  5+  --> sq verify (cert store) -> VerifyResult (PASS/FAIL/NO_KEY/SKIPPED)
-    |     unparseable  --> FAIL
+    |     route to tool based on priority and canVerify()
+    |     bc / sq / gpg verify --> VerifyResult (PASS/FAIL/NO_KEY/SKIPPED)
     |
     +-- SignatureVerificationReport (all results)
 ```
 
-Each armored block is parsed into a `VerificationUnit` and verified independently by the appropriate `SignatureTool`, routed via `canVerify()` based on the OpenPGP signature version.
+Each armored block is parsed into a `VerificationUnit` and routed to the first available tool in the priority list that can handle it (via `canVerify()`).
 
-**Classic verification (v1-v4).** Runs `gpg --verify` against the local keyring.
+**BC verification.** BC handles any `OpenPgpVerificationUnit` (v4 or v6 classic algorithms). Verification steps:
 
-GPG exit codes are interpreted as:
-- **Exit 0** — signature valid (PASS)
-- **Exit 2 with "Good signature" in stderr** — signature valid but GPG encountered an unknown packet (PASS). This is the expected result for hybrid `.asc` files containing v6 PQC packets.
-- **Exit 1** — bad signature (FAIL)
-- **stderr contains "No public key"** — signer's key not in keyring (NO_KEY)
+1. Extract issuer fingerprint from the signature packet's Issuer Fingerprint subpacket (type 33)
+2. Search for the signer's public key in GnuPG pubring, cert-d, or BC private store
+3. If key not found, return `NO_KEY`
+4. Parse the signature packet using Bouncy Castle's `BcPGPObjectFactory`
+5. Verify the signature against the artifact using BC's `PGPSignature.verify()`
+6. Return `PASS` or `FAIL`
 
-**v5+ verification.** The issuer fingerprint is extracted from the signature packet's Issuer Fingerprint subpacket (type 33). The fingerprint is used to look up the signer's certificate in the Sequoia cert store (`sq inspect --cert`), locate the cert file in cert-d, and verify with `sq verify --signer-file`. If the certificate is not in the store, the result is NO_KEY. If `sq` is not available or the fingerprint cannot be extracted, the result is SKIPPED.
+**sq verification (v5+ packets).** The issuer fingerprint is extracted from the signature packet, used to look up the signer's certificate in the Sequoia cert store (`sq inspect --cert`), locate the cert file in cert-d, and verify with `sq verify --signer-file`. If the certificate is not in the store, the result is `NO_KEY`. If `sq` is not available or the fingerprint cannot be extracted, the result is `SKIPPED`.
+
+**gpg verification (v1-v4 packets).** Runs `gpg --verify` against the local keyring. GPG exit codes are interpreted as:
+- **Exit 0** — signature valid (`PASS`)
+- **Exit 2 with "Good signature" in stderr** — signature valid but GPG encountered an unknown packet (`PASS`). This is the expected result for hybrid `.asc` files containing v6 PQC packets.
+- **Exit 1** — bad signature (`FAIL`)
+- **stderr contains "No public key"** — signer's key not in keyring (`NO_KEY`)
 
 The block's public-key algorithm ID is used to classify the signature as PQC or classical in the report. PQC algorithm IDs are 30-36 per the IANA OpenPGP Public Key Algorithms registry (RFC 9980).
 
 **Verification modes:**
 
-- **Default:** Every signature in the file must pass for the overall result to be PASS.
+- **Default:** Every signature in the file must pass for the overall result to be `PASS`.
 - **Lenient (`--lenient`):** At least one signature must pass and none may fail. Skipped or no-key signatures are tolerated.
-
-### Key Management
-
-PQC keys are managed by Sequoia's built-in keystore, controlled by the `SEQUOIA_HOME` environment variable (defaults to `~/.local/share/sequoia`):
-
-- **Key generation** calls `sq key generate --cipher-suite <suite> --profile rfc9580 --own-key --without-password`, where `<suite>` defaults to `mldsa87-ed448` (CNSA 2.0 compliant). The `--without-password` flag is required for non-interactive use (CI/CD, headless environments) since `sq` otherwise prompts for a passphrase on `/dev/tty`.
-- **Key lookup** during signing uses the key fingerprint to locate the key in Sequoia's keystore.
-- **Certificate export** for sharing with verifiers: `sq cert export --cert <fingerprint>`.
-- **Key isolation** — each `SqRunner` instance sets `SEQUOIA_HOME` to its configured directory, allowing multiple independent keystores.
-
-### Maven Central Compatibility
-
-The `.asc` file starts with a standard armored block containing only the classic v4 signature. Maven Central's upload validation parses the first armored block, verifies the classic signature against public keyservers, and ignores the second block (the PQC signature). No changes to Maven Central are required.
 
 ## CLI Reference
 
 ### `sigmund keygen`
 
-Generate a PQC hybrid keypair.
+Generate a PQC hybrid keypair using Sequoia sq.
 
 ```
 sigmund keygen --userid <USER_ID> [--cipher-suite <SUITE>] [--sq-home <DIR>]
@@ -308,6 +468,8 @@ sigmund keygen --userid <USER_ID> [--cipher-suite <SUITE>] [--sq-home <DIR>]
 | `--userid` | Yes | — | User ID in canonical form (e.g., `"Alice <alice@example.com>"`) |
 | `--cipher-suite` | No | `mldsa87-ed448` | PQC cipher suite (e.g., `mldsa65-ed25519` for ML-DSA-65) |
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+
+Note: the user ID must be in canonical form (`Name <email>`). Bare email addresses are not accepted by `sq`.
 
 ### `sigmund sign`
 
@@ -327,7 +489,7 @@ sigmund sign --file <FILE> --pqc-fingerprint <FP> [options]
 
 ### `sigmund verify`
 
-Verify a hybrid signature.
+Verify a signature using all available tools according to tool priority.
 
 ```
 sigmund verify --file <FILE> --signature <ASC> [options]
@@ -377,7 +539,7 @@ Add to your project's `pom.xml`:
 </plugin>
 ```
 
-**Using an environment variable.** If you stored the fingerprint in `PQC_FINGERPRINT` (see [Generate a PQC key](#2-generate-a-pqc-key)), reference it directly in the plugin configuration:
+**Using an environment variable.** If you stored the fingerprint in `PQC_FINGERPRINT`, reference it directly in the plugin configuration:
 
 ```xml
 <configuration>
@@ -517,7 +679,7 @@ Summary: 1 passed, 2 failed
 
 ### `sigmund:dependency-signers`
 
-Reports signer information for all project dependencies by downloading and inspecting their `.asc` signature files. Each armored block is reported separately with its OpenPGP version (v4 for classical GPG, v6 for PQC). Classical signatures are verified via GPG; PQC signatures are verified via Sequoia when the signer's certificate is available in the local cert store.
+Reports signer information for all project dependencies by downloading and inspecting their `.asc` signature files. Each armored block is reported separately with its OpenPGP version (v4 for classical GPG, v6 for PQC). Classical signatures are verified via GPG or BC; PQC signatures are verified via Sequoia when the signer's certificate is available in the local cert store.
 
 Dependencies are grouped by signer, sorted alphabetically. Each signer block shows the signature type (GPG/PQC) and key ID, followed by the artifacts signed by that signer. Unsigned artifacts and unverified signatures are reported separately.
 
@@ -576,6 +738,8 @@ Unit tests run without any external tools (no GPG or sq required):
 mvn test
 ```
 
+The BC backend is always available and does not require external tool installation.
+
 ### Integration Tests
 
 Integration tests require both GnuPG and PQC-enabled Sequoia sq installed. They are automatically skipped if either tool is unavailable or if `sq` does not support the default PQC cipher suite (`mldsa87-ed448`).
@@ -594,6 +758,22 @@ The integration tests cover full round-trip signing and verification, GPG backwa
 The Maven plugin includes invoker tests under `maven-plugin/src/it/` covering dependency signer reporting, trust config generation and update, and end-to-end sign-verify round trips (the latter requires GPG + PQC-enabled sq).
 
 ## Known Limitations
+
+### BC v6 keys incompatible with GPG
+
+BC-generated v6 keys (Ed25519, Ed448, RSA) cannot be imported into GnuPG. GnuPG follows LibrePGP and does not support OpenPGP v6. BC v4 keys (ECDSA) work with GPG.
+
+### BC ECDSA keys are v4, not v6
+
+BC generates v4 keys for ECDSA (P-256, P-384, P-521) via JCA-based fallback. Bouncy Castle 1.85's `BcOpenPGPApi` does not provide ECDSA key generation, so a JCA-based implementation is used instead, which produces v4 keys.
+
+### PQC signature parsing by BC (Phase 2)
+
+BC cannot parse PQC composite signatures (algorithm IDs 30-36) in Phase 1. Support for ML-DSA-87+Ed448 and ML-DSA-65+Ed25519 will be added first in Phase 2 via custom RFC 9980 packet handling on top of Bouncy Castle's raw ML-DSA primitives.
+
+### GPG ephemeral key fetch not supported
+
+When `import-to-keyring` is `false` (default), GPG cannot fetch keys ephemerally — key fetch is skipped entirely, and verification returns `NO_KEY`. BC handles this case by caching fetched keys in memory. GPG could support ephemeral fetch using `--no-default-keyring --keyring <tmpfile>` for both `--recv-keys` and `--verify`, but this is not yet implemented.
 
 ### GPG exit code 2 for hybrid `.asc` files
 
@@ -619,6 +799,10 @@ The verifier classifies v5+ signature packets as PQC based on the public-key alg
 
 The PQC-enabled `sequoia-openpgp` (version `2.2.0-pqc.1`) is not published on crates.io. Building `sq` from source requires a `[patch.crates-io]` section in `Cargo.toml` to redirect dependency resolution to the PQC branch of the main Sequoia repository. This is expected to be resolved once the PQC support is merged into mainline Sequoia.
 
+## Maven Central Compatibility
+
+The `.asc` file starts with a standard armored block containing only the classic v4 signature. Maven Central's upload validation parses the first armored block, verifies the classic signature against public keyservers, and ignores the second block (the PQC signature). No changes to Maven Central are required.
+
 ## Project Structure
 
 ```
@@ -637,15 +821,6 @@ maven-plugin/                            Maven plugin (sign, verify, verify-arti
 | Ed25519/Ed448 (for comparison) | 114 bytes | 64 bytes |
 
 With the default ML-DSA-87+Ed448 cipher suite, the PQC signature adds ~4.6 KB per artifact to the `.asc` file. For a typical Maven module with 4 artifacts (JAR, POM, sources, javadoc), this adds ~18 KB total.
-
-## Upstream Contribution Path
-
-This project uses `io.github.cyberstamp.sigmund` as its groupId. The code is structured for future contribution to `maven-gpg-plugin`:
-
-- `Signer` would extend `AbstractGpgSigner` as a new `signer=hybrid` option
-- Configuration parameters (`pqcFingerprint`, `sqHome`) would be added to the existing `sign` goal
-- The `verify` goal would be contributed as a new goal
-- Sequoia `sq` would become an optional dependency alongside GnuPG
 
 ## Releasing
 

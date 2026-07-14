@@ -64,7 +64,7 @@ public class VerifyArtifactMojo extends AbstractMojo {
             Map<String, Map<String, String>> toolOverrides = SequoiaHomeResolver.toolOverrides(sqHome);
             return Sigmund.builder()
                     .discover()
-                    .discoveryConfig(new DiscoveryConfig(true, false, List.of(), toolOverrides))
+                    .discoveryConfig(new DiscoveryConfig(true, false, List.of(), toolOverrides, null))
                     .build();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to create verifier", e);

@@ -123,33 +123,20 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
      * @return the evidence result for this unit
      */
     private EvidenceResult verifyUnit(Path artifactFile, VerificationUnit unit) {
-        SignatureTool tool = routeUnitToTool(unit);
-        if (tool == null) {
-            return new EvidenceResult(new UnverifiedResult(Verdict.SKIPPED), List.of(), name());
-        }
-
-        VerifyResult result = tool.verify(artifactFile, unit);
-
-        if (result.verdict() == Verdict.NO_KEY) {
-            result = fetchKeyAndRetry(artifactFile, unit, tool, result);
-        }
-
-        return wrapAsEvidence(tool, result);
-    }
-
-    /**
-     * Finds the first registered tool that can verify the given unit.
-     *
-     * @param unit the verification unit to route
-     * @return the matching tool, or {@code null} if no tool supports this unit
-     */
-    private SignatureTool routeUnitToTool(VerificationUnit unit) {
         for (SignatureTool tool : tools) {
-            if (tool.canVerify(unit)) {
-                return tool;
+            if (!tool.canVerify(unit)) {
+                continue;
             }
+            VerifyResult result = tool.verify(artifactFile, unit);
+            if (result.verdict() == Verdict.SKIPPED) {
+                continue;
+            }
+            if (result.verdict() == Verdict.NO_KEY) {
+                result = fetchKeyAndRetry(artifactFile, unit, tool, result);
+            }
+            return wrapAsEvidence(tool, result);
         }
-        return null;
+        return new EvidenceResult(new UnverifiedResult(Verdict.SKIPPED), List.of(), name());
     }
 
     /**
@@ -210,8 +197,9 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
             return false;
         }
 
+        boolean persistent = discoveryConfig.importToKeyring();
         for (String keyserver : discoveryConfig.keyservers()) {
-            if (importer.importKey(keyId, keyserver)) {
+            if (importer.fetchKey(keyId, keyserver, persistent)) {
                 return true;
             }
         }

@@ -12,7 +12,7 @@ class VerifyResultTest {
     class EvidenceResultTests {
 
         @Test
-        void nullVerifyResult_throws() {
+        void nullVerifyResultThrows() {
             assertThrows(IllegalArgumentException.class,
                     () -> new EvidenceResult(null, List.of(), "test"));
         }
@@ -43,7 +43,7 @@ class VerifyResultTest {
         }
 
         @Test
-        void passVerdict_throws() {
+        void passVerdictThrows() {
             assertThrows(IllegalArgumentException.class,
                     () -> new UnverifiedResult(Verdict.PASS));
         }
@@ -75,26 +75,26 @@ class VerifyResultTest {
     class SignerIdentifier {
 
         @Test
-        void openPgp_returnsPreferredKeyId() {
+        void openPgpReturnsPreferredKeyId() {
             var result = new OpenPgpVerifyResult(Verdict.PASS, null, null, 4, "SHORT", "FULL_FP");
             assertEquals("FULL_FP", result.signerIdentifier());
         }
 
         @Test
-        void openPgp_fallsBackToKeyId() {
+        void openPgpFallsBackToKeyId() {
             var result = new OpenPgpVerifyResult(Verdict.PASS, null, null, 6, "SHORT", null);
             assertEquals("SHORT", result.signerIdentifier());
         }
 
         @Test
-        void sigstore_returnsNull() {
+        void sigstoreReturnsNull() {
             var result = new SigstoreVerifyResult(Verdict.PASS, "alice@example.com", "ECDSA",
                     "https://accounts.google.com", "12345");
             assertNull(result.signerIdentifier());
         }
 
         @Test
-        void unverified_returnsNull() {
+        void unverifiedReturnsNull() {
             var result = new UnverifiedResult(Verdict.SKIPPED);
             assertNull(result.signerIdentifier());
         }

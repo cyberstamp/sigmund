@@ -33,7 +33,7 @@ class AlgorithmsTest {
         }
 
         @Test
-        void unknownId_returnsNull() {
+        void unknownIdReturnsNull() {
             assertNull(Algorithms.algorithmName(99));
             assertNull(Algorithms.algorithmName(-1));
         }

@@ -271,7 +271,8 @@ class SigmundConfigParser {
         boolean importToKeyring = boolOrDefault(node, "import-to-keyring", false);
         List<String> keyservers = parseStringList(node.get("keyservers"));
         Map<String, Map<String, String>> tools = parseDiscoveryTools(node.get("tools"));
-        return new DiscoveryConfig(fetchSignerInfo, importToKeyring, keyservers, tools);
+        List<String> toolPriority = parseStringList(node.get("tool-priority"));
+        return new DiscoveryConfig(fetchSignerInfo, importToKeyring, keyservers, tools, toolPriority);
     }
 
     private static Map<String, Map<String, String>> parseDiscoveryTools(JsonNode node) {
@@ -299,12 +300,18 @@ class SigmundConfigParser {
         if (node == null || node.isNull()) {
             return List.of();
         }
+        if (node.isTextual()) {
+            String text = node.asText();
+            return text.isEmpty() ? List.of() : List.of(text);
+        }
         if (!node.isArray()) {
             return List.of();
         }
         List<String> result = new ArrayList<>();
         for (JsonNode el : node) {
-            result.add(el.asText());
+            if (!el.isNull()) {
+                result.add(el.asText());
+            }
         }
         return Collections.unmodifiableList(result);
     }

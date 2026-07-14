@@ -13,7 +13,7 @@ class CliToolTest {
      * Verifies that stdout is captured correctly from a simple echo command.
      */
     @Test
-    void run_capturesStdout() {
+    void runCapturesStdout() {
         CliTool.Result result = CliTool.run("echo", "hello");
 
         assertEquals(0, result.exitCode(), "Exit code should be 0");
@@ -24,7 +24,7 @@ class CliToolTest {
      * Verifies that stderr is captured correctly from a command that writes to stderr.
      */
     @Test
-    void run_capturesStderr() {
+    void runCapturesStderr() {
         CliTool.Result result = CliTool.run("sh", "-c", "echo err >&2");
 
         assertEquals(0, result.exitCode(), "Exit code should be 0");
@@ -35,7 +35,7 @@ class CliToolTest {
      * Verifies that run() does not throw an exception for non-zero exit codes.
      */
     @Test
-    void run_nonZeroExit_doesNotThrow() {
+    void runNonZeroExitDoesNotThrow() {
         CliTool.Result result = CliTool.run("sh", "-c", "exit 42");
 
         assertEquals(42, result.exitCode(), "Exit code should be 42");

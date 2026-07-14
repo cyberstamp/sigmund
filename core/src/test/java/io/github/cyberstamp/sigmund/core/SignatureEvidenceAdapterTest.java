@@ -46,6 +46,40 @@ class SignatureEvidenceAdapterTest {
         }
 
         @Test
+        void skippedToolFallsThroughToNext() {
+            var skipping = mockTool("bc", true, true,
+                    new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, 4, null, null),
+                    List.of());
+            var passing = mockTool("gpg", true, true, passVerifyResult(),
+                    List.of(new FingerprintCredential("openpgp4", FP)));
+            var adapter = adapterWith(singleUnitFormat(), List.of(skipping, passing),
+                    DiscoveryConfig.DEFAULT);
+
+            List<EvidenceResult> results = adapter.verify(ARTIFACT, EVIDENCE);
+
+            assertEquals(1, results.size());
+            assertEquals(Verdict.PASS, results.get(0).verdict());
+            assertEquals(1, results.get(0).provenCredentials().size());
+        }
+
+        @Test
+        void allToolsSkipReturnsSkipped() {
+            var tool1 = mockTool("bc", true, true,
+                    new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, 4, null, null),
+                    List.of());
+            var tool2 = mockTool("gpg", true, true,
+                    new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, 4, null, null),
+                    List.of());
+            var adapter = adapterWith(singleUnitFormat(), List.of(tool1, tool2),
+                    DiscoveryConfig.DEFAULT);
+
+            List<EvidenceResult> results = adapter.verify(ARTIFACT, EVIDENCE);
+
+            assertEquals(1, results.size());
+            assertEquals(Verdict.SKIPPED, results.get(0).verdict());
+        }
+
+        @Test
         void multipleUnitsRoutedIndependently() {
             var format = mockFormat("openpgp", ".asc", true,
                     List.of(V4_UNIT, new OpenPgpVerificationUnit("armored2", 6, "FP2", 1)));
@@ -98,7 +132,7 @@ class SignatureEvidenceAdapterTest {
 
         @Test
         void noKeyWithDiscoveryDisabled() {
-            var config = new DiscoveryConfig(false, false, List.of(), java.util.Map.of());
+            var config = new DiscoveryConfig(false, false, List.of(), java.util.Map.of(), List.of());
             var tool = mockTool("gpg", true, true, noKeyVerifyResult(), List.of());
             var adapter = adapterWith(singleUnitFormat(), List.of(tool), config);
 
@@ -110,7 +144,7 @@ class SignatureEvidenceAdapterTest {
         @Test
         void noKeyWithDiscoveryEnabledAndImportSucceeds() {
             var config = new DiscoveryConfig(true, false, List.of("hkps://keys.example.com"),
-                    java.util.Map.of());
+                    java.util.Map.of(), List.of());
             var importingTool = mockImportingTool("gpg", true);
             var adapter = adapterWith(singleUnitFormat(), List.of(importingTool), config);
 
@@ -121,7 +155,7 @@ class SignatureEvidenceAdapterTest {
 
         @Test
         void noKeyWithDiscoveryEnabledButNoKeyImporter() {
-            var config = new DiscoveryConfig(true, false, List.of(), java.util.Map.of());
+            var config = new DiscoveryConfig(true, false, List.of(), java.util.Map.of(), List.of());
             var tool = mockTool("gpg", true, true, noKeyVerifyResult(), List.of());
             var adapter = adapterWith(singleUnitFormat(), List.of(tool), config);
 
@@ -133,13 +167,46 @@ class SignatureEvidenceAdapterTest {
         @Test
         void noKeyWithImportFailure() {
             var config = new DiscoveryConfig(true, false, List.of("hkps://keys.example.com"),
-                    java.util.Map.of());
+                    java.util.Map.of(), List.of());
             var importingTool = mockImportingTool("gpg", false);
             var adapter = adapterWith(singleUnitFormat(), List.of(importingTool), config);
 
             List<EvidenceResult> results = adapter.verify(ARTIFACT, EVIDENCE);
 
             assertEquals(Verdict.NO_KEY, results.get(0).verdict());
+        }
+
+        /**
+         * When {@code importToKeyring=false} (default), the adapter should call
+         * {@link KeyImporter#fetchKeyEphemeral} instead of {@link KeyImporter#importKey}.
+         * If ephemeral fetch succeeds, verification should pass.
+         */
+        @Test
+        void importToKeyringFalseUsesEphemeralFetch() {
+            var config = new DiscoveryConfig(true, false, List.of("hkps://keys.example.com"),
+                    java.util.Map.of(), List.of());
+            var tool = mockImportingTool("bc", true);
+            var adapter = adapterWith(singleUnitFormat(), List.of(tool), config);
+
+            List<EvidenceResult> results = adapter.verify(ARTIFACT, EVIDENCE);
+
+            assertEquals(Verdict.PASS, results.get(0).verdict());
+        }
+
+        /**
+         * When {@code importToKeyring=true}, the adapter should call
+         * {@link KeyImporter#importKey} for permanent key storage.
+         */
+        @Test
+        void importToKeyringTrueUsesImportKey() {
+            var config = new DiscoveryConfig(true, true, List.of("hkps://keys.example.com"),
+                    java.util.Map.of(), List.of());
+            var tool = mockImportingTool("bc", true);
+            var adapter = adapterWith(singleUnitFormat(), List.of(tool), config);
+
+            List<EvidenceResult> results = adapter.verify(ARTIFACT, EVIDENCE);
+
+            assertEquals(Verdict.PASS, results.get(0).verdict());
         }
     }
 
@@ -354,6 +421,12 @@ class SignatureEvidenceAdapterTest {
 
         @Override
         public boolean importKey(String keyId, String keyserver) {
+            imported = importSucceeds;
+            return importSucceeds;
+        }
+
+        @Override
+        public boolean fetchKeyEphemeral(String keyId, String keyserver) {
             imported = importSucceeds;
             return importSucceeds;
         }

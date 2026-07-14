@@ -12,7 +12,7 @@ import org.junit.jupiter.api.io.TempDir;
 class SqRunnerTest {
 
     @Test
-    void parseCertInfo_rsaCert() {
+    void parseCertInfoRsaCert() {
         String output = """
                 OpenPGP Certificate.
 
@@ -38,7 +38,7 @@ class SqRunnerTest {
     }
 
     @Test
-    void parseCertInfo_pqcCertWithSubkeys() {
+    void parseCertInfoPqcCertWithSubkeys() {
         String output = """
                 OpenPGP Certificate.
 
@@ -63,7 +63,7 @@ class SqRunnerTest {
     }
 
     @Test
-    void parseCertInfo_noUserID() {
+    void parseCertInfoNoUserID() {
         String output = """
                 OpenPGP Certificate.
 
@@ -78,17 +78,17 @@ class SqRunnerTest {
     }
 
     @Test
-    void parseCertInfo_nullInput() {
+    void parseCertInfoNullInput() {
         assertNull(SqRunner.parseCertInfo(null, null));
     }
 
     @Test
-    void parseCertInfo_emptyInput() {
+    void parseCertInfoEmptyInput() {
         assertNull(SqRunner.parseCertInfo("", null));
     }
 
     @Test
-    void parseCertInfo_noMatchingFields() {
+    void parseCertInfoNoMatchingFields() {
         assertNull(SqRunner.parseCertInfo("some random output\n", null));
     }
 
