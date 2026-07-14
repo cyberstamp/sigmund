@@ -36,6 +36,7 @@ class SignatureInspector {
     private final Sigmund sigmund;
     private final KeyImporter keyImporter;
     private final List<String> keyServers;
+    private final boolean importToKeyring;
     private final Set<String> fetchedKeyIds = new HashSet<>();
 
     private SignatureInspector(Builder builder) {
@@ -45,6 +46,7 @@ class SignatureInspector {
         this.sigmund = builder.sigmund;
         this.keyImporter = sigmund.findTool(KeyImporter.class);
         this.keyServers = List.copyOf(builder.keyServers);
+        this.importToKeyring = builder.importToKeyring;
     }
 
     static Builder builder() {
@@ -58,6 +60,7 @@ class SignatureInspector {
         private List<RemoteRepository> remoteRepos;
         private Sigmund sigmund;
         private File sqHome;
+        private boolean importToKeyring;
         private final List<String> keyServers = new ArrayList<>();
 
         Builder log(Log log) {
@@ -95,12 +98,17 @@ class SignatureInspector {
             return this;
         }
 
+        Builder importToKeyring(boolean importToKeyring) {
+            this.importToKeyring = importToKeyring;
+            return this;
+        }
+
         SignatureInspector build() throws MojoExecutionException {
             if (sigmund == null) {
                 Map<String, Map<String, String>> overrides = SequoiaHomeResolver.toolOverrides(sqHome);
                 sigmund = Sigmund.builder()
                         .discover()
-                        .discoveryConfig(new DiscoveryConfig(true, false, List.of(), overrides))
+                        .discoveryConfig(new DiscoveryConfig(true, false, List.of(), overrides, null))
                         .build();
             }
             return new SignatureInspector(this);
@@ -185,7 +193,7 @@ class SignatureInspector {
             return reverify(entry);
         }
         for (String server : keyServers) {
-            if (keyImporter.importKey(id, server)) {
+            if (keyImporter.fetchKey(id, server, importToKeyring)) {
                 return reverify(entry);
             }
         }

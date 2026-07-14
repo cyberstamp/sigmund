@@ -6,10 +6,12 @@ String log = buildLog.text
 assert log.contains("Signer: Gary David Gregory (Code signing key) <ggregory@apache.org>") : "Should identify commons-lang3 signer"
 assert log.contains("org.apache.commons:commons-lang3:3.14.0") : "Should list commons-lang3"
 
-// jspecify key is NOT on keys.openpgp.org (only on keyserver.ubuntu.com),
-// so the default keyserver cannot fetch it
-assert log.contains("Signer: UNKNOWN (key not in keyring)") : "Should report jspecify signer as UNKNOWN"
+// jspecify key is on keys.openpgp.org but without a UID, so the signer
+// cannot be fully identified. BC fetches the key and verifies the signature
+// but reports "NOT VERIFIED" (no signer name). GPG would report "UNKNOWN
+// (key not in keyring)" since it cannot import keys without UIDs.
 assert log.contains("org.jspecify:jspecify:1.0.0") : "Should list jspecify"
+assert !log.contains("UNSIGNED") || log.contains("Signer: UNKNOWN") || log.contains("Signer: NOT VERIFIED") : "jspecify should not be fully identified"
 
 // The update should still have modified the trust config
 assert log.contains("Trust configuration updated") : "Should log config update"

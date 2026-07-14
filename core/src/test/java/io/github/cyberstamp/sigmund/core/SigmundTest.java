@@ -125,6 +125,48 @@ class SigmundTest {
         }
 
         @Test
+        void verifyFallsThroughOnSkipped() throws IOException {
+            Path artifact = createTempFile("fallthrough.jar");
+            Path sigFile = createTempFile("fallthrough.jar.asc",
+                    "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
+
+            var unit = new OpenPgpVerificationUnit("armored", 4, "FP", 1);
+            var format = mockFormat("openpgp", ".asc", true, List.of(unit));
+            var skippingTool = mockVerifyingTool("bc", format, true,
+                    new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, 4, null, null));
+            var passingTool = mockVerifyingTool("gpg", format, true,
+                    new OpenPgpVerifyResult(Verdict.PASS, "Alice", "RSA", 4, "KEY", "FP"));
+            var sigmund = Sigmund.builder().addTool(skippingTool).addTool(passingTool).build();
+
+            SignatureVerificationReport report = sigmund.verify(artifact, sigFile);
+
+            assertEquals(ReportVerdict.ALL_PASS, report.verdict());
+            assertEquals(1, report.files().size());
+            assertEquals(1, report.files().get(0).results().size());
+            assertEquals(Verdict.PASS, report.files().get(0).results().get(0).verdict());
+        }
+
+        @Test
+        void verifyAllToolsSkipReturnsEmpty() throws IOException {
+            Path artifact = createTempFile("allskip.jar");
+            Path sigFile = createTempFile("allskip.jar.asc",
+                    "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
+
+            var unit = new OpenPgpVerificationUnit("armored", 4, "FP", 1);
+            var format = mockFormat("openpgp", ".asc", true, List.of(unit));
+            var tool1 = mockVerifyingTool("bc", format, true,
+                    new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, 4, null, null));
+            var tool2 = mockVerifyingTool("gpg", format, true,
+                    new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, 4, null, null));
+            var sigmund = Sigmund.builder().addTool(tool1).addTool(tool2).build();
+
+            SignatureVerificationReport report = sigmund.verify(artifact, sigFile);
+
+            assertEquals(ReportVerdict.NONE_PASSED, report.verdict());
+            assertTrue(report.files().get(0).results().isEmpty());
+        }
+
+        @Test
         void verifyWithUnknownFormatReturnsEmptyResults() throws IOException {
             Path artifact = createTempFile("test.jar");
             Path sigFile = createTempFile("test.jar.unknown", "not a signature");
@@ -277,6 +319,16 @@ class SigmundTest {
                     () -> Sigmund.builder().addTool(available).addTool(unavailable).build());
             assertTrue(ex.getMessage().contains("sq"));
             assertTrue(ex.getMessage().contains("not available"));
+        }
+
+        @Test
+        void unknownToolInPriorityDoesNotPreventBuild() {
+            var tool = mockTool("gpg", true, false, Set.of("openpgp4"));
+            var config = new DiscoveryConfig(false, false, List.of(), Map.of(),
+                    List.of("nonexistent", "gpg"));
+            var sigmund = Sigmund.builder().addTool(tool).discoveryConfig(config).build();
+            assertEquals(1, sigmund.tools().size());
+            assertEquals("gpg", sigmund.tools().get(0).name());
         }
 
         @Test

@@ -23,7 +23,7 @@ class SigmundConfigParserTest {
     class SignerParsing {
 
         @Test
-        void minimalSigner_emailString() {
+        void minimalSignerEmailString() {
             var config = parse("""
                     signers:
                       bob: "bob@example.com"
@@ -37,7 +37,7 @@ class SigmundConfigParserTest {
         }
 
         @Test
-        void objectSigner_withFingerprints() {
+        void objectSignerWithFingerprints() {
             var config = parse("""
                     signers:
                       alice:
@@ -57,7 +57,7 @@ class SigmundConfigParserTest {
         }
 
         @Test
-        void objectSigner_withOidc() {
+        void objectSignerWithOidc() {
             var config = parse("""
                     signers:
                       ci-pipeline:
@@ -99,7 +99,7 @@ class SigmundConfigParserTest {
         }
 
         @Test
-        void objectSigner_withEmailAndFingerprint() {
+        void objectSignerWithEmailAndFingerprint() {
             var config = parse("""
                     signers:
                       alice:
@@ -118,7 +118,7 @@ class SigmundConfigParserTest {
     class TrustParsing {
 
         @Test
-        void trustMappings_resolved() {
+        void trustMappingsResolved() {
             var config = parse("""
                     signers:
                       alice:
@@ -133,7 +133,7 @@ class SigmundConfigParserTest {
         }
 
         @Test
-        void trustMappings_singleString() {
+        void trustMappingsSingleString() {
             var config = parse("""
                     signers:
                       bob: "bob@example.com"
@@ -146,7 +146,7 @@ class SigmundConfigParserTest {
         }
 
         @Test
-        void trustMappings_undefinedSigner_throws() {
+        void trustMappingsUndefinedSignerThrows() {
             assertThrows(PolicyConfigException.class, () -> parse("""
                     trust:
                       "org.example:*": [nonexistent]
@@ -188,7 +188,7 @@ class SigmundConfigParserTest {
         }
 
         @Test
-        void invalidPolicy_throws() {
+        void invalidPolicyThrows() {
             assertThrows(PolicyConfigException.class, () -> parse("""
                     policy:
                       on-untrusted: ignore
@@ -245,6 +245,33 @@ class SigmundConfigParserTest {
             assertFalse(dc.importToKeyring());
             assertEquals(List.of("hkps://keys.openpgp.org"), dc.keyservers());
             assertEquals("/path/to/root.json", dc.tools().get("sigstore").get("trusted-root"));
+        }
+
+        @Test
+        void toolPriorityList() {
+            var config = parse("""
+                    discovery:
+                      tool-priority: [sq, gpg]
+                    """);
+            assertEquals(List.of("sq", "gpg"), config.discoveryConfig().toolPriority());
+        }
+
+        @Test
+        void toolPriorityScalar() {
+            var config = parse("""
+                    discovery:
+                      tool-priority: gpg
+                    """);
+            assertEquals(List.of("gpg"), config.discoveryConfig().toolPriority());
+        }
+
+        @Test
+        void toolPriorityDefault() {
+            var config = parse("""
+                    discovery:
+                      fetch-signer-info: true
+                    """);
+            assertEquals(DiscoveryConfig.DEFAULT_TOOL_PRIORITY, config.discoveryConfig().toolPriority());
         }
 
         @Test

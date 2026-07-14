@@ -14,7 +14,7 @@ class CredentialMatchingTest {
             Verdict.PASS, null, null, null, null);
 
     @Test
-    void fingerprintMatch_v4() {
+    void fingerprintMatchV4() {
         var signer = new SignerIdentity("alice", "Alice", List.of(
                 new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23")));
 
@@ -27,7 +27,7 @@ class CredentialMatchingTest {
     }
 
     @Test
-    void emailMatch_acrossBackends() {
+    void emailMatchAcrossBackends() {
         var signer = new SignerIdentity("alice", "Alice", List.of(
                 new EmailCredential("alice@example.com")));
 
@@ -40,7 +40,7 @@ class CredentialMatchingTest {
     }
 
     @Test
-    void oidcMatch_strictIssuer() {
+    void oidcMatchStrictIssuer() {
         var signer = new SignerIdentity("ci", "CI Pipeline", List.of(
                 new OidcCredential("https://token.actions.githubusercontent.com",
                         "https://github.com/org/repo")));
@@ -54,7 +54,7 @@ class CredentialMatchingTest {
     }
 
     @Test
-    void oidcMismatch_wrongIssuer() {
+    void oidcMismatchWrongIssuer() {
         var signer = new SignerIdentity("ci", "CI Pipeline", List.of(
                 new OidcCredential("https://token.actions.githubusercontent.com",
                         "https://github.com/org/repo")));
@@ -68,7 +68,7 @@ class CredentialMatchingTest {
     }
 
     @Test
-    void noOverlap_differentCredentialTypes() {
+    void noOverlapDifferentCredentialTypes() {
         var signer = new SignerIdentity("alice", "Alice", List.of(
                 new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23")));
 
@@ -80,7 +80,7 @@ class CredentialMatchingTest {
     }
 
     @Test
-    void multipleCredentials_oneMatches() {
+    void multipleCredentialsOneMatches() {
         var signer = new SignerIdentity("alice", "Alice", List.of(
                 new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23"),
                 new FingerprintCredential("openpgp6", "ABCD1234ABCD1234"),
@@ -94,7 +94,7 @@ class CredentialMatchingTest {
     }
 
     @Test
-    void emptyCredentials_noMatch() {
+    void emptyCredentialsNoMatch() {
         var signer = new SignerIdentity("empty", "Empty", List.of());
         var evidence = new EvidenceResult(SIGSTORE_PASS, List.of(
                 new EmailCredential("alice@example.com")),

@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 class GpgRunnerTest {
 
     @Test
-    void extractGpgKeyId_fromStderr() {
+    void extractGpgKeyIdFromStderr() {
         String stderr = """
                 gpg: Signature made Mon 12 May 2025 10:00:00 AM EDT
                 gpg:                using RSA key 4AEE18F83AFDEB23
@@ -17,7 +17,7 @@ class GpgRunnerTest {
     }
 
     @Test
-    void extractGpgKeyId_longForm() {
+    void extractGpgKeyIdLongForm() {
         String stderr = """
                 gpg: Signature made Mon 12 May 2025 10:00:00 AM EDT
                 gpg:                using RSA key ABCD1234ABCD1234ABCD1234ABCD1234ABCD1234
@@ -27,19 +27,19 @@ class GpgRunnerTest {
     }
 
     @Test
-    void extractGpgKeyId_notFound() {
+    void extractGpgKeyIdNotFound() {
         assertNull(GpgRunner.extractGpgKeyId("gpg: some other output\n"));
     }
 
     @Test
-    void extractGpgKeyId_nullInput() {
+    void extractGpgKeyIdNullInput() {
         assertNull(GpgRunner.extractGpgKeyId(null));
     }
 
     // --- extractSignerUserId ---
 
     @Test
-    void extractSignerUserId_fromStderr() {
+    void extractSignerUserIdFromStderr() {
         String stderr = """
                 gpg: Signature made Mon 12 May 2025 10:00:00 AM EDT
                 gpg:                using RSA key 4AEE18F83AFDEB23
@@ -49,7 +49,7 @@ class GpgRunnerTest {
     }
 
     @Test
-    void extractSignerUserId_noGoodSignature() {
+    void extractSignerUserIdNoGoodSignature() {
         String stderr = """
                 gpg: Signature made Mon 12 May 2025 10:00:00 AM EDT
                 gpg:                using RSA key 4AEE18F83AFDEB23
@@ -59,14 +59,14 @@ class GpgRunnerTest {
     }
 
     @Test
-    void extractSignerUserId_nullInput() {
+    void extractSignerUserIdNullInput() {
         assertNull(GpgRunner.extractSignerUserId(null));
     }
 
     // --- extractAlgorithm ---
 
     @Test
-    void extractAlgorithm_rsa() {
+    void extractAlgorithmRsa() {
         String stderr = """
                 gpg: Signature made Mon 12 May 2025 10:00:00 AM EDT
                 gpg:                using RSA key 4AEE18F83AFDEB23
@@ -76,7 +76,7 @@ class GpgRunnerTest {
     }
 
     @Test
-    void extractAlgorithm_eddsa() {
+    void extractAlgorithmEddsa() {
         String stderr = """
                 gpg: Signature made Mon 12 May 2025 10:00:00 AM EDT
                 gpg:                using EDDSA key ABCD1234ABCD1234
@@ -86,12 +86,12 @@ class GpgRunnerTest {
     }
 
     @Test
-    void extractAlgorithm_nullInput() {
+    void extractAlgorithmNullInput() {
         assertNull(GpgRunner.extractAlgorithm(null));
     }
 
     @Test
-    void extractAlgorithm_notFound() {
+    void extractAlgorithmNotFound() {
         assertNull(GpgRunner.extractAlgorithm("gpg: some other output\n"));
     }
 }

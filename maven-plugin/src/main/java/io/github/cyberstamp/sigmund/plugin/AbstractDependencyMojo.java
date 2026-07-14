@@ -59,6 +59,9 @@ abstract class AbstractDependencyMojo extends AbstractMojo {
     @Parameter(property = "sigmund.includeTestDependencies", defaultValue = "false")
     protected boolean includeTestDependencies;
 
+    @Parameter(property = "sigmund.importToKeyring")
+    protected Boolean importToKeyring;
+
     @Parameter(property = "sigmund.skip", defaultValue = "false")
     protected boolean skip;
 
@@ -166,18 +169,24 @@ abstract class AbstractDependencyMojo extends AbstractMojo {
     }
 
     protected Sigmund buildSigmund(TrustConfig.Settings settings) throws MojoExecutionException {
+        boolean effectiveImport = importToKeyring != null && importToKeyring;
         return Sigmund.builder()
                 .discover()
                 .discoveryConfig(new DiscoveryConfig(
-                        settings.fetchSignerInfo(), false,
-                        settings.keyservers(), toolOverrides()))
+                        settings.fetchSignerInfo(), effectiveImport,
+                        settings.keyservers(), toolOverrides(), null))
                 .build();
     }
 
     protected Map<String, Map<String, String>> toolOverrides() {
         var overrides = new java.util.HashMap<>(SequoiaHomeResolver.toolOverrides(sqHome));
         if (gpgHome != null) {
-            overrides.put("gpg", Map.of("home", gpgHome.toPath().toString()));
+            String gpgHomePath = gpgHome.toPath().toString();
+            overrides.put("gpg", Map.of("home", gpgHomePath));
+            overrides.put("bc", Map.of(
+                    "gnupg-home", gpgHomePath,
+                    "cert-d-home", gpgHomePath + "/cert-d",
+                    "bc-private-home", gpgHomePath + "/bc-private"));
         }
         return overrides;
     }
@@ -189,7 +198,8 @@ abstract class AbstractDependencyMojo extends AbstractMojo {
                 .log(getLog())
                 .sigmund(sigmund)
                 .repoSystem(repoSystem).repoSession(repoSession).remoteRepos(remoteRepos)
-                .sqHome(sqHome);
+                .sqHome(sqHome)
+                .importToKeyring(importToKeyring != null && importToKeyring);
         if (settings.fetchSignerInfo()) {
             for (String server : settings.keyservers()) {
                 builder.addKeyServer(server);

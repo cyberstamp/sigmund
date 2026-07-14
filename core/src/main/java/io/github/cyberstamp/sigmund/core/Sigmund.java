@@ -221,9 +221,9 @@ public class Sigmund {
         List<VerificationUnit> units = format.parse(signatureFile);
         List<VerifyResult> results = new ArrayList<>();
         for (VerificationUnit unit : units) {
-            SignatureTool tool = findToolForUnit(unit);
-            if (tool != null) {
-                results.add(tool.verify(artifactFile, unit));
+            VerifyResult result = verifyUnit(artifactFile, unit);
+            if (result != null) {
+                results.add(result);
             }
         }
         return new FileSignatureReport(signatureFile, format.name(), results);
@@ -238,10 +238,14 @@ public class Sigmund {
         return null;
     }
 
-    private SignatureTool findToolForUnit(VerificationUnit unit) {
+    private VerifyResult verifyUnit(Path artifactFile, VerificationUnit unit) {
         for (SignatureTool tool : tools) {
-            if (tool.canVerify(unit)) {
-                return tool;
+            if (!tool.canVerify(unit)) {
+                continue;
+            }
+            VerifyResult result = tool.verify(artifactFile, unit);
+            if (result.verdict() != Verdict.SKIPPED) {
+                return result;
             }
         }
         return null;
@@ -410,18 +414,32 @@ public class Sigmund {
         }
 
         private static final List<SignatureToolFactory> FACTORIES = List.of(
-                new GpgToolFactory(), new SqToolFactory());
+                new BcToolFactory(), new GpgToolFactory(), new SqToolFactory());
 
         private void discoverTools() {
-            Map<String, Map<String, String>> toolSettings = discoveryConfig != null
-                    ? discoveryConfig.tools()
-                    : Map.of();
-            for (SignatureToolFactory factory : FACTORIES) {
-                if (findByName(factory.toolName()) != null) {
+            Map<String, Map<String, String>> toolSettings = discoveryConfig.tools();
+            List<String> priority = discoveryConfig.toolPriority();
+            for (String toolName : priority) {
+                if (findByName(toolName) != null) {
                     continue;
                 }
-                Map<String, String> settings = toolSettings.getOrDefault(
-                        factory.toolName(), Map.of());
+                discoverTool(toolName, toolSettings);
+            }
+            // discover any factory not listed in priority (backwards-compatible)
+            for (SignatureToolFactory factory : FACTORIES) {
+                if (findByName(factory.toolName()) == null
+                        && !priority.contains(factory.toolName())) {
+                    discoverTool(factory.toolName(), toolSettings);
+                }
+            }
+        }
+
+        private void discoverTool(String toolName, Map<String, Map<String, String>> toolSettings) {
+            for (SignatureToolFactory factory : FACTORIES) {
+                if (!factory.toolName().equals(toolName)) {
+                    continue;
+                }
+                Map<String, String> settings = toolSettings.getOrDefault(toolName, Map.of());
                 try {
                     SignatureTool tool = factory.createVerifyOnly(settings);
                     if (tool.isAvailable()) {
@@ -430,9 +448,13 @@ public class Sigmund {
                 } catch (SigmundException e) {
                     System.getLogger(Sigmund.class.getName())
                             .log(System.Logger.Level.DEBUG,
-                                    "Skipping tool '" + factory.toolName() + "': " + e.getMessage());
+                                    "Skipping tool '" + toolName + "': " + e.getMessage());
                 }
+                return;
             }
+            System.getLogger(Sigmund.class.getName())
+                    .log(System.Logger.Level.WARNING,
+                            "Unknown tool '" + toolName + "' in tool-priority");
         }
 
         private SignatureTool findByName(String name) {

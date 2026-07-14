@@ -110,7 +110,7 @@ class RoundTripIntegrationTest {
      * @throws Exception if signing or verification fails
      */
     @Test
-    void fullRoundTrip_signAndVerify(@TempDir Path tempDir) throws Exception {
+    void fullRoundTripSignAndVerify(@TempDir Path tempDir) throws Exception {
         // Arrange: Create test artifact
         Path artifact = createTestArtifact(tempDir, "test-artifact.jar");
 
@@ -165,7 +165,7 @@ class RoundTripIntegrationTest {
      * @throws Exception if signing or verification fails
      */
     @Test
-    void backwardCompat_gpgVerifiesCombinedAsc(@TempDir Path tempDir) throws Exception {
+    void backwardCompatGpgVerifiesCombinedAsc(@TempDir Path tempDir) throws Exception {
         // Arrange: Create and sign test artifact
         Path artifact = createTestArtifact(tempDir, "compat-test.jar");
         Signer signer = createSigningSigmund().signer();
@@ -215,7 +215,7 @@ class RoundTripIntegrationTest {
      * @throws Exception if signing or verification setup fails
      */
     @Test
-    void tamperedArtifact_verificationFails(@TempDir Path tempDir) throws Exception {
+    void tamperedArtifactVerificationFails(@TempDir Path tempDir) throws Exception {
         // Arrange: Create and sign test artifact
         Path artifact = createTestArtifact(tempDir, "tamper-test.jar");
         Signer signer = createSigningSigmund().signer();

@@ -17,7 +17,7 @@ class EmailCredentialTest {
     }
 
     @Test
-    void differentEmail_noMatch() {
+    void differentEmailNoMatch() {
         var a = new EmailCredential("alice@example.com");
         var b = new EmailCredential("bob@example.com");
         assertFalse(a.matches(b));
@@ -31,29 +31,29 @@ class EmailCredentialTest {
     }
 
     @Test
-    void crossType_noMatch() {
+    void crossTypeNoMatch() {
         var email = new EmailCredential("alice@example.com");
         var fp = new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23");
         assertFalse(email.matches(fp));
     }
 
     @Test
-    void type_isEmail() {
+    void typeIsEmail() {
         assertEquals("email", new EmailCredential("a@b.com").type());
     }
 
     @Test
-    void displayName_returnsEmail() {
+    void displayNameReturnsEmail() {
         assertEquals("alice@example.com", new EmailCredential("alice@example.com").displayName());
     }
 
     @Test
-    void nullEmail_throws() {
+    void nullEmailThrows() {
         assertThrows(IllegalArgumentException.class, () -> new EmailCredential(null));
     }
 
     @Test
-    void blankEmail_throws() {
+    void blankEmailThrows() {
         assertThrows(IllegalArgumentException.class, () -> new EmailCredential("  "));
     }
 }

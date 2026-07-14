@@ -17,7 +17,7 @@ class TrustVerifierTest {
     class VerdictAssignment {
 
         @Test
-        void trusted_whenEvidenceMatchesExpectedSigner() {
+        void trustedWhenEvidenceMatchesExpectedSigner() {
             var policy = policyFor(ALICE, false);
             var provider = passingProvider("openpgp",
                     new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23"));
@@ -33,7 +33,7 @@ class TrustVerifierTest {
         }
 
         @Test
-        void untrusted_whenEvidenceDoesNotMatch() {
+        void untrustedWhenEvidenceDoesNotMatch() {
             var policy = policyFor(ALICE, false);
             var provider = passingProvider("openpgp",
                     new FingerprintCredential("openpgp4", "DIFFERENT18F83AFD"));
@@ -48,7 +48,7 @@ class TrustVerifierTest {
         }
 
         @Test
-        void unsigned_whenNoEvidence() {
+        void unsignedWhenNoEvidence() {
             var policy = policyFor(ALICE, false);
             var verifier = new TrustVerifier(policy, List.of());
 
@@ -61,7 +61,7 @@ class TrustVerifierTest {
         }
 
         @Test
-        void notConfigured_whenArtifactNotInPolicy() {
+        void notConfiguredWhenArtifactNotInPolicy() {
             var policy = emptyPolicy();
             var verifier = new TrustVerifier(policy, List.of());
 
@@ -74,7 +74,7 @@ class TrustVerifierTest {
         }
 
         @Test
-        void verificationFailed_whenEvidenceFails() {
+        void verificationFailedWhenEvidenceFails() {
             var policy = policyFor(ALICE, false);
             var provider = failingProvider();
             var verifier = new TrustVerifier(policy, List.of(provider));
@@ -92,7 +92,7 @@ class TrustVerifierTest {
     class RequireAllEvidenceMatch {
 
         @Test
-        void untrusted_whenUnmatchedEvidenceAndPolicyRequiresAll() {
+        void untrustedWhenUnmatchedEvidenceAndPolicyRequiresAll() {
             var alice = ALICE;
             var policy = policyFor(alice, true);
             var provider = multiResultProvider(
@@ -113,7 +113,7 @@ class TrustVerifierTest {
         }
 
         @Test
-        void trusted_whenUnmatchedEvidenceButPolicyDoesNotRequireAll() {
+        void trustedWhenUnmatchedEvidenceButPolicyDoesNotRequireAll() {
             var policy = policyFor(ALICE, false);
             var provider = multiResultProvider(
                     new EvidenceResult(PGP_PASS,
@@ -138,7 +138,7 @@ class TrustVerifierTest {
     class EvidencePreservation {
 
         @Test
-        void noKeyEvidence_includedInUnmatched() {
+        void noKeyEvidenceIncludedInUnmatched() {
             var policy = policyFor(ALICE, false);
             var noKeyResult = new OpenPgpVerifyResult(Verdict.NO_KEY, null, null, 4,
                     null, "DEADBEEFDEADBEEF");
@@ -159,7 +159,7 @@ class TrustVerifierTest {
         }
 
         @Test
-        void notConfigured_carriesEvidence() {
+        void notConfiguredCarriesEvidence() {
             var provider = passingProvider("openpgp",
                     new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23"));
             var verifier = new TrustVerifier(emptyPolicy(), List.of(provider));
@@ -178,7 +178,7 @@ class TrustVerifierTest {
     class BatchAssessment {
 
         @Test
-        void assessAll_returnsOneResultPerRequest() {
+        void assessAllReturnsOneResultPerRequest() {
             var policy = emptyPolicy();
             var verifier = new TrustVerifier(policy, List.of());
 

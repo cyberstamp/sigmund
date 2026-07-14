@@ -32,7 +32,7 @@ class AscCombinerTest {
     // --- SEPARATE_BLOCKS mode (default) ---
 
     @Test
-    void separateBlocks_preservesTwoArmoredBlocks() {
+    void separateBlocksPreservesTwoArmoredBlocks() {
         String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
 
         assertEquals(2, countOccurrences(combined, "-----BEGIN PGP"));
@@ -40,7 +40,7 @@ class AscCombinerTest {
     }
 
     @Test
-    void separateBlocks_classicBlockComesFirst() {
+    void separateBlocksClassicBlockComesFirst() {
         String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
 
         assertTrue(combined.startsWith(ARMORED_BLOCK_1.stripTrailing()),
@@ -50,7 +50,7 @@ class AscCombinerTest {
     // --- extractBlock ---
 
     @Test
-    void extractBlock_returnsFirstBlock() {
+    void extractBlockReturnsFirstBlock() {
         String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
 
         String first = AscCombiner.extractBlock(combined, 0);
@@ -60,7 +60,7 @@ class AscCombinerTest {
     }
 
     @Test
-    void extractBlock_returnsSecondBlock() {
+    void extractBlockReturnsSecondBlock() {
         String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
 
         String second = AscCombiner.extractBlock(combined, 1);
@@ -70,21 +70,21 @@ class AscCombinerTest {
     }
 
     @Test
-    void extractBlock_returnsNullForOutOfRange() {
+    void extractBlockReturnsNullForOutOfRange() {
         String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
 
         assertNull(AscCombiner.extractBlock(combined, 2));
     }
 
     @Test
-    void extractBlock_returnsNullFromSingleBlockForIndex1() {
+    void extractBlockReturnsNullFromSingleBlockForIndex1() {
         assertNull(AscCombiner.extractBlock(ARMORED_BLOCK_1, 1));
     }
 
     // --- dearmor ---
 
     @Test
-    void dearmor_extractsRawBytes() {
+    void dearmorExtractsRawBytes() {
         byte[] raw = AscCombiner.dearmor(ARMORED_BLOCK_1);
 
         assertNotNull(raw, "Dearmored result should not be null");
@@ -94,7 +94,7 @@ class AscCombinerTest {
     // --- extractAllBlocks ---
 
     @Test
-    void extractAllBlocks_twoBlocks() {
+    void extractAllBlocksTwoBlocks() {
         String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
         var blocks = AscCombiner.extractAllBlocks(combined);
         assertEquals(2, blocks.size());
@@ -103,7 +103,7 @@ class AscCombinerTest {
     }
 
     @Test
-    void extractAllBlocks_singleBlock() {
+    void extractAllBlocksSingleBlock() {
         var blocks = AscCombiner.extractAllBlocks(ARMORED_BLOCK_1);
         assertEquals(1, blocks.size());
     }
@@ -111,14 +111,14 @@ class AscCombinerTest {
     // --- inspectSignaturePacket version detection ---
 
     @Test
-    void inspectSignaturePacket_v4() {
+    void inspectSignaturePacketV4() {
         // ARMORED_BLOCK_1 has packet bytes starting with 0x88 0x5E 0x04
         // old format tag 2, 1-byte length, version 4
         assertEquals(4, AscCombiner.inspectSignaturePacket(ARMORED_BLOCK_1).version());
     }
 
     @Test
-    void inspectSignaturePacket_v6() {
+    void inspectSignaturePacketV6() {
         // Create a block with version 6: old format tag 2, 1-byte length, version 6
         byte[] v6Data = new byte[] {
                 (byte) 0x88, 0x10, 0x06, 0x00, 0x11, 0x08, 0x00, 0x06,
@@ -129,7 +129,7 @@ class AscCombinerTest {
     }
 
     @Test
-    void inspectSignaturePacket_newFormat() {
+    void inspectSignaturePacketNewFormat() {
         // New format: 0xC2 = new format tag 2, 1-byte length < 192, version 4
         byte[] newFormatData = new byte[] {
                 (byte) 0xC2, 0x10, 0x04, 0x00, 0x11, 0x08, 0x00, 0x06,
@@ -140,7 +140,7 @@ class AscCombinerTest {
     }
 
     @Test
-    void inspectSignaturePacket_compressedDataWrapper() {
+    void inspectSignaturePacketCompressedDataWrapper() {
         // Compressed data packet (tag 8, old format, indeterminate length)
         // wrapping an uncompressed (algo=0) v4 signature packet
         byte[] compressedWrapped = new byte[] {
@@ -156,7 +156,7 @@ class AscCombinerTest {
     }
 
     @Test
-    void extractV6IssuerFingerprint_v6() {
+    void extractV6IssuerFingerprintV6() {
         // v6 signature with Issuer Fingerprint subpacket (type 33)
         byte[] fingerprint = new byte[32];
         for (int i = 0; i < 32; i++) {
@@ -187,12 +187,12 @@ class AscCombinerTest {
     }
 
     @Test
-    void issuerFingerprint_v4WithoutSubpacketReturnsNull() {
+    void issuerFingerprintV4WithoutSubpacketReturnsNull() {
         assertNull(AscCombiner.inspectSignaturePacket(ARMORED_BLOCK_1).issuerFingerprint());
     }
 
     @Test
-    void inspectSignaturePacket_compressedDataWrapper_v6() {
+    void inspectSignaturePacketCompressedDataWrapperV6() {
         byte[] compressedWrapped = new byte[] {
                 (byte) 0xA3, // tag 8, old format, indeterminate length
                 0x00, // compression algo = 0 (uncompressed)
