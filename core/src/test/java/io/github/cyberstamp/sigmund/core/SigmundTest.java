@@ -41,7 +41,7 @@ class SigmundTest {
             var config = new SigmundConfig(1, Map.of(), null,
                     new SigningConfig(null, Map.of(),
                             Map.of("v6-only", List.of("openpgp6")), "v6-only"),
-                    DiscoveryConfig.DEFAULT);
+                    ToolsConfig.DEFAULT);
             var sigmund = Sigmund.builder().config(config)
                     .addTool(v4Tool).addTool(v6Tool).build();
 
@@ -62,7 +62,7 @@ class SigmundTest {
                             Map.of("v6-only", List.of("openpgp6"),
                                     "classical", List.of("openpgp4")),
                             null),
-                    DiscoveryConfig.DEFAULT);
+                    ToolsConfig.DEFAULT);
             var sigmund = Sigmund.builder().config(config)
                     .addTool(v4Tool).addTool(v6Tool).build();
 
@@ -85,7 +85,7 @@ class SigmundTest {
             var config = new SigmundConfig(1, Map.of(), null,
                     new SigningConfig(null, Map.of(),
                             Map.of("v6-only", List.of("openpgp6")), null),
-                    DiscoveryConfig.DEFAULT);
+                    ToolsConfig.DEFAULT);
             var sigmund = Sigmund.builder().config(config)
                     .addTool(mockTool("gpg", true, true, Set.of("openpgp4"))).build();
 
@@ -216,7 +216,8 @@ class SigmundTest {
         @Test
         void findToolByCapability() {
             var tool = new MockKeyGeneratorTool("sq");
-            var sigmund = Sigmund.builder().addTool(tool).build();
+            var sigmund = Sigmund.builder().addTool(tool)
+                    .toolsConfig(noAutoInit()).build();
 
             assertNotNull(sigmund.findTool(KeyGenerator.class));
             assertNull(sigmund.findTool(KeyImporter.class));
@@ -324,9 +325,9 @@ class SigmundTest {
         @Test
         void unknownToolInPriorityDoesNotPreventBuild() {
             var tool = mockTool("gpg", true, false, Set.of("openpgp4"));
-            var config = new DiscoveryConfig(false, false, List.of(), Map.of(),
+            var config = new ToolsConfig(false, false, List.of(), Map.of(),
                     List.of("nonexistent", "gpg"));
-            var sigmund = Sigmund.builder().addTool(tool).discoveryConfig(config).build();
+            var sigmund = Sigmund.builder().addTool(tool).toolsConfig(config).build();
             assertEquals(1, sigmund.tools().size());
             assertEquals("gpg", sigmund.tools().get(0).name());
         }
@@ -335,7 +336,8 @@ class SigmundTest {
         void addToolReplacesExistingByName() {
             var tool1 = mockTool("gpg", true, false, Set.of("openpgp4"));
             var tool2 = mockTool("gpg", true, true, Set.of("openpgp4"));
-            var sigmund = Sigmund.builder().addTool(tool1).addTool(tool2).build();
+            var sigmund = Sigmund.builder().addTool(tool1).addTool(tool2)
+                    .toolsConfig(noAutoInit()).build();
 
             assertEquals(1, sigmund.tools().size());
             assertTrue(sigmund.tools().get(0).canSign());
@@ -343,6 +345,10 @@ class SigmundTest {
     }
 
     // --- Helpers ---
+
+    private static ToolsConfig noAutoInit() {
+        return new ToolsConfig(false, false, List.of(), Map.of(), List.of("_none_"));
+    }
 
     private Path createTempFile(String name) {
         return createTempFile(name, "content");

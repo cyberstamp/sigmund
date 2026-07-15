@@ -4,8 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Operational settings for key discovery, signer info resolution, and per-tool
- * verification configuration.
+ * Configuration for tool initialization, key fetching, and per-tool settings.
  * <p>
  * Separated from {@link TrustPolicy} because these are transport/infrastructure
  * concerns, not trust decisions. A trust policy backed by OPA or a database does
@@ -28,36 +27,43 @@ import java.util.Map;
  *
  * @param fetchSignerInfo whether to attempt fetching missing signer info
  * @param importToKeyring whether to persist fetched keys into the tool's keyring
- * @param keyservers keyserver URLs for key discovery (empty = default)
- * @param tools per-tool verification settings, keyed by tool name
- * @param toolPriority preferred tool order for discovery — listed tools are tried first,
- *        unlisted tools are still discovered after them (empty/null = default)
+ * @param keyservers keyserver URLs for key fetching (empty = default)
+ * @param tools per-tool settings, keyed by tool name
+ * @param toolPriority tools to use and their order; {@code null} means all available
+ *        tools in the default order; an explicit list restricts to only those tools
  */
-public record DiscoveryConfig(
+public record ToolsConfig(
         boolean fetchSignerInfo,
         boolean importToKeyring,
         List<String> keyservers,
         Map<String, Map<String, String>> tools,
         List<String> toolPriority) {
 
-    /**
-     * Default discovery configuration: fetch signer info enabled, ephemeral key fetching,
-     * tool-default keyservers, no per-tool overrides.
-     */
     public static final String DEFAULT_KEYSERVER = "hkps://keys.openpgp.org";
     public static final List<String> DEFAULT_TOOL_PRIORITY = List.of("bc", "sq", "gpg");
 
-    public static final DiscoveryConfig DEFAULT = new DiscoveryConfig(true, false, List.of(DEFAULT_KEYSERVER), Map.of(),
-            DEFAULT_TOOL_PRIORITY);
+    public static final ToolsConfig DEFAULT = new ToolsConfig(true, false, List.of(DEFAULT_KEYSERVER), Map.of(),
+            null);
 
     /**
-     * Creates a new discovery configuration with defensive copies.
+     * Creates a new tools configuration with defensive copies.
+     * <p>
+     * A {@code null} {@code toolPriority} means "initialize all available tools"
+     * in the default order. An explicit list restricts to only those tools.
      */
-    public DiscoveryConfig {
+    public ToolsConfig {
         keyservers = keyservers != null && !keyservers.isEmpty() ? List.copyOf(keyservers) : List.of(DEFAULT_KEYSERVER);
         tools = tools != null ? Map.copyOf(tools) : Map.of();
-        toolPriority = toolPriority != null && !toolPriority.isEmpty()
-                ? List.copyOf(toolPriority)
-                : DEFAULT_TOOL_PRIORITY;
+        toolPriority = toolPriority != null && !toolPriority.isEmpty() ? List.copyOf(toolPriority) : null;
+    }
+
+    /**
+     * Returns the tool priority list for iteration, falling back to the default
+     * order when {@link #toolPriority()} is {@code null}.
+     *
+     * @return the effective tool priority list, never {@code null}
+     */
+    public List<String> effectiveToolPriority() {
+        return toolPriority != null ? toolPriority : DEFAULT_TOOL_PRIORITY;
     }
 }

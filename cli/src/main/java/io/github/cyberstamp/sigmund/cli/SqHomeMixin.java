@@ -13,6 +13,10 @@ public class SqHomeMixin {
     @CommandLine.Option(names = { "--sq-home" }, description = "Sequoia home directory (default: ~/.local/share/sequoia)")
     private String sqHome;
 
+    boolean hasExplicitHome() {
+        return sqHome != null && !sqHome.isEmpty();
+    }
+
     Path resolveSequoiaHome() {
         if (sqHome != null && !sqHome.isEmpty()) {
             return expandTilde(sqHome);

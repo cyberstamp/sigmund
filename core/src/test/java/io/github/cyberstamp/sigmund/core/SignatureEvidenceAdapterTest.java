@@ -22,7 +22,7 @@ class SignatureEvidenceAdapterTest {
         void singleUnitVerifiedAndCredentialsExtracted() {
             var tool = mockTool("gpg", true, true, passVerifyResult(),
                     List.of(new FingerprintCredential("openpgp4", FP)));
-            var adapter = adapterWith(singleUnitFormat(), List.of(tool), DiscoveryConfig.DEFAULT);
+            var adapter = adapterWith(singleUnitFormat(), List.of(tool), ToolsConfig.DEFAULT);
 
             List<EvidenceResult> results = adapter.verify(ARTIFACT, EVIDENCE);
 
@@ -36,7 +36,7 @@ class SignatureEvidenceAdapterTest {
         @Test
         void noToolCanHandleUnit() {
             var tool = mockTool("gpg", true, false, null, List.of());
-            var adapter = adapterWith(singleUnitFormat(), List.of(tool), DiscoveryConfig.DEFAULT);
+            var adapter = adapterWith(singleUnitFormat(), List.of(tool), ToolsConfig.DEFAULT);
 
             List<EvidenceResult> results = adapter.verify(ARTIFACT, EVIDENCE);
 
@@ -53,7 +53,7 @@ class SignatureEvidenceAdapterTest {
             var passing = mockTool("gpg", true, true, passVerifyResult(),
                     List.of(new FingerprintCredential("openpgp4", FP)));
             var adapter = adapterWith(singleUnitFormat(), List.of(skipping, passing),
-                    DiscoveryConfig.DEFAULT);
+                    ToolsConfig.DEFAULT);
 
             List<EvidenceResult> results = adapter.verify(ARTIFACT, EVIDENCE);
 
@@ -71,7 +71,7 @@ class SignatureEvidenceAdapterTest {
                     new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, 4, null, null),
                     List.of());
             var adapter = adapterWith(singleUnitFormat(), List.of(tool1, tool2),
-                    DiscoveryConfig.DEFAULT);
+                    ToolsConfig.DEFAULT);
 
             List<EvidenceResult> results = adapter.verify(ARTIFACT, EVIDENCE);
 
@@ -87,7 +87,7 @@ class SignatureEvidenceAdapterTest {
                     List.of(new FingerprintCredential("openpgp4", FP)));
             var v6Tool = mockToolForVersion("sq", 6, passVerifyResult(),
                     List.of(new FingerprintCredential("openpgp6", "FP2")));
-            var adapter = adapterWith(format, List.of(v4Tool, v6Tool), DiscoveryConfig.DEFAULT);
+            var adapter = adapterWith(format, List.of(v4Tool, v6Tool), ToolsConfig.DEFAULT);
 
             List<EvidenceResult> results = adapter.verify(ARTIFACT, EVIDENCE);
 
@@ -103,26 +103,26 @@ class SignatureEvidenceAdapterTest {
         @Test
         void availableWhenAnyToolAvailable() {
             var tool = mockTool("gpg", true, false, null, List.of());
-            var adapter = adapterWith(singleUnitFormat(), List.of(tool), DiscoveryConfig.DEFAULT);
+            var adapter = adapterWith(singleUnitFormat(), List.of(tool), ToolsConfig.DEFAULT);
             assertTrue(adapter.isAvailable());
         }
 
         @Test
         void unavailableWhenNoToolAvailable() {
             var tool = mockTool("gpg", false, false, null, List.of());
-            var adapter = adapterWith(singleUnitFormat(), List.of(tool), DiscoveryConfig.DEFAULT);
+            var adapter = adapterWith(singleUnitFormat(), List.of(tool), ToolsConfig.DEFAULT);
             assertFalse(adapter.isAvailable());
         }
 
         @Test
         void nameDelegatesToFormat() {
-            var adapter = adapterWith(singleUnitFormat(), List.of(), DiscoveryConfig.DEFAULT);
+            var adapter = adapterWith(singleUnitFormat(), List.of(), ToolsConfig.DEFAULT);
             assertEquals("openpgp", adapter.name());
         }
 
         @Test
         void canHandleDelegatesToFormat() {
-            var adapter = adapterWith(singleUnitFormat(), List.of(), DiscoveryConfig.DEFAULT);
+            var adapter = adapterWith(singleUnitFormat(), List.of(), ToolsConfig.DEFAULT);
             assertTrue(adapter.canHandle(EVIDENCE));
         }
     }
@@ -132,7 +132,7 @@ class SignatureEvidenceAdapterTest {
 
         @Test
         void noKeyWithDiscoveryDisabled() {
-            var config = new DiscoveryConfig(false, false, List.of(), java.util.Map.of(), List.of());
+            var config = new ToolsConfig(false, false, List.of(), java.util.Map.of(), List.of());
             var tool = mockTool("gpg", true, true, noKeyVerifyResult(), List.of());
             var adapter = adapterWith(singleUnitFormat(), List.of(tool), config);
 
@@ -143,7 +143,7 @@ class SignatureEvidenceAdapterTest {
 
         @Test
         void noKeyWithDiscoveryEnabledAndImportSucceeds() {
-            var config = new DiscoveryConfig(true, false, List.of("hkps://keys.example.com"),
+            var config = new ToolsConfig(true, false, List.of("hkps://keys.example.com"),
                     java.util.Map.of(), List.of());
             var importingTool = mockImportingTool("gpg", true);
             var adapter = adapterWith(singleUnitFormat(), List.of(importingTool), config);
@@ -155,7 +155,7 @@ class SignatureEvidenceAdapterTest {
 
         @Test
         void noKeyWithDiscoveryEnabledButNoKeyImporter() {
-            var config = new DiscoveryConfig(true, false, List.of(), java.util.Map.of(), List.of());
+            var config = new ToolsConfig(true, false, List.of(), java.util.Map.of(), List.of());
             var tool = mockTool("gpg", true, true, noKeyVerifyResult(), List.of());
             var adapter = adapterWith(singleUnitFormat(), List.of(tool), config);
 
@@ -166,7 +166,7 @@ class SignatureEvidenceAdapterTest {
 
         @Test
         void noKeyWithImportFailure() {
-            var config = new DiscoveryConfig(true, false, List.of("hkps://keys.example.com"),
+            var config = new ToolsConfig(true, false, List.of("hkps://keys.example.com"),
                     java.util.Map.of(), List.of());
             var importingTool = mockImportingTool("gpg", false);
             var adapter = adapterWith(singleUnitFormat(), List.of(importingTool), config);
@@ -183,7 +183,7 @@ class SignatureEvidenceAdapterTest {
          */
         @Test
         void importToKeyringFalseUsesEphemeralFetch() {
-            var config = new DiscoveryConfig(true, false, List.of("hkps://keys.example.com"),
+            var config = new ToolsConfig(true, false, List.of("hkps://keys.example.com"),
                     java.util.Map.of(), List.of());
             var tool = mockImportingTool("bc", true);
             var adapter = adapterWith(singleUnitFormat(), List.of(tool), config);
@@ -199,7 +199,7 @@ class SignatureEvidenceAdapterTest {
          */
         @Test
         void importToKeyringTrueUsesImportKey() {
-            var config = new DiscoveryConfig(true, true, List.of("hkps://keys.example.com"),
+            var config = new ToolsConfig(true, true, List.of("hkps://keys.example.com"),
                     java.util.Map.of(), List.of());
             var tool = mockImportingTool("bc", true);
             var adapter = adapterWith(singleUnitFormat(), List.of(tool), config);
@@ -213,7 +213,7 @@ class SignatureEvidenceAdapterTest {
     // --- Helpers ---
 
     private static SignatureEvidenceAdapter adapterWith(SignatureFormat format,
-            List<SignatureTool> tools, DiscoveryConfig config) {
+            List<SignatureTool> tools, ToolsConfig config) {
         return new SignatureEvidenceAdapter(format, tools, config);
     }
 

@@ -15,7 +15,6 @@ import java.util.Map;
  * SigmundConfig config = SigmundConfig.parse(Path.of("sigmund.yaml"));
  * Sigmund sigmund = Sigmund.builder()
  *         .config(config)
- *         .discover()
  *         .build();
  *
  * // Sign (default profile or all tools)
@@ -41,7 +40,7 @@ import java.util.Map;
  * <h3>Verify-only</h3>
  *
  * <pre>{@code
- * Sigmund sigmund = Sigmund.builder().discover().build();
+ * Sigmund sigmund = Sigmund.builder().build();
  * SignatureVerificationReport report = sigmund.verify(artifactFile, signatureFile);
  * }</pre>
  *
@@ -121,7 +120,7 @@ public class Sigmund {
     /**
      * Creates a trust verifier using the given policy.
      * <p>
-     * The {@link DiscoveryConfig} set at build time is used for key fetching.
+     * The {@link ToolsConfig} set at build time is used for key fetching.
      *
      * @param policy the trust policy to apply
      * @return a new trust verifier
@@ -254,30 +253,17 @@ public class Sigmund {
     /**
      * Builder for constructing a {@link Sigmund} instance.
      * <p>
-     * Methods: {@link #discover()} probes for available tools (verify-only).
-     * {@link #config(SigmundConfig)} applies the full config including signing and discovery.
-     * {@link #addTool(SignatureTool)} adds or replaces a tool (takes precedence over {@code discover()}).
-     * {@link #discoveryConfig(DiscoveryConfig)} sets key fetching config (fixed at build time).
+     * {@link #build()} always initializes tools from registered factories based on the
+     * {@link ToolsConfig}. Explicit {@link #addTool(SignatureTool)} calls take precedence.
+     * {@link #config(SigmundConfig)} applies the full config including signing and tool settings.
+     * {@link #toolsConfig(ToolsConfig)} sets key fetching and tool config.
      */
     public static class Builder {
 
         private final List<SignatureTool> tools = new ArrayList<>(2);
         private final List<EvidenceProvider> extraProviders = new ArrayList<>();
-        private DiscoveryConfig discoveryConfig = DiscoveryConfig.DEFAULT;
+        private ToolsConfig toolsConfig = ToolsConfig.DEFAULT;
         private SigningConfig signingConfig;
-        private boolean discovered;
-
-        /**
-         * Probes for available tools and adds verify-only instances.
-         * <p>
-         * Only adds tools not already present (explicit {@code addTool()} takes precedence).
-         *
-         * @return this builder
-         */
-        public Builder discover() {
-            this.discovered = true;
-            return this;
-        }
 
         /**
          * Sets key fetching and keyserver configuration, fixed at build time.
@@ -286,22 +272,22 @@ public class Sigmund {
          * @param dc the discovery configuration
          * @return this builder
          */
-        public Builder discoveryConfig(DiscoveryConfig dc) {
-            this.discoveryConfig = dc != null ? dc : DiscoveryConfig.DEFAULT;
+        public Builder toolsConfig(ToolsConfig dc) {
+            this.toolsConfig = dc != null ? dc : ToolsConfig.DEFAULT;
             return this;
         }
 
         /**
-         * Applies the full configuration: signing tools, discovery config, and tool overrides.
+         * Applies the full configuration.
          * <p>
-         * Overrides any prior {@code discoveryConfig()} call.
-         * Explicit {@code addTool()} calls take precedence over config-derived tools.
+         * Overrides any prior {@code toolsConfig()} call.
+         * Explicit {@code addTool()} calls take precedence over initialized tools.
          *
          * @param config the unified configuration
          * @return this builder
          */
         public Builder config(SigmundConfig config) {
-            this.discoveryConfig = config.discoveryConfig();
+            this.toolsConfig = config.toolsConfig();
             this.signingConfig = config.signingConfig();
             return this;
         }
@@ -379,16 +365,14 @@ public class Sigmund {
         /**
          * Builds the {@link Sigmund} instance.
          * <p>
-         * All tools in the builder are already verified as available — {@link #addTool}
-         * checks at add time, and {@link #discoverTools()} only adds available tools.
+         * Initializes tools from registered factories based on {@link ToolsConfig}.
+         * Explicit {@link #addTool} calls take precedence — already-added tools are skipped.
          *
          * @return the configured Sigmund instance
          * @throws SigmundException if no tools are available
          */
         public Sigmund build() {
-            if (discovered) {
-                discoverTools();
-            }
+            initializeTools();
 
             Map<String, List<SignatureTool>> toolsByFormat = new LinkedHashMap<>(2);
             for (SignatureTool tool : tools) {
@@ -401,7 +385,7 @@ public class Sigmund {
             for (List<SignatureTool> group : toolsByFormat.values()) {
                 SignatureFormat format = group.get(0).signatureFormat();
                 formats.add(format);
-                providers.add(new SignatureEvidenceAdapter(format, group, discoveryConfig));
+                providers.add(new SignatureEvidenceAdapter(format, group, toolsConfig));
             }
             for (EvidenceProvider ep : extraProviders) {
                 if (ep.isAvailable()) {
@@ -416,25 +400,26 @@ public class Sigmund {
         private static final List<SignatureToolFactory> FACTORIES = List.of(
                 new BcToolFactory(), new GpgToolFactory(), new SqToolFactory());
 
-        private void discoverTools() {
-            Map<String, Map<String, String>> toolSettings = discoveryConfig.tools();
-            List<String> priority = discoveryConfig.toolPriority();
+        private void initializeTools() {
+            Map<String, Map<String, String>> toolSettings = toolsConfig.tools();
+            List<String> priority = toolsConfig.effectiveToolPriority();
             for (String toolName : priority) {
                 if (findByName(toolName) != null) {
                     continue;
                 }
-                discoverTool(toolName, toolSettings);
+                initializeTool(toolName, toolSettings);
             }
-            // discover any factory not listed in priority (backwards-compatible)
-            for (SignatureToolFactory factory : FACTORIES) {
-                if (findByName(factory.toolName()) == null
-                        && !priority.contains(factory.toolName())) {
-                    discoverTool(factory.toolName(), toolSettings);
+            if (toolsConfig.toolPriority() == null) {
+                for (SignatureToolFactory factory : FACTORIES) {
+                    if (findByName(factory.toolName()) == null
+                            && !priority.contains(factory.toolName())) {
+                        initializeTool(factory.toolName(), toolSettings);
+                    }
                 }
             }
         }
 
-        private void discoverTool(String toolName, Map<String, Map<String, String>> toolSettings) {
+        private void initializeTool(String toolName, Map<String, Map<String, String>> toolSettings) {
             for (SignatureToolFactory factory : FACTORIES) {
                 if (!factory.toolName().equals(toolName)) {
                     continue;

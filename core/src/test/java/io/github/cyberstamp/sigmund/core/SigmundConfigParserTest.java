@@ -229,7 +229,7 @@ class SigmundConfigParserTest {
     class DiscoveryParsing {
 
         @Test
-        void discoveryConfig() {
+        void toolsConfig() {
             var config = parse("""
                     discovery:
                       fetch-signer-info: true
@@ -240,7 +240,7 @@ class SigmundConfigParserTest {
                         sigstore:
                           trusted-root: "/path/to/root.json"
                     """);
-            var dc = config.discoveryConfig();
+            var dc = config.toolsConfig();
             assertTrue(dc.fetchSignerInfo());
             assertFalse(dc.importToKeyring());
             assertEquals(List.of("hkps://keys.openpgp.org"), dc.keyservers());
@@ -253,7 +253,7 @@ class SigmundConfigParserTest {
                     discovery:
                       tool-priority: [sq, gpg]
                     """);
-            assertEquals(List.of("sq", "gpg"), config.discoveryConfig().toolPriority());
+            assertEquals(List.of("sq", "gpg"), config.toolsConfig().toolPriority());
         }
 
         @Test
@@ -262,7 +262,7 @@ class SigmundConfigParserTest {
                     discovery:
                       tool-priority: gpg
                     """);
-            assertEquals(List.of("gpg"), config.discoveryConfig().toolPriority());
+            assertEquals(List.of("gpg"), config.toolsConfig().toolPriority());
         }
 
         @Test
@@ -271,13 +271,14 @@ class SigmundConfigParserTest {
                     discovery:
                       fetch-signer-info: true
                     """);
-            assertEquals(DiscoveryConfig.DEFAULT_TOOL_PRIORITY, config.discoveryConfig().toolPriority());
+            assertNull(config.toolsConfig().toolPriority());
+            assertEquals(ToolsConfig.DEFAULT_TOOL_PRIORITY, config.toolsConfig().effectiveToolPriority());
         }
 
         @Test
         void noDiscoverySection() {
             var config = parse("version: 1");
-            assertEquals(DiscoveryConfig.DEFAULT, config.discoveryConfig());
+            assertEquals(ToolsConfig.DEFAULT, config.toolsConfig());
         }
     }
 
@@ -313,7 +314,7 @@ class SigmundConfigParserTest {
             assertEquals(2, config.signers().size());
             assertEquals("alice", config.signingConfig().signer());
             assertTrue(config.trustPolicy().requireAllEvidenceMatch());
-            assertTrue(config.discoveryConfig().fetchSignerInfo());
+            assertTrue(config.toolsConfig().fetchSignerInfo());
         }
     }
 
