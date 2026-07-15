@@ -140,7 +140,7 @@ Sign and verify using only the pure-Java Bouncy Castle backend — no external t
 
 ```java
 // Generate a v6 Ed25519 key
-Sigmund sigmund = Sigmund.builder().discover().build();
+Sigmund sigmund = Sigmund.builder().build();
 KeyGenerator keygen = sigmund.findTool(KeyGenerator.class, "bc");
 String fingerprint = keygen.generateKey("You <you@example.com>", "ed25519");
 
@@ -176,7 +176,7 @@ java -jar cli/target/sigmund.jar sign \
   --pqc-fingerprint D62AAB339E45E5EA2FD036872B01D46A517A2991...
 
 # 3. Verify all signatures
-java -jar cli/target/sigmund.jar verify \
+java -jar cli/target/sigmund.jar verify-signature \
   --file target/my-artifact-1.0.jar \
   --signature target/my-artifact-1.0.jar.asc
 ```
@@ -361,7 +361,7 @@ discovery:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `tool-priority` | `[bc, sq, gpg]` | Preferred tool order for verification. Listed tools are tried first; unlisted tools are still discovered after them. |
+| `tool-priority` | `[bc, sq, gpg]` | Tools to use and their order. When set, only listed tools are used. When omitted, all available tools are initialized in the default order. |
 | `fetch-signer-info` | `true` | Fetch missing keys from keyservers during verification |
 | `import-to-keyring` | `false` | Persist fetched keys into tool keyrings. When `false` (default), BC caches keys in memory for the session without writing to disk. GPG cannot do ephemeral imports, so key fetch is skipped entirely — use `true` if GPG is the primary tool and you want key auto-fetch. Note: `keys.openpgp.org` may serve keys without user IDs; BC can use these for verification, but GPG cannot import them. |
 | `keyservers` | `hkps://keys.openpgp.org` | Keyserver URLs for key discovery |
@@ -487,12 +487,12 @@ sigmund sign --file <FILE> --pqc-fingerprint <FP> [options]
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `--output` | No | `<file>.asc` | Output signature file path |
 
-### `sigmund verify`
+### `sigmund verify-signature`
 
 Verify a signature using all available tools according to tool priority.
 
 ```
-sigmund verify --file <FILE> --signature <ASC> [options]
+sigmund verify-signature --file <FILE> --signature <ASC> [options]
 ```
 
 | Option | Required | Default | Description |
@@ -563,12 +563,12 @@ mvn verify -Dsigmund.fingerprint=<FINGERPRINT>
 | `gpg.keyname` | No | GPG default | GPG key ID or email for classic signing |
 | `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 
-### `sigmund:verify-artifact`
+### `sigmund:verify-signature`
 
 Verify a single signed artifact (standalone, no project required):
 
 ```bash
-mvn sigmund:verify-artifact \
+mvn sigmund:verify-signature \
   -Dfile=artifact.jar \
   -Dsignature=artifact.jar.asc
 ```
@@ -808,7 +808,7 @@ The `.asc` file starts with a standard armored block containing only the classic
 ```
 core/                                    Core signing and verification library
 cli/                                     CLI tools (picocli)
-maven-plugin/                            Maven plugin (sign, verify, verify-artifact, dependency-signers goals)
+maven-plugin/                            Maven plugin (sign, verify, verify-signature, dependency-signers goals)
 ```
 
 ## PQC Signature Sizes
@@ -873,7 +873,7 @@ Consumers need the signer's GPG public key in their keyring and the PQC certific
 **CLI:**
 
 ```bash
-java -jar sigmund.jar verify \
+java -jar sigmund.jar verify-signature \
   --file my-artifact-1.0.jar \
   --signature my-artifact-1.0.jar.asc
 ```
@@ -881,7 +881,7 @@ java -jar sigmund.jar verify \
 **Maven plugin:**
 
 ```bash
-mvn sigmund:verify-artifact \
+mvn sigmund:verify-signature \
   -Dfile=my-artifact-1.0.jar \
   -Dsignature=my-artifact-1.0.jar.asc
 ```

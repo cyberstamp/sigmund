@@ -1,10 +1,10 @@
 package io.github.cyberstamp.sigmund.plugin;
 
-import io.github.cyberstamp.sigmund.core.DiscoveryConfig;
 import io.github.cyberstamp.sigmund.core.FileSignatureReport;
 import io.github.cyberstamp.sigmund.core.KeyImporter;
 import io.github.cyberstamp.sigmund.core.Sigmund;
 import io.github.cyberstamp.sigmund.core.SignatureVerificationReport;
+import io.github.cyberstamp.sigmund.core.ToolsConfig;
 import io.github.cyberstamp.sigmund.core.UnverifiedResult;
 import io.github.cyberstamp.sigmund.core.Verdict;
 import io.github.cyberstamp.sigmund.core.VerifyResult;
@@ -107,8 +107,7 @@ class SignatureInspector {
             if (sigmund == null) {
                 Map<String, Map<String, String>> overrides = SequoiaHomeResolver.toolOverrides(sqHome);
                 sigmund = Sigmund.builder()
-                        .discover()
-                        .discoveryConfig(new DiscoveryConfig(true, false, List.of(), overrides, null))
+                        .toolsConfig(new ToolsConfig(true, false, List.of(), overrides, null))
                         .build();
             }
             return new SignatureInspector(this);

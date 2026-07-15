@@ -1,11 +1,13 @@
 package io.github.cyberstamp.sigmund.cli;
 
-import io.github.cyberstamp.sigmund.core.GpgRunner;
 import io.github.cyberstamp.sigmund.core.Sigmund;
+import io.github.cyberstamp.sigmund.core.SigmundConfig;
 import io.github.cyberstamp.sigmund.core.SignatureVerificationReport;
-import io.github.cyberstamp.sigmund.core.SqRunner;
+import io.github.cyberstamp.sigmund.core.ToolsConfig;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 
@@ -19,8 +21,8 @@ import picocli.CommandLine;
  * <li><b>Lenient mode</b> (--lenient flag): At least one signature must pass, none may fail.</li>
  * </ul>
  */
-@CommandLine.Command(name = "verify", description = "Verify a hybrid signature", mixinStandardHelpOptions = true)
-public class VerifyCommand implements Callable<Integer> {
+@CommandLine.Command(name = "verify-signature", description = "Verify a hybrid signature", mixinStandardHelpOptions = true)
+public class VerifySignatureCommand implements Callable<Integer> {
 
     @CommandLine.Option(names = { "--file" }, required = true, description = "Artifact file to verify")
     private String file;
@@ -31,6 +33,9 @@ public class VerifyCommand implements Callable<Integer> {
     @CommandLine.Mixin
     private SqHomeMixin sqHomeMixin;
 
+    @CommandLine.Mixin
+    private ConfigMixin configMixin;
+
     @CommandLine.Option(names = {
             "--lenient" }, description = "Pass if at least one signature is valid and none failed (default: all must pass)")
     private boolean lenient;
@@ -38,14 +43,24 @@ public class VerifyCommand implements Callable<Integer> {
     @Override
     public Integer call() {
         try {
+            SigmundConfig config = configMixin.loadConfig();
             Path artifactFile = Paths.get(file);
             Path signatureFile = Paths.get(this.signature);
 
-            Sigmund.Builder builder = Sigmund.builder();
-            builder.addTool(new GpgRunner());
-            if (SqRunner.isToolAvailable()) {
-                builder.addTool(new SqRunner(sqHomeMixin.resolveSequoiaHome()));
+            Sigmund.Builder builder = Sigmund.builder()
+                    .config(config);
+
+            if (sqHomeMixin.hasExplicitHome()) {
+                ToolsConfig dc = config.toolsConfig();
+                Map<String, Map<String, String>> tools = new HashMap<>(dc.tools());
+                Map<String, String> sqSettings = new HashMap<>(tools.getOrDefault("sq", Map.of()));
+                sqSettings.put("home", sqHomeMixin.resolveSequoiaHome().toString());
+                tools.put("sq", sqSettings);
+                builder.toolsConfig(new ToolsConfig(
+                        dc.fetchSignerInfo(), dc.importToKeyring(),
+                        dc.keyservers(), tools, dc.toolPriority()));
             }
+
             Sigmund sigmund = builder.build();
 
             SignatureVerificationReport report = sigmund.verify(artifactFile, signatureFile);
@@ -68,9 +83,7 @@ public class VerifyCommand implements Callable<Integer> {
         System.err.println("  " + (msg != null && !msg.isEmpty() ? msg : e.getClass().getSimpleName()));
         System.err.println();
         System.err.println("Ensure that:");
-        System.err.println("  - The 'gpg' command is installed and available");
-        System.err.println("  - The signer's public GPG key is in your keyring");
-        System.err.println("  - For PQC verification: the 'sq' command is installed");
+        System.err.println("  - The signer's public key is available");
         System.err.println("  - The artifact and signature files exist and are readable");
     }
 }

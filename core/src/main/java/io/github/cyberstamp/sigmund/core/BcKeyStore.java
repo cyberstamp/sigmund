@@ -78,7 +78,7 @@ class BcKeyStore {
     /**
      * Caches a public key ring in memory without writing to disk.
      * <p>
-     * Used when {@link DiscoveryConfig#importToKeyring()} is {@code false} — the key
+     * Used when {@link ToolsConfig#importToKeyring()} is {@code false} — the key
      * is available for verification during this session but is not persisted to the
      * cert-d directory.
      *

@@ -17,14 +17,14 @@ import java.util.Map;
  * SigmundConfig config = SigmundConfig.parse(Path.of("sigmund.yaml"));
  * TrustPolicy policy = config.trustPolicy();
  * SigningConfig signing = config.signingConfig();
- * DiscoveryConfig discovery = config.discoveryConfig();
+ * ToolsConfig tools = config.toolsConfig();
  * }</pre>
  *
  * @param version the schema version (currently 1)
  * @param signers shared identity registry keyed by signer id
  * @param trustPolicy the trust policy parsed from trust/unsigned/policy sections
  * @param signingConfig the signing configuration parsed from the signing section
- * @param discoveryConfig the discovery configuration parsed from the discovery section
+ * @param toolsConfig the tools configuration parsed from the discovery section
  * @see SigmundConfigParser
  */
 public record SigmundConfig(
@@ -32,7 +32,7 @@ public record SigmundConfig(
         Map<String, SignerIdentity> signers,
         TrustPolicy trustPolicy,
         SigningConfig signingConfig,
-        DiscoveryConfig discoveryConfig) {
+        ToolsConfig toolsConfig) {
 
     /**
      * Creates a config with defensive copies.
@@ -45,8 +45,8 @@ public record SigmundConfig(
         if (signingConfig == null) {
             signingConfig = SigningConfig.DEFAULT;
         }
-        if (discoveryConfig == null) {
-            discoveryConfig = DiscoveryConfig.DEFAULT;
+        if (toolsConfig == null) {
+            toolsConfig = ToolsConfig.DEFAULT;
         }
     }
 

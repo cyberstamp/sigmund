@@ -27,7 +27,7 @@ import java.util.List;
  * <p>
  * Key fetching lives in this adapter because it has all the context needed: the
  * {@link VerificationUnit} (with the fingerprint to fetch), the {@link SignatureTool}
- * (to re-verify), and the {@link DiscoveryConfig} (with keyserver and import settings).
+ * (to re-verify), and the {@link ToolsConfig} (with keyserver and import settings).
  *
  * @see EvidenceProvider
  * @see SignatureFormat
@@ -37,20 +37,20 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
 
     private final SignatureFormat format;
     private final List<SignatureTool> tools;
-    private final DiscoveryConfig discoveryConfig;
+    private final ToolsConfig toolsConfig;
 
     /**
      * Creates a new adapter bridging the given format and tools into an evidence provider.
      *
      * @param format the signature format (e.g., {@link OpenPgpSignatureFormat})
      * @param tools the tools that can verify units of this format
-     * @param discoveryConfig configuration for key fetching behavior
+     * @param toolsConfig configuration for key fetching behavior
      */
     public SignatureEvidenceAdapter(SignatureFormat format, List<SignatureTool> tools,
-            DiscoveryConfig discoveryConfig) {
+            ToolsConfig toolsConfig) {
         this.format = format;
         this.tools = List.copyOf(tools);
-        this.discoveryConfig = discoveryConfig != null ? discoveryConfig : DiscoveryConfig.DEFAULT;
+        this.toolsConfig = toolsConfig != null ? toolsConfig : ToolsConfig.DEFAULT;
     }
 
     /**
@@ -142,7 +142,7 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
     /**
      * Attempts to fetch a missing key from configured keyservers and re-verify.
      * <p>
-     * If key fetching is disabled in {@link DiscoveryConfig}, or the key ID cannot be
+     * If key fetching is disabled in {@link ToolsConfig}, or the key ID cannot be
      * extracted, or the import fails on all keyservers, the original result is returned unchanged.
      *
      * @param artifactFile the artifact being verified
@@ -153,7 +153,7 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
      */
     private VerifyResult fetchKeyAndRetry(Path artifactFile, VerificationUnit unit,
             SignatureTool tool, VerifyResult originalResult) {
-        if (!discoveryConfig.fetchSignerInfo()) {
+        if (!toolsConfig.fetchSignerInfo()) {
             return originalResult;
         }
 
@@ -197,8 +197,8 @@ public class SignatureEvidenceAdapter implements EvidenceProvider {
             return false;
         }
 
-        boolean persistent = discoveryConfig.importToKeyring();
-        for (String keyserver : discoveryConfig.keyservers()) {
+        boolean persistent = toolsConfig.importToKeyring();
+        for (String keyserver : toolsConfig.keyservers()) {
             if (importer.fetchKey(keyId, keyserver, persistent)) {
                 return true;
             }

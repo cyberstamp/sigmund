@@ -1,8 +1,8 @@
 package io.github.cyberstamp.sigmund.plugin;
 
-import io.github.cyberstamp.sigmund.core.DiscoveryConfig;
 import io.github.cyberstamp.sigmund.core.Sigmund;
 import io.github.cyberstamp.sigmund.core.SignatureVerificationReport;
+import io.github.cyberstamp.sigmund.core.ToolsConfig;
 import java.io.File;
 import java.util.List;
 import java.util.Map;
@@ -20,8 +20,8 @@ import org.apache.maven.plugins.annotations.Parameter;
  * @see Sigmund
  * @see SignatureVerificationReport
  */
-@Mojo(name = "verify-artifact", requiresProject = false, threadSafe = true)
-public class VerifyArtifactMojo extends AbstractMojo {
+@Mojo(name = "verify-signature", requiresProject = false, threadSafe = true)
+public class VerifySignatureMojo extends AbstractMojo {
 
     @Parameter(property = "file", required = true)
     private File file;
@@ -63,8 +63,7 @@ public class VerifyArtifactMojo extends AbstractMojo {
         try {
             Map<String, Map<String, String>> toolOverrides = SequoiaHomeResolver.toolOverrides(sqHome);
             return Sigmund.builder()
-                    .discover()
-                    .discoveryConfig(new DiscoveryConfig(true, false, List.of(), toolOverrides, null))
+                    .toolsConfig(new ToolsConfig(true, false, List.of(), toolOverrides, null))
                     .build();
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to create verifier", e);

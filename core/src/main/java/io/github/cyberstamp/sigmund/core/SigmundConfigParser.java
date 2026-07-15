@@ -67,7 +67,7 @@ class SigmundConfigParser {
         int version = root.has("version") ? root.get("version").asInt(1) : 1;
         Map<String, SignerIdentity> signers = parseSigners(root.get("signers"));
         SigningConfig signingConfig = parseSigningConfig(root.get("signing"));
-        DiscoveryConfig discoveryConfig = parseDiscoveryConfig(root.get("discovery"));
+        ToolsConfig toolsConfig = parseToolsConfig(root.get("discovery"));
 
         Map<String, List<String>> rawTrust = parseTrustSection(root.get("trust"));
         List<String> unsigned = parseStringList(root.get("unsigned"));
@@ -78,7 +78,7 @@ class SigmundConfigParser {
         TrustPolicy trustPolicy = new DefaultTrustPolicy(
                 trustMappings, unsigned, requireAll, untrustedPolicy);
 
-        return new SigmundConfig(version, signers, trustPolicy, signingConfig, discoveryConfig);
+        return new SigmundConfig(version, signers, trustPolicy, signingConfig, toolsConfig);
     }
 
     // --- Signers ---
@@ -263,16 +263,17 @@ class SigmundConfigParser {
 
     // --- Discovery ---
 
-    private static DiscoveryConfig parseDiscoveryConfig(JsonNode node) {
+    private static ToolsConfig parseToolsConfig(JsonNode node) {
         if (node == null || node.isNull()) {
-            return DiscoveryConfig.DEFAULT;
+            return ToolsConfig.DEFAULT;
         }
         boolean fetchSignerInfo = boolOrDefault(node, "fetch-signer-info", true);
         boolean importToKeyring = boolOrDefault(node, "import-to-keyring", false);
         List<String> keyservers = parseStringList(node.get("keyservers"));
         Map<String, Map<String, String>> tools = parseDiscoveryTools(node.get("tools"));
-        List<String> toolPriority = parseStringList(node.get("tool-priority"));
-        return new DiscoveryConfig(fetchSignerInfo, importToKeyring, keyservers, tools, toolPriority);
+        JsonNode tpNode = node.get("tool-priority");
+        List<String> toolPriority = (tpNode != null && !tpNode.isNull()) ? parseStringList(tpNode) : null;
+        return new ToolsConfig(fetchSignerInfo, importToKeyring, keyservers, tools, toolPriority);
     }
 
     private static Map<String, Map<String, String>> parseDiscoveryTools(JsonNode node) {

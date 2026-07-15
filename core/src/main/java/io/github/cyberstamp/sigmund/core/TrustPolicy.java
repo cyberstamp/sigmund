@@ -17,11 +17,11 @@ import java.util.List;
  * <p>
  * {@code TrustPolicy} is purely about trust decisions — who to trust and how strict to be.
  * Operational concerns like key fetching and keyserver configuration live in
- * {@link DiscoveryConfig}. This means a policy backed by OPA or a database does not need
+ * {@link ToolsConfig}. This means a policy backed by OPA or a database does not need
  * to implement key-fetching logic.
  *
  * @see SignerIdentity
- * @see DiscoveryConfig
+ * @see ToolsConfig
  */
 public interface TrustPolicy {
 

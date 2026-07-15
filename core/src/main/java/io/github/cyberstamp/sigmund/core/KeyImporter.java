@@ -5,10 +5,10 @@ package io.github.cyberstamp.sigmund.core;
  * <p>
  * Used during verification when a signing key is not in the local keyring.
  * The {@link SignatureEvidenceAdapter} calls this when a verification result
- * has {@link Verdict#NO_KEY} and {@link DiscoveryConfig#fetchSignerInfo()}
+ * has {@link Verdict#NO_KEY} and {@link ToolsConfig#fetchSignerInfo()}
  * is enabled.
  *
- * @see DiscoveryConfig
+ * @see ToolsConfig
  */
 public interface KeyImporter {
 
@@ -26,7 +26,7 @@ public interface KeyImporter {
      * Fetches a public key from a keyserver into an ephemeral in-memory cache
      * without persisting it to the tool's keyring on disk.
      * <p>
-     * Used when {@link DiscoveryConfig#importToKeyring()} is {@code false} (the default).
+     * Used when {@link ToolsConfig#importToKeyring()} is {@code false} (the default).
      * The key is available for verification during this session but is discarded
      * when the JVM exits. Tools that cannot support ephemeral key storage (e.g.,
      * GnuPG, which requires keys in its on-disk keyring) return {@code false}.

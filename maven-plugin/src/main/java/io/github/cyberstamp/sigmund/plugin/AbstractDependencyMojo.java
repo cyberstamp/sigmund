@@ -1,7 +1,7 @@
 package io.github.cyberstamp.sigmund.plugin;
 
-import io.github.cyberstamp.sigmund.core.DiscoveryConfig;
 import io.github.cyberstamp.sigmund.core.Sigmund;
+import io.github.cyberstamp.sigmund.core.ToolsConfig;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -161,7 +161,7 @@ abstract class AbstractDependencyMojo extends AbstractMojo {
                 ? SignatureInspector.parseKeyservers(keyservers)
                 : fileSettings.keyservers();
         if (effectiveFetch && effectiveKeyservers.isEmpty()) {
-            effectiveKeyservers = List.of(DiscoveryConfig.DEFAULT_KEYSERVER);
+            effectiveKeyservers = List.of(ToolsConfig.DEFAULT_KEYSERVER);
         }
         return new TrustConfig.Settings(
                 effectiveKeyservers, fileSettings.onUntrusted(),
@@ -171,8 +171,7 @@ abstract class AbstractDependencyMojo extends AbstractMojo {
     protected Sigmund buildSigmund(TrustConfig.Settings settings) throws MojoExecutionException {
         boolean effectiveImport = importToKeyring != null && importToKeyring;
         return Sigmund.builder()
-                .discover()
-                .discoveryConfig(new DiscoveryConfig(
+                .toolsConfig(new ToolsConfig(
                         settings.fetchSignerInfo(), effectiveImport,
                         settings.keyservers(), toolOverrides(), null))
                 .build();
