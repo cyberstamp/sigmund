@@ -5,7 +5,7 @@
 This tool adds post-quantum cryptographic (PQC) signatures to Maven artifacts alongside classic OpenPGP signatures. Each `.asc` signature file can contain any number of OpenPGP signature blocks. A typical hybrid file contains:
 
 - A **classic v4 signature** (RSA/EdDSA) — backward-compatible, verifiable by all existing tools
-- A **PQC v6 signature** (ML-DSA-87+Ed448 via Sequoia, default; configurable) — quantum-resistant, CNSA 2.0 compliant, per [RFC 9980](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/)
+- A **PQC v6 signature** (ML-DSA-87+Ed448 via Sequoia, default; configurable) — quantum-resistant, CNSA 2.0 compliant, per [RFC 9980](https://datatracker.ietf.org/doc/rfc9980/)
 
 The signatures are stored as **separate armored blocks** in the same `.asc` file, classic first. Existing tools (GPG, Maven Central) see only the classic signature and work as before. PQC-aware tools can verify all blocks.
 
@@ -49,29 +49,21 @@ If you don't have a GPG key and want to use GPG for signing, generate one:
 gpg --full-generate-key
 ```
 
-**Sequoia sq (PQC-enabled)** — required only for PQC hybrid signing (classic + PQC in one file).
-
-**Version 1.4.0-pqc.1 or later is required.** The standard `sq` release (1.3.x) does not include PQC cipher suites. You need the PQC-enabled pre-release built from the `pqc` branch.
+**Sequoia sq 1.4.0+** — required only for PQC hybrid signing (classic + PQC in one file).
 
 **Verify your installation supports PQC:**
 
 ```bash
 sq version
-# Must show 1.4.0-pqc.1 or later
+# Must show 1.4.0 or later
 
 sq key generate --help | grep mldsa
 # Must show mldsa87-ed448 in the cipher-suite options
 ```
 
-**Important:** If both a system `sq` (e.g., `/usr/bin/sq`) and the PQC-enabled `sq` (e.g., `~/.cargo/bin/sq`) are installed, make sure `~/.cargo/bin` comes first on your `PATH`:
+#### Installing Sequoia sq
 
-```bash
-export PATH=~/.cargo/bin:$PATH
-```
-
-#### Building Sequoia sq from source
-
-The PQC-enabled `sequoia-openpgp` crate is not yet published on crates.io, so a simple `cargo install --git` does not resolve dependencies correctly. You must clone the repository and add a `[patch]` section to point Cargo at the PQC-enabled `sequoia-openpgp` from the main Sequoia repository:
+**From crates.io (recommended):**
 
 ```bash
 # 1. Install build dependencies
@@ -94,24 +86,8 @@ Required packages and why:
 - `gcc` — the C compiler (`cc`) is needed to compile bundled C dependencies like `bzip2-sys`
 
 ```bash
-# 2. Clone the PQC branch of sequoia-sq
-git clone --branch pqc --depth 1 \
-  https://gitlab.com/sequoia-pgp/sequoia-sq.git /tmp/sequoia-sq-pqc
-
-# 3. Patch Cargo.toml to resolve PQC dependencies from the main Sequoia repo
-cat >> /tmp/sequoia-sq-pqc/Cargo.toml << 'EOF'
-
-[patch.crates-io]
-sequoia-openpgp = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
-buffered-reader = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
-sequoia-autocrypt = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
-sequoia-net = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
-sequoia-ipc = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
-EOF
-
-# 4. Build and install with OpenSSL backend
-cd /tmp/sequoia-sq-pqc
-cargo install --path . --features crypto-openssl --no-default-features
+# 2. Install sq 1.4.0 with PQC support
+cargo install sequoia-sq@1.4.0 --features crypto-openssl --no-default-features
 ```
 
 **Troubleshooting:**
@@ -120,7 +96,7 @@ cargo install --path . --features crypto-openssl --no-default-features
   ```bash
   mkdir -p ~/tmp-build
   TMPDIR=~/tmp-build CARGO_TARGET_DIR=~/cargo-sq-build \
-    cargo install --path . --features crypto-openssl --no-default-features
+    cargo install sequoia-sq@1.4.0 --features crypto-openssl --no-default-features
   ```
   Clean up after installation: `rm -rf ~/tmp-build ~/cargo-sq-build`
 
@@ -130,7 +106,7 @@ cargo install --path . --features crypto-openssl --no-default-features
 
 - **`cc failed with exit status 1`** — Check that `gcc` is installed (`which cc`).
 
-**On RHEL 10.1+**, a PQC-enabled Sequoia package may be available as a system package.
+**On RHEL 10.1+**, a PQC-enabled Sequoia package is available as a system package.
 
 ## Quick Start
 
@@ -221,7 +197,7 @@ Sigmund supports three OpenPGP backends, each with distinct capabilities:
 
 **BC (Bouncy Castle)** is the default first-choice tool. It requires no external process dependencies and works on any JVM. BC generates v6 keys for Ed25519, Ed448, and RSA using Bouncy Castle 1.85's `BcOpenPGPApi`. ECDSA keys (P-256, P-384, P-521) use a JCA-based fallback and produce v4 keys.
 
-**sq (Sequoia)** is used for PQC hybrid signing when available. The PQC-enabled version (1.4.0-pqc.1+) implements RFC 9980 and can generate and verify ML-DSA composite signatures.
+**sq (Sequoia)** is used for PQC hybrid signing when available. Version 1.4.0+ implements [RFC 9980](https://datatracker.ietf.org/doc/rfc9980/) and can generate and verify ML-DSA composite signatures.
 
 **gpg (GnuPG)** provides compatibility with existing GPG-based workflows and reads GPG keyrings. GnuPG follows LibrePGP and does not support v6 keys.
 
@@ -859,19 +835,13 @@ GnuPG returns exit code 2 (rather than 0) when verifying an `.asc` file that con
 
 **SQ (PQC) keys** are generated with `--without-password` to support non-interactive use (CI/CD, tests, headless environments). In a production deployment, keys should be passphrase-protected. This requires either a TTY for interactive passphrase entry or a password file passed via `--new-password-file`.
 
-### Sequoia sq is pre-release
+### Sequoia sq PQC ecosystem maturity
 
-The PQC-enabled Sequoia (`sq 1.4.0-pqc.1`) is a pre-release. The underlying [RFC 9980](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/) (Post-Quantum Cryptography in OpenPGP) has been approved by the IESG as a Proposed Standard and is in AUTH48 (final author review at the RFC Editor). When stable Sequoia releases include PQC, the only change needed in this tool is updating the `sq` binary.
-
-The Sequoia PGP team [plans to release stable PQC support](https://sequoia-pgp.org/blog/2025/11/15/202511-post-quantum-cryptography/) shortly after the RFC is published. RHEL 10.1 has already shipped Sequoia with PQC support enabled as a system package.
+Sequoia `sq` 1.4.0 includes stable PQC support based on [RFC 9980](https://datatracker.ietf.org/doc/rfc9980/) (Post-Quantum Cryptography in OpenPGP), published as a Proposed Standard in June 2026. RHEL 10.1+ ships Sequoia with PQC support as a system package. However, broad ecosystem adoption is still early — `keys.openpgp.org` rejects v6 keys, and GnuPG follows LibrePGP (not RFC 9580/9980). Debian is unlikely to ship sq 1.4.0 before July 2027.
 
 ### PQC algorithm ID range
 
 The verifier classifies v5+ signature packets as PQC based on the public-key algorithm ID in the IANA OpenPGP Public Key Algorithms registry. As of RFC 9980, PQC algorithm IDs are 30-36 (ML-DSA, SLH-DSA, ML-KEM composites). This range is hardcoded in `Algorithms.isPqcAlgorithm()` and will need updating if IANA registers additional PQC algorithms beyond this range.
-
-### `sequoia-openpgp` PQC crate not on crates.io
-
-The PQC-enabled `sequoia-openpgp` (version `2.2.0-pqc.1`) is not published on crates.io. Building `sq` from source requires a `[patch.crates-io]` section in `Cargo.toml` to redirect dependency resolution to the PQC branch of the main Sequoia repository. This is expected to be resolved once the PQC support is merged into mainline Sequoia.
 
 ## Maven Central Compatibility
 
@@ -965,8 +935,8 @@ By default, every signature in the `.asc` file must pass verification. Use `--le
 ## References
 
 - [FIPS 204 — ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) — NIST standard for ML-DSA (Dilithium)
-- [RFC 9980 (draft-ietf-openpgp-pqc)](https://datatracker.ietf.org/doc/draft-ietf-openpgp-pqc/) — PQC algorithms for OpenPGP
+- [RFC 9980](https://datatracker.ietf.org/doc/rfc9980/) — Post-Quantum Cryptography in OpenPGP
 - [RFC 9580](https://www.rfc-editor.org/rfc/rfc9580) — OpenPGP v6 (Crypto Refresh)
 - [Sequoia PGP PQC blog post](https://sequoia-pgp.org/blog/2025/11/15/202511-post-quantum-cryptography/)
-- [Sequoia PQC source](https://gitlab.com/sequoia-pgp/sequoia-sq/-/tree/pqc) — PQC branch
+- [Sequoia sq](https://gitlab.com/sequoia-pgp/sequoia-sq) — PQC support since v1.4.0
 - [maven-gpg-plugin](https://maven.apache.org/plugins/maven-gpg-plugin/) — upstream target for contribution

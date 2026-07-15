@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
+      SQ_VERSION: '1.4.0'
+      SQ_CARGO_FEATURES: crypto-openssl
+      OPENSSL_VERSION: '3.5.0'
       OPENSSL_DIR: /opt/openssl
       LD_LIBRARY_PATH: /opt/openssl/lib64
       PKG_CONFIG_PATH: /opt/openssl/lib64/pkgconfig
@@ -37,48 +40,30 @@ jobs:
         uses: actions/cache@v6
         with:
           path: /opt/openssl
-          key: openssl-3.5.0-${{ runner.os }}
+          key: openssl-${{ env.OPENSSL_VERSION }}-${{ runner.os }}
 
-      - name: Build OpenSSL 3.5
+      - name: Build OpenSSL
         if: steps.cache-openssl.outputs.cache-hit != 'true'
         run: |
-          wget -q https://github.com/openssl/openssl/releases/download/openssl-3.5.0/openssl-3.5.0.tar.gz
-          tar xf openssl-3.5.0.tar.gz
-          cd openssl-3.5.0
+          wget -q "https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz"
+          tar xf "openssl-$OPENSSL_VERSION.tar.gz"
+          cd "openssl-$OPENSSL_VERSION"
           ./config --prefix=/opt/openssl --openssldir=/opt/openssl
           make -j$(nproc)
           sudo make install_sw
 
-      - name: Cache cargo build
+      - name: Cache sq binary
         uses: actions/cache@v6
         with:
-          path: |
-            ~/.cargo/bin/sq
-            ~/.cargo/registry
-            ~/.cargo/git
-            /tmp/sequoia-sq-pqc/target
-          key: sq-pqc-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          path: ~/.cargo/bin/sq
+          key: sq-${{ env.SQ_VERSION }}-${{ env.SQ_CARGO_FEATURES }}-openssl${{ env.OPENSSL_VERSION }}-${{ runner.os }}
 
-      - name: Build PQC-enabled sq
+      - name: Install sq
         run: |
-          if sq version 2>/dev/null; then
-            echo "sq already cached"
+          if sq version 2>/dev/null | grep -q "$SQ_VERSION"; then
+            echo "sq $SQ_VERSION already cached"
           else
-            git clone --branch pqc --depth 1 \
-              https://gitlab.com/sequoia-pgp/sequoia-sq.git /tmp/sequoia-sq-pqc
-
-            cat >> /tmp/sequoia-sq-pqc/Cargo.toml << 'EOF'
-
-          [patch.crates-io]
-          sequoia-openpgp = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
-          buffered-reader = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
-          sequoia-autocrypt = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
-          sequoia-net = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
-          sequoia-ipc = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", branch = "pqc" }
-          EOF
-
-            cd /tmp/sequoia-sq-pqc
-            cargo install --path . --features crypto-openssl --no-default-features
+            cargo install "sequoia-sq@$SQ_VERSION" --features "$SQ_CARGO_FEATURES" --no-default-features
           fi
           sq version
 
@@ -95,3 +80,11 @@ jobs:
 
       - name: Build and test
         run: mvn verify
+
+      - name: Verify PQC integration tests ran
+        run: |
+          report=core/target/surefire-reports/io.github.cyberstamp.sigmund.core.RoundTripIntegrationTest.txt
+          if [ ! -f "$report" ] || ! grep 'Tests run:' "$report" | grep -qvE 'Tests run: 0,'; then
+            echo "::error::RoundTripIntegrationTest was not executed — PQC tests were silently skipped"
+            exit 1
+          fi
