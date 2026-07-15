@@ -4,11 +4,15 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.Set;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.bouncycastle.openpgp.PGPSecretKeyRing;
 import org.bouncycastle.openpgp.api.OpenPGPKey;
 import org.bouncycastle.openpgp.api.bc.BcOpenPGPApi;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 class BcKeyStoreTest {
@@ -98,6 +102,44 @@ class BcKeyStoreTest {
         store.cacheEphemeral(pubRing);
 
         assertFalse(Files.exists(certD), "cert-d directory should not be created for ephemeral keys");
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void secretKeyFileHasOwnerOnlyPermissions(@TempDir Path tempDir) throws Exception {
+        Path certD = tempDir.resolve("cert-d");
+        Path bcPrivate = tempDir.resolve("bc-private");
+        BcKeyStore store = new BcKeyStore(null, certD, bcPrivate);
+
+        OpenPGPKey key = generateEd25519Key("Perm <perm@example.com>");
+        store.storeSecretKey(key.getPGPSecretKeyRing());
+
+        String fp = BcKeyStore.bytesToHex(key.getFingerprint()).toLowerCase();
+        Path keyFile = bcPrivate.resolve(fp.substring(0, 2)).resolve(fp.substring(2));
+        assertTrue(Files.exists(keyFile));
+
+        Set<PosixFilePermission> perms = Files.getPosixFilePermissions(keyFile);
+        assertEquals(Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE), perms);
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void certFileDoesNotGetRestrictedPermissions(@TempDir Path tempDir) throws Exception {
+        Path certD = tempDir.resolve("cert-d");
+        Path bcPrivate = tempDir.resolve("bc-private");
+        BcKeyStore store = new BcKeyStore(null, certD, bcPrivate);
+
+        OpenPGPKey key = generateEd25519Key("Cert <cert@example.com>");
+        store.storeCert(key.toCertificate().getPGPPublicKeyRing());
+
+        String fp = BcKeyStore.bytesToHex(key.getFingerprint()).toLowerCase();
+        Path certFile = certD.resolve(fp.substring(0, 2)).resolve(fp.substring(2));
+        assertTrue(Files.exists(certFile));
+
+        Set<PosixFilePermission> perms = Files.getPosixFilePermissions(certFile);
+        assertTrue(perms.contains(PosixFilePermission.OWNER_READ));
+        // cert files should keep default permissions (not restricted to owner-only)
+        assertTrue(perms.size() > 2, "Cert file should have broader permissions than owner-only");
     }
 
     // Helper: Generate Ed25519 key using BC 1.85's high-level API

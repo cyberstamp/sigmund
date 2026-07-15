@@ -36,6 +36,10 @@ public class SignCommand implements Callable<Integer> {
     @CommandLine.Mixin
     private ConfigMixin configMixin;
 
+    @CommandLine.Option(names = {
+            "--passphrase-env" }, description = "Environment variable containing the BC key passphrase (default: SIGMUND_BC_PASSPHRASE)")
+    private String passphraseEnv;
+
     @CommandLine.Option(names = { "--output" }, description = "Output signature file path (default: <file>.asc)")
     private String output;
 
@@ -118,6 +122,9 @@ public class SignCommand implements Callable<Integer> {
             case "bc" -> {
                 if (pqcFingerprint != null) {
                     settings.put("signing-fingerprint", pqcFingerprint);
+                }
+                if (passphraseEnv != null) {
+                    settings.put("passphrase-env", passphraseEnv);
                 }
             }
         }
