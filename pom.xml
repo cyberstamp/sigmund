@@ -48,7 +48,7 @@
         <maven-plugin-tools.version>3.15.2</maven-plugin-tools.version>
         <maven-release-plugin.version>3.3.1</maven-release-plugin.version>
         <maven-source-plugin.version>3.4.0</maven-source-plugin.version>
-        <maven.api.version>3.9.9</maven.api.version>
+        <maven.api.version>3.9.16</maven.api.version>
         <maven.compiler.release>17</maven.compiler.release>
         <maven.compiler.source>${maven.compiler.release}</maven.compiler.source>
         <maven.compiler.target>${maven.compiler.release}</maven.compiler.target>
