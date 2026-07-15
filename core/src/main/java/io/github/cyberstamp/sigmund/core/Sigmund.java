@@ -264,6 +264,7 @@ public class Sigmund {
         private final List<EvidenceProvider> extraProviders = new ArrayList<>();
         private ToolsConfig toolsConfig = ToolsConfig.DEFAULT;
         private SigningConfig signingConfig;
+        private PassphraseProvider bcPassphraseProvider;
 
         /**
          * Sets key fetching and keyserver configuration, fixed at build time.
@@ -289,6 +290,27 @@ public class Sigmund {
         public Builder config(SigmundConfig config) {
             this.toolsConfig = config.toolsConfig();
             this.signingConfig = config.signingConfig();
+            return this;
+        }
+
+        /**
+         * Sets the passphrase provider for the BC signing tool.
+         * Takes precedence over environment variable and console fallback.
+         *
+         * <p>
+         * This exists as a dedicated setter rather than a key in the
+         * {@code Map<String, String>} settings because passphrases must
+         * stay as {@code char[]} throughout their lifecycle. Routing a
+         * passphrase through a String-valued map would create an immutable
+         * {@code String} on the heap that cannot be zeroed after use,
+         * defeating the {@code char[]}-based zeroing in
+         * {@link PassphraseProvider} and {@link BcRunner}.
+         *
+         * @param provider the passphrase provider
+         * @return this builder
+         */
+        public Builder bcPassphraseProvider(PassphraseProvider provider) {
+            this.bcPassphraseProvider = provider;
             return this;
         }
 
@@ -343,6 +365,10 @@ public class Sigmund {
                 Map<String, String> settings) {
             for (SignatureToolFactory factory : FACTORIES) {
                 if (factory.toolName().equals(toolName)) {
+                    if (signing && factory instanceof BcToolFactory bcFactory
+                            && bcPassphraseProvider != null) {
+                        return bcFactory.create(null, settings, bcPassphraseProvider);
+                    }
                     return signing
                             ? factory.create(null, settings)
                             : factory.createVerifyOnly(settings);

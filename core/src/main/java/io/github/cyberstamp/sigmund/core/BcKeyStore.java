@@ -8,10 +8,15 @@ import java.io.UncheckedIOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.bouncycastle.openpgp.PGPException;
 import org.bouncycastle.openpgp.PGPPublicKey;
@@ -291,12 +296,34 @@ class BcKeyStore {
         }
     }
 
+    private static final Set<PosixFilePermission> OWNER_ONLY_PERMS = Set.of(
+            PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
+
+    private static final FileAttribute<Set<PosixFilePermission>> OWNER_ONLY_ATTR = PosixFilePermissions
+            .asFileAttribute(OWNER_ONLY_PERMS);
+
     /**
      * Writes a key ring to a file, creating parent directories as needed.
+     * Secret key files (under bcPrivateHome) are created with owner-only (600) permissions
+     * from the start to avoid a TOCTOU window where the file is world-readable.
      */
     private void writeKeyRing(Path file, org.bouncycastle.openpgp.PGPKeyRing keyRing) {
         try {
             Files.createDirectories(file.getParent());
+            boolean isPrivateKey = bcPrivateHome != null && file.startsWith(bcPrivateHome);
+            if (isPrivateKey) {
+                try {
+                    Files.deleteIfExists(file);
+                    Files.createFile(file, OWNER_ONLY_ATTR);
+                    try (OutputStream out = Files.newOutputStream(file,
+                            StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+                        keyRing.encode(out);
+                    }
+                    return;
+                } catch (UnsupportedOperationException e) {
+                    // non-POSIX filesystem — fall through to default write
+                }
+            }
             try (OutputStream out = Files.newOutputStream(file)) {
                 keyRing.encode(out);
             }
