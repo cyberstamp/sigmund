@@ -34,7 +34,7 @@
     </modules>
     <properties>
         <bouncycastle.version>1.85</bouncycastle.version>
-        <jackson.version>2.18.3</jackson.version>
+        <jackson.version>2.22.1</jackson.version>
         <cli-assured.version>0.0.1</cli-assured.version>
         <compiler-plugin.version>3.14.1</compiler-plugin.version>
         <formatter-plugin.version>2.29.0</formatter-plugin.version>
