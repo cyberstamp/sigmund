@@ -15,12 +15,16 @@ import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
 import java.security.spec.ECGenParameterSpec;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Set;
+import org.bouncycastle.bcpg.AEADAlgorithmTags;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
 import org.bouncycastle.bcpg.PublicKeyAlgorithmTags;
+import org.bouncycastle.bcpg.S2K;
+import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openpgp.PGPException;
 import org.bouncycastle.openpgp.PGPKeyPair;
@@ -39,9 +43,12 @@ import org.bouncycastle.openpgp.api.OpenPGPKey;
 import org.bouncycastle.openpgp.api.bc.BcOpenPGPApi;
 import org.bouncycastle.openpgp.api.bc.BcOpenPGPImplementation;
 import org.bouncycastle.openpgp.bc.BcPGPObjectFactory;
+import org.bouncycastle.openpgp.operator.bc.BcAEADSecretKeyEncryptorBuilder;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
+import org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyDecryptorBuilder;
 import org.bouncycastle.openpgp.operator.bc.BcPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.bc.BcPGPContentVerifierBuilderProvider;
+import org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPDigestCalculatorProviderBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyPair;
@@ -66,7 +73,19 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
     private final BcKeyStore keyStore;
     private final String signingFingerprint;
     private final Path tskFile;
+    private final PassphraseProvider passphraseProvider;
     private final OpenPgpSignatureFormat format;
+
+    /**
+     * Creates a new BC runner without passphrase support.
+     *
+     * @param keyStore the key store for key lookup and storage
+     * @param signingFingerprint the fingerprint of the key to sign with, or {@code null}
+     * @param tskFile the path to a TSK file for signing, or {@code null}
+     */
+    public BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile) {
+        this(keyStore, signingFingerprint, tskFile, null);
+    }
 
     /**
      * Creates a new BC runner.
@@ -74,12 +93,15 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
      * @param keyStore the key store for key lookup and storage
      * @param signingFingerprint the fingerprint of the key to sign with, or {@code null}
      * @param tskFile the path to a TSK file for signing, or {@code null}
+     * @param passphraseProvider provides passphrases for encrypted keys, or {@code null}
      */
-    public BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile) {
+    public BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile,
+            PassphraseProvider passphraseProvider) {
         this.api = new BcOpenPGPApi();
         this.keyStore = keyStore;
         this.signingFingerprint = signingFingerprint;
         this.tskFile = tskFile;
+        this.passphraseProvider = passphraseProvider;
         this.format = new OpenPgpSignatureFormat();
     }
 
@@ -200,9 +222,11 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
             OpenPGPKey key = generateKeyInternal(userId, cipherSuite);
             PGPSecretKeyRing secretKeyRing = key.getPGPSecretKeyRing();
             PGPPublicKeyRing publicKeyRing = key.toCertificate().getPGPPublicKeyRing();
+            String fingerprint = BcKeyStore.bytesToHex(key.getFingerprint());
+            secretKeyRing = encryptKeyRing(secretKeyRing, fingerprint);
             keyStore.storeCert(publicKeyRing);
             keyStore.storeSecretKey(secretKeyRing);
-            return BcKeyStore.bytesToHex(key.getFingerprint());
+            return fingerprint;
         } catch (Exception e) {
             throw new ToolExecutionException("Key generation failed: " + e.getMessage(), e);
         }
@@ -435,7 +459,9 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
     private SignResult signWithKey(Path artifactFile, Path outputSig,
             PGPSecretKeyRing secretKeyRing) throws IOException, PGPException {
         PGPSecretKey signingKey = findSigningSecretKey(secretKeyRing);
-        PGPPrivateKey privateKey = signingKey.extractPrivateKey(null);
+        String primaryFingerprint = BcKeyStore.bytesToHex(
+                secretKeyRing.getPublicKey().getFingerprint());
+        PGPPrivateKey privateKey = extractPrivateKey(signingKey, primaryFingerprint);
         int hashAlgo = HashAlgorithmTags.SHA512;
 
         // Use constructor that accepts signing key to auto-detect signature version
@@ -491,6 +517,76 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
             return primary;
         }
         throw new ToolExecutionException("No signing-capable key found in the key ring");
+    }
+
+    /**
+     * Extracts the private key, handling both encrypted and unencrypted keys.
+     * Throws {@link PGPException} for all failure modes so that callers
+     * (e.g. {@link #sign}) can wrap them uniformly via the existing catch blocks.
+     *
+     * @param secretKey the secret key to extract the private key from (may be a subkey)
+     * @param primaryFingerprint the primary key's fingerprint, used to request the
+     *        passphrase — must match the fingerprint used during encryption
+     *        (see {@link #encryptKeyRing}), which is always the primary key's
+     */
+    private PGPPrivateKey extractPrivateKey(PGPSecretKey secretKey,
+            String primaryFingerprint) throws PGPException {
+        if (secretKey.getKeyEncryptionAlgorithm() == SymmetricKeyAlgorithmTags.NULL) {
+            return secretKey.extractPrivateKey(null);
+        }
+        if (passphraseProvider == null) {
+            throw new PGPException(
+                    "Key is passphrase-protected but no passphrase provider is configured. "
+                            + "Set SIGMUND_BC_PASSPHRASE or provide a passphrase interactively.");
+        }
+        char[] passphrase = passphraseProvider.getPassphrase(primaryFingerprint);
+        if (passphrase == null || passphrase.length == 0) {
+            throw new PGPException("No passphrase provided for key " + primaryFingerprint);
+        }
+        try {
+            return secretKey.extractPrivateKey(
+                    new BcPBESecretKeyDecryptorBuilder(new BcPGPDigestCalculatorProvider())
+                            .build(passphrase));
+        } finally {
+            Arrays.fill(passphrase, '\0');
+        }
+    }
+
+    /**
+     * Encrypts a secret key ring with a passphrase using AES-256 AEAD (OCB mode,
+     * Argon2 S2K). Returns the original ring if no passphrase provider is configured.
+     *
+     * <p>
+     * Each key in the ring is encrypted individually because v6 AEAD encryption
+     * binds the ciphertext to the key's public key packet as associated data.
+     * The ring-level {@code copyWithNewPassword} cannot do this — it applies a
+     * single pre-built encryptor to every key.
+     */
+    private PGPSecretKeyRing encryptKeyRing(PGPSecretKeyRing keyRing, String fingerprint)
+            throws PGPException {
+        if (passphraseProvider == null) {
+            return keyRing;
+        }
+        char[] passphrase = passphraseProvider.getPassphrase(fingerprint);
+        if (passphrase == null || passphrase.length == 0) {
+            return keyRing;
+        }
+        try {
+            BcAEADSecretKeyEncryptorBuilder aeadBuilder = new BcAEADSecretKeyEncryptorBuilder(
+                    AEADAlgorithmTags.OCB, SymmetricKeyAlgorithmTags.AES_256,
+                    S2K.Argon2Params.memoryConstrainedParameters());
+
+            List<PGPSecretKey> encryptedKeys = new ArrayList<>();
+            for (var keys = keyRing.getSecretKeys(); keys.hasNext();) {
+                PGPSecretKey sk = keys.next();
+                encryptedKeys.add(PGPSecretKey.copyWithNewPassword(
+                        sk, null,
+                        aeadBuilder.build(passphrase, sk.getPublicKey().getPublicKeyPacket())));
+            }
+            return new PGPSecretKeyRing(encryptedKeys);
+        } finally {
+            Arrays.fill(passphrase, '\0');
+        }
     }
 
     // --- Key generation internals ---

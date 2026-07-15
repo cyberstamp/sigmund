@@ -4,7 +4,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Set;
+import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags;
+import org.bouncycastle.openpgp.PGPSecretKey;
+import org.bouncycastle.openpgp.PGPSecretKeyRing;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -218,5 +222,202 @@ class BcRunnerTest {
 
         VerifyResult result = runner.verify(tempDir.resolve("nonexistent"), unit);
         assertEquals(Verdict.NO_KEY, result.verdict());
+    }
+
+    // --- Passphrase-protected key tests ---
+
+    private static final char[] TEST_PASSPHRASE = "test-secret".toCharArray();
+
+    private static PassphraseProvider fixedPassphrase(char[] passphrase) {
+        return fp -> passphrase.clone();
+    }
+
+    @Test
+    void generateKeyWithPassphraseStoresEncrypted(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        BcRunner runner = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
+
+        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519");
+        PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
+        assertNotNull(ring);
+
+        for (var keys = ring.getSecretKeys(); keys.hasNext();) {
+            PGPSecretKey sk = keys.next();
+            assertNotEquals(SymmetricKeyAlgorithmTags.NULL, sk.getKeyEncryptionAlgorithm(),
+                    "Secret key should be encrypted");
+        }
+    }
+
+    @Test
+    void signAndVerifyWithEncryptedKey(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
+        BcRunner runner = new BcRunner(store, null, null, provider);
+
+        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519");
+        BcRunner signer = new BcRunner(store, fingerprint, null, provider);
+
+        Path artifact = tempDir.resolve("artifact.txt");
+        Files.writeString(artifact, "encrypted key content");
+        Path sigFile = tempDir.resolve("artifact.txt.asc");
+
+        SignResult signResult = signer.sign(artifact, sigFile);
+        assertNotNull(signResult.algorithm());
+
+        String armored = Files.readString(sigFile);
+        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+        OpenPgpVerificationUnit unit = new OpenPgpVerificationUnit(
+                armored, info.version(), info.issuerFingerprint(), info.algorithmId());
+
+        VerifyResult result = signer.verify(artifact, unit);
+        assertEquals(Verdict.PASS, result.verdict());
+    }
+
+    @Test
+    void signWithEncryptedKeyNoProviderThrows(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
+        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519");
+
+        // signer has no passphrase provider
+        BcRunner signer = new BcRunner(store, fingerprint, null);
+
+        Path artifact = tempDir.resolve("artifact.txt");
+        Files.writeString(artifact, "content");
+        Path sigFile = tempDir.resolve("artifact.txt.asc");
+
+        ToolExecutionException ex = assertThrows(ToolExecutionException.class,
+                () -> signer.sign(artifact, sigFile));
+        assertTrue(ex.getMessage().contains("passphrase"), ex.getMessage());
+    }
+
+    @Test
+    void signWithWrongPassphraseThrows(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
+        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519");
+
+        BcRunner signer = new BcRunner(store, fingerprint, null,
+                fixedPassphrase("wrong-passphrase".toCharArray()));
+
+        Path artifact = tempDir.resolve("artifact.txt");
+        Files.writeString(artifact, "content");
+        Path sigFile = tempDir.resolve("artifact.txt.asc");
+
+        assertThrows(ToolExecutionException.class, () -> signer.sign(artifact, sigFile));
+    }
+
+    @Test
+    void signWithNullPassphraseFromProviderThrows(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
+        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519");
+
+        BcRunner signer = new BcRunner(store, fingerprint, null, fp -> null);
+
+        Path artifact = tempDir.resolve("artifact.txt");
+        Files.writeString(artifact, "content");
+        Path sigFile = tempDir.resolve("artifact.txt.asc");
+
+        ToolExecutionException ex = assertThrows(ToolExecutionException.class,
+                () -> signer.sign(artifact, sigFile));
+        assertTrue(ex.getMessage().contains("passphrase"), ex.getMessage());
+    }
+
+    @Test
+    void generateKeyNullPassphraseFromProviderStoresUnencrypted(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        BcRunner runner = new BcRunner(store, null, null, fp -> null);
+
+        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519");
+        PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
+        assertNotNull(ring);
+
+        PGPSecretKey primary = ring.getSecretKey();
+        assertEquals(SymmetricKeyAlgorithmTags.NULL, primary.getKeyEncryptionAlgorithm());
+    }
+
+    @Test
+    void generateKeyEmptyPassphraseStoresUnencrypted(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        BcRunner runner = new BcRunner(store, null, null, fp -> new char[0]);
+
+        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519");
+        PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
+
+        PGPSecretKey primary = ring.getSecretKey();
+        assertEquals(SymmetricKeyAlgorithmTags.NULL, primary.getKeyEncryptionAlgorithm());
+    }
+
+    @Test
+    void signAndVerifyEncryptedKeyRsa(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
+        BcRunner runner = new BcRunner(store, null, null, provider);
+
+        String fingerprint = runner.generateKey("Test <test@example.com>", "rsa4096");
+        BcRunner signer = new BcRunner(store, fingerprint, null, provider);
+
+        Path artifact = tempDir.resolve("artifact.txt");
+        Files.writeString(artifact, "rsa encrypted key");
+        Path sigFile = tempDir.resolve("artifact.txt.asc");
+        signer.sign(artifact, sigFile);
+
+        String armored = Files.readString(sigFile);
+        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+        OpenPgpVerificationUnit unit = new OpenPgpVerificationUnit(
+                armored, info.version(), info.issuerFingerprint(), info.algorithmId());
+
+        assertEquals(Verdict.PASS, signer.verify(artifact, unit).verdict());
+    }
+
+    @Test
+    void signAndVerifyEncryptedKeyEcdsaV4(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
+        BcRunner runner = new BcRunner(store, null, null, provider);
+
+        String fingerprint = runner.generateKey("Test <test@example.com>", "nistp256");
+        BcRunner signer = new BcRunner(store, fingerprint, null, provider);
+
+        Path artifact = tempDir.resolve("artifact.txt");
+        Files.writeString(artifact, "ecdsa v4 encrypted key");
+        Path sigFile = tempDir.resolve("artifact.txt.asc");
+        signer.sign(artifact, sigFile);
+
+        String armored = Files.readString(sigFile);
+        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+        OpenPgpVerificationUnit unit = new OpenPgpVerificationUnit(
+                armored, info.version(), info.issuerFingerprint(), info.algorithmId());
+
+        assertEquals(Verdict.PASS, signer.verify(artifact, unit).verdict());
+    }
+
+    @Test
+    void builderPassphraseProviderThreadsToBcRunner(@TempDir Path tempDir) throws Exception {
+        PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
+
+        String certD = tempDir.resolve("cert-d").toString();
+        String bcPrivate = tempDir.resolve("bc-private").toString();
+
+        // Generate an encrypted key via direct BcRunner
+        BcKeyStore store = new BcKeyStore(null, Path.of(certD), Path.of(bcPrivate));
+        BcRunner generator = new BcRunner(store, null, null, provider);
+        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519");
+
+        // Sign via Sigmund builder with bcPassphraseProvider — point to same key store
+        Sigmund sigmund = Sigmund.builder()
+                .bcPassphraseProvider(provider)
+                .addSigningTool("bc", Map.of(
+                        "signing-fingerprint", fingerprint,
+                        "cert-d-home", certD,
+                        "bc-private-home", bcPrivate))
+                .build();
+
+        Path artifact = tempDir.resolve("artifact.txt");
+        Files.writeString(artifact, "builder test");
+
+        SigningOutput output = sigmund.signer().sign(artifact, tempDir);
+        assertFalse(output.files().isEmpty());
     }
 }

@@ -269,6 +269,69 @@ Key flags determine which key in the ring is used for each operation. Sigmund's 
 
 **GnuPG keyring** is the standard GnuPG keyring at `~/.gnupg/`. Keys managed by `gpg` are stored here.
 
+### BC Key Passphrase Protection
+
+BC private keys can be encrypted at rest using AES-256 AEAD (OCB mode) with Argon2 S2K key derivation. This prevents key extraction if the filesystem is compromised.
+
+**Generating a passphrase-protected key:**
+
+```bash
+# Interactive — prompts for passphrase with confirmation
+java -jar cli/target/sigmund.jar keygen --tool bc \
+  --userid "Alice <alice@example.com>" --cipher-suite ed25519
+
+# Non-interactive — passphrase from environment variable
+SIGMUND_BC_PASSPHRASE=mysecret java -jar cli/target/sigmund.jar keygen --tool bc \
+  --userid "Alice <alice@example.com>"
+```
+
+**Signing with a passphrase-protected key:**
+
+```bash
+# Via environment variable (recommended for CI/CD)
+SIGMUND_BC_PASSPHRASE=mysecret java -jar cli/target/sigmund.jar sign \
+  --file artifact.jar --pqc-fingerprint <FP>
+
+# Interactive — prompts if no env var is set and a console is available
+java -jar cli/target/sigmund.jar sign --file artifact.jar --pqc-fingerprint <FP>
+
+# Custom env var name
+java -jar cli/target/sigmund.jar sign --file artifact.jar \
+  --pqc-fingerprint <FP> --passphrase-env MY_KEY_PASSPHRASE
+```
+
+**Maven plugin:**
+
+```bash
+# Set the passphrase in CI/CD environment
+export SIGMUND_BC_PASSPHRASE=mysecret
+mvn verify -Dsigmund.fingerprint=<FP>
+
+# Or use a custom env var
+mvn verify -Dsigmund.fingerprint=<FP> -Dsigmund.passphraseEnvVar=MY_KEY_PASSPHRASE
+```
+
+**Configuration in `sigmund.yaml`:**
+
+```yaml
+signing:
+  tools:
+    bc:
+      signing-fingerprint: "ABCDEF..."
+      passphrase-env: SIGMUND_BC_PASSPHRASE
+```
+
+**Passphrase resolution order:**
+
+1. Explicit `PassphraseProvider` via `Sigmund.Builder.bcPassphraseProvider()` (programmatic API)
+2. `passphrase-env` setting (env var name, default `SIGMUND_BC_PASSPHRASE`)
+3. Interactive console prompt (if a terminal is available)
+4. No passphrase (works only for unencrypted keys)
+
+Existing unencrypted keys continue to work without a passphrase. Private key files in `bc-private/` are created with owner-only (600) file permissions.
+
+**Limitations:** Once decrypted for signing, the key material resides on the Java heap in standard objects. Unlike `gpg-agent` (which uses `mlock`'d memory), the JVM cannot guarantee that key bytes are pinned in RAM or zeroed after use. The passphrase reference is zeroed immediately after decryption. The primary security benefit is protecting against filesystem-level exposure (stolen disk, backup leak, compromised server).
+
 ### Interoperability Matrix
 
 | From → To | BC | sq | gpg |
@@ -324,6 +387,7 @@ signing:
 | `bc-private-home` | `<cert-d-home>/bc-private` | BC private key store |
 | `signing-fingerprint` | — | Fingerprint of key to sign with |
 | `tsk-file` | — | Path to exported TSK file for signing |
+| `passphrase-env` | `SIGMUND_BC_PASSPHRASE` | Env var name containing the passphrase for encrypted keys |
 | `cipher-suite` | `ed25519` | Default algorithm for key generation |
 
 **Supported cipher suites (BC):**
@@ -457,17 +521,21 @@ The block's public-key algorithm ID is used to classify the signature as PQC or 
 
 ### `sigmund keygen`
 
-Generate a PQC hybrid keypair using Sequoia sq.
+Generate a new signing key using Sequoia sq or Bouncy Castle.
 
 ```
-sigmund keygen --userid <USER_ID> [--cipher-suite <SUITE>] [--sq-home <DIR>]
+sigmund keygen --userid <USER_ID> [--tool <TOOL>] [--cipher-suite <SUITE>] [options]
 ```
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--userid` | Yes | — | User ID in canonical form (e.g., `"Alice <alice@example.com>"`) |
-| `--cipher-suite` | No | `mldsa87-ed448` | PQC cipher suite (e.g., `mldsa65-ed25519` for ML-DSA-65) |
-| `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `--tool` | No | `sq` | Backend: `sq` (PQC/hybrid) or `bc` (classic OpenPGP) |
+| `--cipher-suite` | No | `mldsa87-ed448` (sq) / `ed25519` (bc) | Cipher suite for the key |
+| `--passphrase-env` | No | `SIGMUND_BC_PASSPHRASE` | Env var for BC key passphrase (bc only) |
+| `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory (sq only) |
+
+**BC cipher suites:** `ed25519`, `ed448`, `rsa4096`, `nistp256`, `nistp384`, `nistp521`
 
 Note: the user ID must be in canonical form (`Name <email>`). Bare email addresses are not accepted by `sq`.
 
@@ -484,6 +552,7 @@ sigmund sign --file <FILE> --pqc-fingerprint <FP> [options]
 | `--file` | Yes | — | Artifact file to sign |
 | `--pqc-fingerprint` | Yes | — | PQC key fingerprint (from keygen) |
 | `--gpg-key` | No | GPG default | GPG key ID for classic signing |
+| `--passphrase-env` | No | `SIGMUND_BC_PASSPHRASE` | Env var for BC key passphrase |
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `--output` | No | `<file>.asc` | Output signature file path |
 
@@ -519,6 +588,8 @@ sigmund export-cert --fingerprint <FP> [options]
 ## Maven Plugin
 
 ### Configuration
+
+The plugin reads `sigmund.yaml` for tool selection and settings. If no config file is found, it falls back to the default tool priority (`[bc, sq, gpg]`), skipping any tool that is not available. Maven properties (`gpg.keyname`, `sigmund.fingerprint`, etc.) override config file values.
 
 Add to your project's `pom.xml`:
 
@@ -561,6 +632,7 @@ mvn verify -Dsigmund.fingerprint=<FINGERPRINT>
 |----------|----------|---------|-------------|
 | `sigmund.fingerprint` | Yes | — | PQC key fingerprint (from keygen) |
 | `gpg.keyname` | No | GPG default | GPG key ID or email for classic signing |
+| `sigmund.passphraseEnvVar` | No | `SIGMUND_BC_PASSPHRASE` | Env var name for BC key passphrase |
 | `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 
 ### `sigmund:verify-signature`
@@ -781,9 +853,11 @@ GnuPG returns exit code 2 (rather than 0) when verifying an `.asc` file that con
 
 `GpgRunner` handles this by checking for "Good signature" in stderr when the exit code is 2. However, other tools or CI systems that check GPG's exit code strictly may interpret exit code 2 as a failure.
 
-### PQC key passphrase protection
+### Key passphrase protection
 
-The PoC generates PQC keys with `--without-password` to support non-interactive use (CI/CD, tests, headless environments). In a production deployment, keys should be passphrase-protected. This requires either a TTY for interactive passphrase entry or a password file passed via `--new-password-file`.
+**BC keys** support passphrase encryption at rest (AES-256 AEAD, OCB mode, Argon2 S2K). The passphrase is provided via the `SIGMUND_BC_PASSPHRASE` environment variable or an interactive console prompt. Once decrypted for signing, key material lives on the Java heap without `mlock` protection — see [BC Key Passphrase Protection](#bc-key-passphrase-protection) for details.
+
+**SQ (PQC) keys** are generated with `--without-password` to support non-interactive use (CI/CD, tests, headless environments). In a production deployment, keys should be passphrase-protected. This requires either a TTY for interactive passphrase entry or a password file passed via `--new-password-file`.
 
 ### Sequoia sq is pre-release
 

@@ -1,8 +1,13 @@
 package io.github.cyberstamp.sigmund.plugin;
 
+import io.github.cyberstamp.sigmund.core.ConfigLoader;
 import io.github.cyberstamp.sigmund.core.Sigmund;
+import io.github.cyberstamp.sigmund.core.SigmundConfig;
+import io.github.cyberstamp.sigmund.core.SigmundException;
 import io.github.cyberstamp.sigmund.core.Signer;
 import io.github.cyberstamp.sigmund.core.SigningOutput;
+import io.github.cyberstamp.sigmund.core.ToolConfig;
+import io.github.cyberstamp.sigmund.core.ToolsConfig;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -101,6 +106,13 @@ public class SignMojo extends AbstractMojo {
     private File sqHome;
 
     /**
+     * Name of the environment variable containing the passphrase for
+     * BC private key decryption. Defaults to {@code SIGMUND_BC_PASSPHRASE}.
+     */
+    @Parameter(property = "sigmund.passphraseEnvVar", defaultValue = "SIGMUND_BC_PASSPHRASE")
+    private String passphraseEnvVar;
+
+    /**
      * When {@code true}, skips the signing goal entirely.
      */
     @Parameter(property = "sigmund.skip", defaultValue = "false")
@@ -146,24 +158,59 @@ public class SignMojo extends AbstractMojo {
 
     private Signer createSigner() throws MojoExecutionException {
         try {
-            Map<String, String> gpgSettings = new HashMap<>();
-            if (gpgKeyName != null) {
-                gpgSettings.put("key-name", gpgKeyName);
+            SigmundConfig config = ConfigLoader.load(null);
+            Sigmund.Builder builder = Sigmund.builder().config(config);
+
+            Map<String, ToolConfig> configuredTools = config.signingConfig().tools();
+            List<String> toolNames = configuredTools.isEmpty()
+                    ? ToolsConfig.DEFAULT_TOOL_PRIORITY
+                    : List.copyOf(configuredTools.keySet());
+
+            for (String toolName : toolNames) {
+                Map<String, String> settings = mergeToolSettings(toolName, configuredTools);
+                try {
+                    builder.addSigningTool(toolName, settings);
+                } catch (SigmundException e) {
+                    if (configuredTools.containsKey(toolName)) {
+                        throw e;
+                    }
+                    getLog().debug("Signing tool '" + toolName + "' not available, skipping");
+                }
             }
-            Map<String, String> sqSettings = new HashMap<>(
-                    SequoiaHomeResolver.toolOverrides(sqHome)
-                            .getOrDefault("sq", Map.of()));
-            if (pqcFingerprint != null) {
-                sqSettings.put("signing-fingerprint", pqcFingerprint);
-            }
-            Sigmund sigmund = Sigmund.builder()
-                    .addSigningTool("gpg", gpgSettings)
-                    .addSigningTool("sq", sqSettings)
-                    .build();
-            return sigmund.signer();
-        } catch (Exception e) {
+
+            return builder.build().signer();
+        } catch (SigmundException e) {
             throw new MojoExecutionException("Failed to create signer", e);
         }
+    }
+
+    private Map<String, String> mergeToolSettings(String toolName,
+            Map<String, ToolConfig> configuredTools) {
+        Map<String, String> settings = new HashMap<>();
+        ToolConfig toolConfig = configuredTools.get(toolName);
+        if (toolConfig != null) {
+            settings.putAll(toolConfig.settings());
+        }
+        switch (toolName) {
+            case "gpg" -> {
+                if (gpgKeyName != null) {
+                    settings.put("key-name", gpgKeyName);
+                }
+            }
+            case "sq" -> {
+                if (pqcFingerprint != null) {
+                    settings.put("signing-fingerprint", pqcFingerprint);
+                }
+                Map<String, Map<String, String>> sqOverrides = SequoiaHomeResolver.toolOverrides(sqHome);
+                settings.putAll(sqOverrides.getOrDefault("sq", Map.of()));
+            }
+            case "bc" -> {
+                if (passphraseEnvVar != null) {
+                    settings.put("passphrase-env", passphraseEnvVar);
+                }
+            }
+        }
+        return settings;
     }
 
     /**
@@ -243,7 +290,7 @@ public class SignMojo extends AbstractMojo {
                 }
             }
             attachSignature(fileToSign, signaturePath.toFile());
-        } catch (IOException e) {
+        } catch (IOException | SigmundException e) {
             throw new MojoExecutionException("Failed to sign " + file.getName(), e);
         }
     }

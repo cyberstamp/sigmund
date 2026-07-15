@@ -1,160 +1,179 @@
 package io.github.cyberstamp.sigmund.cli;
 
+import io.github.cyberstamp.sigmund.core.KeyGenerator;
+import io.github.cyberstamp.sigmund.core.PassphraseProvider;
+import io.github.cyberstamp.sigmund.core.Sigmund;
+import io.github.cyberstamp.sigmund.core.SigmundConfig;
 import io.github.cyberstamp.sigmund.core.SqRunner;
+import io.github.cyberstamp.sigmund.core.ToolConfig;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 
-/**
- * Command-line interface for generating new PQC keys.
- * <p>
- * This command generates a new post-quantum cryptographic key using the Sequoia
- * (sq) tool with a hybrid cipher suite as specified in RFC 9580. The cipher
- * suite defaults to {@code mldsa87-ed448} (ML-DSA-87 + Ed448) and can be
- * overridden with {@code --cipher-suite}. The generated key is stored in the
- * Sequoia home directory and can be used for subsequent signing operations.
- *
- * <p>
- * Example usage:
- *
- * <pre>
- * # Generate a key with default Sequoia home (~/.local/share/sequoia)
- * sigmund keygen --userid "Alice &lt;alice@example.org&gt;"
- *
- * # Generate a key with custom Sequoia home
- * sigmund keygen --userid "Bob &lt;bob@example.org&gt;" --sq-home /path/to/sq-home
- * </pre>
- *
- * <p>
- * On successful key generation, the command outputs:
- * <ul>
- * <li>The 64-character hexadecimal fingerprint of the generated key</li>
- * <li>The path to the Sequoia home directory where the key is stored</li>
- * </ul>
- *
- * <p>
- * Note: This command requires the {@code sq} executable to be available on the
- * system PATH. Use {@code sq version} to verify installation.
- *
- *
- * @see SqRunner#generateKey(String, String)
- */
-@CommandLine.Command(name = "keygen", description = "Generate a new PQC key for signing", mixinStandardHelpOptions = true)
+@CommandLine.Command(name = "keygen", description = "Generate a new signing key", mixinStandardHelpOptions = true)
 public class KeygenCommand implements Callable<Integer> {
 
-    /**
-     * The user ID for the generated key.
-     * <p>
-     * This should typically be in the format "Name &lt;email@example.org&gt;", though
-     * any string identifier is technically valid. The user ID will be associated
-     * with the generated key and can be used to identify the key owner.
-     *
-     */
     @CommandLine.Option(names = {
             "--userid" }, required = true, description = "User ID for the key (e.g., \"Alice <alice@example.org>\")")
     private String userId;
 
     @CommandLine.Option(names = {
-            "--cipher-suite" }, defaultValue = SqRunner.DEFAULT_CIPHER_SUITE, description = "PQC cipher suite (default: ${DEFAULT-VALUE})")
+            "--cipher-suite" }, description = "Cipher suite (default: mldsa87-ed448 for sq, ed25519 for bc)")
     private String cipherSuite;
+
+    @CommandLine.Option(names = {
+            "--tool" }, defaultValue = "sq", description = "Key generation backend: sq or bc (default: ${DEFAULT-VALUE})")
+    private String tool;
+
+    @CommandLine.Option(names = {
+            "--passphrase-env" }, description = "Environment variable containing the passphrase (bc only, default: SIGMUND_BC_PASSPHRASE)")
+    private String passphraseEnv;
 
     @CommandLine.Mixin
     private SqHomeMixin sqHomeMixin;
 
-    /**
-     * Executes the key generation command.
-     * <p>
-     * This method performs the following steps:
-     * <ol>
-     * <li>Resolves the Sequoia home directory (using default if not specified)</li>
-     * <li>Creates an {@link SqRunner} instance</li>
-     * <li>Generates the PQC key with the specified user ID</li>
-     * <li>Prints the fingerprint and key storage location</li>
-     * </ol>
-     *
-     * <p>
-     * On error, this method catches all exceptions, prints a user-friendly error
-     * message to stderr, and returns exit code 1.
-     *
-     *
-     * @return 0 on success, 1 on error
-     */
+    @CommandLine.Mixin
+    private ConfigMixin configMixin;
+
     @Override
     public Integer call() {
         try {
-            Path sqHomeDir = sqHomeMixin.resolveSequoiaHome();
-            SqRunner sq = new SqRunner(sqHomeDir);
-
-            String fingerprint = sq.generateKey(userId, cipherSuite);
-
-            printSuccessMessage(fingerprint, sqHomeDir);
-            return 0;
+            return switch (tool.toLowerCase()) {
+                case "sq" -> generateSqKey();
+                case "bc" -> generateBcKey();
+                default -> {
+                    System.err.println("Unknown tool: " + tool + ". Use 'sq' or 'bc'.");
+                    yield 1;
+                }
+            };
         } catch (Exception e) {
             printErrorMessage(e);
             return 1;
         }
     }
 
-    /**
-     * Prints a success message with the generated key fingerprint and storage location.
-     * <p>
-     * Example output:
-     *
-     * <pre>
-     * PQC key generated successfully!
-     *
-     * Fingerprint: ABC123DEF456...
-     * Stored in:   /home/user/.local/share/sequoia
-     *
-     * Use this fingerprint with the 'sign' command.
-     * </pre>
-     *
-     *
-     * @param fingerprint the fingerprint of the generated key
-     * @param sqHomeDir the Sequoia home directory where the key is stored
-     */
-    private void printSuccessMessage(String fingerprint, Path sqHomeDir) {
-        System.out.println("PQC key generated successfully!");
+    private int generateSqKey() {
+        String suite = cipherSuite != null ? cipherSuite : SqRunner.DEFAULT_CIPHER_SUITE;
+        Path sqHomeDir = sqHomeMixin.resolveSequoiaHome();
+        SqRunner sq = new SqRunner(sqHomeDir);
+        String fingerprint = sq.generateKey(userId, suite);
+
+        System.out.println("Key generated successfully!");
         System.out.println();
         System.out.println("Fingerprint: " + fingerprint);
         System.out.println("Stored in:   " + sqHomeDir.toAbsolutePath());
         System.out.println();
         System.out.println("Use this fingerprint with the 'sign' command.");
+        return 0;
     }
 
-    /**
-     * Prints a user-friendly error message to stderr.
-     * <p>
-     * This method extracts the most relevant error message from the exception
-     * chain and displays it in a clear format. The full stack trace is not
-     * printed to avoid overwhelming the user.
-     *
-     *
-     * @param e the exception that occurred during key generation
-     */
-    private void printErrorMessage(Exception e) {
-        System.err.println("Error generating PQC key:");
-        System.err.println("  " + extractErrorMessage(e));
-        System.err.println();
-        System.err.println("Make sure the 'sq' command is installed and available on your PATH.");
-    }
+    private int generateBcKey() {
+        String suite = cipherSuite != null ? cipherSuite : "ed25519";
+        SigmundConfig config = configMixin.loadConfig();
 
-    /**
-     * Extracts a user-friendly error message from an exception.
-     * <p>
-     * If the exception has a message, it is returned. Otherwise, the simple
-     * class name of the exception is returned (e.g., "IOException" instead of
-     * "java.io.IOException").
-     *
-     *
-     * @param e the exception to extract the message from
-     * @return a user-friendly error message
-     */
-    private String extractErrorMessage(Exception e) {
-        String message = e.getMessage();
-        if (message != null && !message.isEmpty()) {
-            return message;
+        Map<String, String> settings = new HashMap<>();
+        ToolConfig toolConfig = config.signingConfig().tools().get("bc");
+        if (toolConfig != null) {
+            settings.putAll(toolConfig.settings());
         }
-        return e.getClass().getSimpleName();
+        if (passphraseEnv != null) {
+            settings.put("passphrase-env", passphraseEnv);
+        }
+
+        PassphraseResult passphraseResult = resolveKeygenPassphrase();
+
+        Sigmund.Builder builder = Sigmund.builder().config(config);
+        if (passphraseResult.provider != null) {
+            builder.bcPassphraseProvider(passphraseResult.provider);
+        }
+        Sigmund sigmund = builder.addSigningTool("bc", settings).build();
+        KeyGenerator keygen = sigmund.findTool(KeyGenerator.class, "bc");
+        String fingerprint = keygen.generateKey(userId, suite);
+
+        System.out.println("BC key generated successfully!");
+        System.out.println();
+        System.out.println("Fingerprint: " + fingerprint);
+        if (passphraseResult.provider != null) {
+            if (passphraseResult.envVarSource != null) {
+                System.out.println("Key is passphrase-protected (from " + passphraseResult.envVarSource + ").");
+            } else {
+                System.out.println("Key is passphrase-protected.");
+            }
+        }
+        System.out.println();
+        System.out.println("Use this fingerprint with the 'sign' command.");
+        return 0;
+    }
+
+    private record PassphraseResult(PassphraseProvider provider, String envVarSource) {
+    }
+
+    /**
+     * Resolves the passphrase provider for keygen, prompting with confirmation
+     * when interactive. Returns a result with a null provider if no passphrase
+     * should be set.
+     *
+     * <p>
+     * This method builds a {@link PassphraseProvider} that captures the
+     * passphrase as a {@code char[]} and passes it to the builder via
+     * {@link Sigmund.Builder#bcPassphraseProvider} — never converting to
+     * {@code String}. A {@code String} is immutable and cannot be zeroed,
+     * so converting would leave the passphrase in heap memory indefinitely.
+     * The {@code char[]} is zeroed after the provider's first invocation.
+     *
+     * <p>
+     * The returned {@link PassphraseResult} includes the env var name when
+     * the passphrase was sourced from the environment, so the caller can
+     * notify the user — an env var set in a prior session or CI config
+     * would otherwise silently encrypt the key.
+     */
+    private PassphraseResult resolveKeygenPassphrase() {
+        String envVar = passphraseEnv != null ? passphraseEnv : "SIGMUND_BC_PASSPHRASE";
+        String envValue = System.getenv(envVar);
+        if (envValue != null && !envValue.isEmpty()) {
+            return new PassphraseResult(fp -> envValue.toCharArray(), envVar);
+        }
+        if (passphraseEnv != null) {
+            throw new IllegalArgumentException(
+                    "Environment variable " + passphraseEnv + " is not set");
+        }
+        java.io.Console console = System.console();
+        if (console == null) {
+            return new PassphraseResult(null, null);
+        }
+        char[] passphrase = console.readPassword("Enter passphrase for new BC key (empty for none): ");
+        if (passphrase == null || passphrase.length == 0) {
+            return new PassphraseResult(null, null);
+        }
+        char[] confirm = console.readPassword("Confirm passphrase: ");
+        if (!Arrays.equals(passphrase, confirm)) {
+            Arrays.fill(passphrase, '\0');
+            if (confirm != null) {
+                Arrays.fill(confirm, '\0');
+            }
+            throw new IllegalArgumentException("Passphrases do not match");
+        }
+        if (confirm != null) {
+            Arrays.fill(confirm, '\0');
+        }
+        PassphraseProvider provider = fp -> {
+            char[] copy = Arrays.copyOf(passphrase, passphrase.length);
+            Arrays.fill(passphrase, '\0');
+            return copy;
+        };
+        return new PassphraseResult(provider, null);
+    }
+
+    private void printErrorMessage(Exception e) {
+        System.err.println("Error generating key:");
+        String message = e.getMessage();
+        System.err.println("  " + (message != null && !message.isEmpty() ? message : e.getClass().getSimpleName()));
+        if ("sq".equalsIgnoreCase(tool)) {
+            System.err.println();
+            System.err.println("Make sure the 'sq' command is installed and available on your PATH.");
+        }
     }
 }
