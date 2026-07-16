@@ -49,9 +49,8 @@ class RoundTripIntegrationTest {
      * <p>
      * This method is used by JUnit's {@link EnabledIf} annotation to conditionally
      * enable the test class. It verifies not just that {@code sq} is installed, but
-     * that it supports the default PQC cipher suite ({@code mldsa87-ed448}). The standard
-     * Sequoia release (1.3.x) does not include PQC support — version 1.4.0-pqc.1+
-     * from the {@code pqc} branch is required.
+     * that it supports the default PQC cipher suite ({@code mldsa87-ed448}).
+     * Sequoia 1.4.0+ is required for PQC support.
      *
      *
      * @return true if both {@code gpg} and PQC-enabled {@code sq} are available
