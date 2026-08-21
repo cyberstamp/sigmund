@@ -34,6 +34,7 @@
         <module>maven-plugin</module>
     </modules>
     <properties>
+        <project.build.outputTimestamp>2026-08-21T15:31:12Z</project.build.outputTimestamp>
         <bouncycastle.version>1.85</bouncycastle.version>
         <sigstore-java.version>2.2.0</sigstore-java.version>
         <jackson.version>2.22.1</jackson.version>
