@@ -32,6 +32,7 @@
         <module>sigstore</module>
         <module>cli</module>
         <module>maven-plugin</module>
+      <module>maven-resolver</module>
     </modules>
     <properties>
         <bouncycastle.version>1.85</bouncycastle.version>
