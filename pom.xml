@@ -60,7 +60,7 @@
         <javadoc.check.skip>false</javadoc.check.skip>
         <readme.update.skip>true</readme.update.skip>
         <quarkus.platform.version>3.38.1</quarkus.platform.version>
-        <surefire-plugin.version>3.5.6</surefire-plugin.version>
+        <surefire-plugin.version>3.6.0</surefire-plugin.version>
     </properties>
     <dependencyManagement>
         <dependencies>
