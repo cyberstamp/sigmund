@@ -29,6 +29,7 @@ import org.bouncycastle.bcpg.AEADAlgorithmTags;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
 import org.bouncycastle.bcpg.PublicKeyAlgorithmTags;
+import org.bouncycastle.bcpg.PublicKeyPacket;
 import org.bouncycastle.bcpg.S2K;
 import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags;
 import org.bouncycastle.bcpg.sig.KeyFlags;
@@ -69,9 +70,16 @@ import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyEncryptorBuilder;
  * Handles v4 and v6 signatures for classic algorithms (Ed25519, Ed448,
  * RSA, ECDSA). Always available — no external process dependencies.
  *
+ * <p>
+ * Instances are obtained from {@link BcToolFactory}, not constructed directly: the
+ * constructors take a package-private {@link BcKeyStore}, so the factory is the only way to
+ * build one from configuration. That keeps key-store layout — GnuPG home, cert-d store,
+ * private key directory — an implementation detail of core rather than part of the API.
+ *
+ * @see BcToolFactory
  * @see BcKeyStore
  */
-public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
+class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
         CertExporter, SignerIdentityResolver, SignerInspection {
 
     private static final String NAME = "bc";
@@ -108,7 +116,7 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
      * @param signingFingerprint the fingerprint of the key to sign with, or {@code null}
      * @param tskFile the path to a TSK file for signing, or {@code null}
      */
-    public BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile) {
+    BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile) {
         this(keyStore, signingFingerprint, tskFile, null, null, false, false, List.of());
     }
 
@@ -120,7 +128,7 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
      * @param tskFile the path to a TSK file for signing, or {@code null}
      * @param passphraseProvider provides passphrases for encrypted keys, or {@code null}
      */
-    public BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile,
+    BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile,
             PassphraseProvider passphraseProvider) {
         this(keyStore, signingFingerprint, tskFile, null, passphraseProvider, false, false, List.of());
     }
@@ -137,7 +145,7 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
      * @param importToKeyring whether to persist fetched keys to disk (cert-d) or cache in memory
      * @param keyservers keyserver URLs to fetch from
      */
-    public BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile,
+    BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile,
             byte[] tskBytes, PassphraseProvider passphraseProvider,
             boolean resolveSigners, boolean importToKeyring, List<String> keyservers) {
         this.api = new BcOpenPGPApi();
@@ -221,11 +229,23 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
      * {@inheritDoc}
      *
      * <p>
-     * Accepts any {@link OpenPgpVerificationUnit} — handles all packet versions.
+     * Bouncy Castle verifies against the cert-d store, plus any key fetched into the
+     * in-memory cache for this session.
      */
     @Override
-    public boolean canVerify(VerificationUnit unit) {
-        return unit instanceof OpenPgpVerificationUnit;
+    public TrustRootRef trustRoot() {
+        return TrustRootRef.keyring(keyStore.certDHome());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Accepts any {@link OpenPgpClaim} — handles all packet versions.
+     */
+    @Override
+    public boolean canVerify(Claim claim) {
+        return claim instanceof OpenPgpClaim;
     }
 
     /**
@@ -235,11 +255,11 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
      * Verifies a detached OpenPGP signature using Bouncy Castle.
      */
     @Override
-    public VerifyResult verify(Path artifactFile, VerificationUnit unit) {
-        if (!(unit instanceof OpenPgpVerificationUnit opgu)) {
-            return new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, -1, null, null);
+    public VerifyResult verify(Path artifactFile, Claim claim) {
+        if (!(claim instanceof OpenPgpClaim opgu)) {
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM);
         }
-        return verifyOpenPgpUnit(artifactFile, opgu);
+        return verifyOpenPgpClaim(artifactFile, opgu);
     }
 
     /**
@@ -267,22 +287,7 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
 
     @Override
     public List<Credential> extractCredentials(VerifyResult result) {
-        if (result.verdict() != Verdict.PASS) {
-            return List.of();
-        }
-        if (result instanceof OpenPgpVerifyResult opvr && opvr.fingerprint() != null) {
-            String credType = opvr.version() < 6
-                    ? Credential.TYPE_OPENPGP_V4
-                    : Credential.TYPE_OPENPGP_V6;
-            List<Credential> creds = new ArrayList<>(2);
-            creds.add(new FingerprintCredential(credType, opvr.fingerprint()));
-            String email = GpgRunner.extractEmail(result.signerDisplayName());
-            if (email != null) {
-                creds.add(new EmailCredential(email));
-            }
-            return List.copyOf(creds);
-        }
-        return List.of();
+        return OpenPgpCredentials.from(result);
     }
 
     /**
@@ -566,7 +571,7 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
     /**
      * Verifies a single OpenPGP signature block against an artifact.
      */
-    private OpenPgpVerifyResult verifyOpenPgpUnit(Path artifactFile, OpenPgpVerificationUnit opgu) {
+    private OpenPgpVerifyResult verifyOpenPgpClaim(Path artifactFile, OpenPgpClaim opgu) {
         int version = opgu.packetVersion();
         String fingerprint = opgu.issuerFingerprint();
         String algorithm = resolveAlgorithm(opgu.algorithmId());
@@ -575,14 +580,14 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
             fingerprint = extractKeyIdFromSignature(opgu);
         }
         if (fingerprint == null) {
-            return new OpenPgpVerifyResult(Verdict.SKIPPED, null, algorithm,
-                    version, null, null);
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.EVIDENCE_MALFORMED, null, algorithm, version, null,
+                    null);
         }
 
         PGPPublicKeyRing pubKeyRing = keyStore.findPublicKey(fingerprint);
         if (pubKeyRing == null) {
-            return new OpenPgpVerifyResult(Verdict.NO_KEY, null, algorithm,
-                    version, fingerprint, fingerprint);
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, null, algorithm, version, fingerprint,
+                    fingerprint);
         }
 
         String userId = keyStore.findPrimaryUserId(fingerprint);
@@ -590,7 +595,7 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
                 fingerprint, algorithm, userId);
     }
 
-    private String extractKeyIdFromSignature(OpenPgpVerificationUnit opgu) {
+    private String extractKeyIdFromSignature(OpenPgpClaim opgu) {
         try {
             byte[] sigBytes = AscCombiner.dearmor(opgu.armoredBlock());
             PGPSignature sig = parseSignature(sigBytes);
@@ -606,30 +611,36 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
     /**
      * Performs the cryptographic signature verification.
      */
-    private OpenPgpVerifyResult verifySignature(Path artifactFile, OpenPgpVerificationUnit opgu,
+    private OpenPgpVerifyResult verifySignature(Path artifactFile, OpenPgpClaim opgu,
             PGPPublicKeyRing pubKeyRing, int version, String fingerprint,
             String algorithm, String userId) {
         try {
             byte[] sigBytes = AscCombiner.dearmor(opgu.armoredBlock());
             PGPSignature signature = parseSignature(sigBytes);
             if (signature == null) {
-                return new OpenPgpVerifyResult(Verdict.FAIL, userId, algorithm,
-                        version, fingerprint, fingerprint);
+                return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint);
             }
 
             PGPPublicKey verifyKey = findVerificationKey(pubKeyRing, signature);
             if (verifyKey == null) {
-                return new OpenPgpVerifyResult(Verdict.NO_KEY, userId, algorithm,
-                        version, fingerprint, fingerprint);
+                return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId, algorithm, version,
+                        fingerprint, fingerprint);
+            }
+
+            // Judged at the claim time, not now: a signature made while the key was valid
+            // stays valid after the key expires, and one dated outside that window did not
+            // come from a valid key however well the bytes verify.
+            if (!KeyValidity.isValidAt(verifyKey, opgu.claimTime())) {
+                return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint,
+                        fingerprint);
             }
 
             boolean valid = verifyDetachedSignature(signature, verifyKey, artifactFile);
             return new OpenPgpVerifyResult(
-                    valid ? Verdict.PASS : Verdict.FAIL,
+                    valid ? ClaimOutcome.VERIFIED : ClaimOutcome.FAILED, null,
                     userId, algorithm, version, fingerprint, fingerprint);
         } catch (Exception e) {
-            return new OpenPgpVerifyResult(Verdict.FAIL, userId, algorithm,
-                    version, fingerprint, fingerprint);
+            return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint);
         }
     }
 
@@ -891,7 +902,10 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC", new BouncyCastleProvider());
         kpg.initialize(new ECGenParameterSpec(curveName), new SecureRandom());
 
+        // The key version is stated rather than defaulted: this fallback produces v4 keys,
+        // which is what makes these NIST P-curve keys importable into GnuPG.
         PGPKeyPair keyPair = new JcaPGPKeyPair(
+                PublicKeyPacket.VERSION_4,
                 PublicKeyAlgorithmTags.ECDSA,
                 kpg.generateKeyPair(),
                 new Date());
@@ -910,15 +924,25 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
 
     /**
      * Builds a PGP key ring from a key pair (used by ECDSA fallback).
+     *
+     * <p>
+     * The self-signature states the key's capabilities explicitly. Implementations differ on
+     * what an unflagged key may do: GnuPG and Bouncy Castle infer signing capability from the
+     * key itself, while Sequoia refuses to verify with a key that does not say it can sign
+     * ("key is not signing capable"). Stating the flags is what makes a key generated here
+     * usable by every backend.
      */
     private PGPSecretKeyRing buildKeyRing(PGPKeyPair keyPair, String userId) throws PGPException {
         int hashAlgo = selectHashForKey(keyPair.getPublicKey());
+        PGPSignatureSubpacketGenerator capabilities = new PGPSignatureSubpacketGenerator();
+        capabilities.setKeyFlags(false, KeyFlags.CERTIFY_OTHER | KeyFlags.SIGN_DATA);
+
         PGPKeyRingGenerator keyRingGen = new PGPKeyRingGenerator(
                 PGPSignature.POSITIVE_CERTIFICATION,
                 keyPair,
                 userId,
                 new JcaPGPDigestCalculatorProviderBuilder().build().get(hashAlgo),
-                null,
+                capabilities.generate(),
                 null,
                 new JcaPGPContentSignerBuilder(
                         keyPair.getPublicKey().getAlgorithm(), hashAlgo),
@@ -939,15 +963,6 @@ public class BcRunner implements SignatureTool, KeyGenerator, KeyImporter,
             return HashAlgorithmTags.SHA384;
         }
         return HashAlgorithmTags.SHA256;
-    }
-
-    /**
-     * Extracts public key ring from secret key ring (used by ECDSA fallback).
-     */
-    private PGPPublicKeyRing extractPublicKeyRing(PGPSecretKeyRing secretRing) {
-        List<PGPPublicKey> pubKeys = new ArrayList<>();
-        secretRing.getPublicKeys().forEachRemaining(pubKeys::add);
-        return new PGPPublicKeyRing(pubKeys);
     }
 
     // --- HKP key import internals ---

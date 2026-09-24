@@ -289,7 +289,7 @@ Pattern syntax is the same as the `trust` section. Named artifact groups from th
 **Type:** Map of group name → array of artifact patterns  
 **Default:** `{}` (empty)
 
-Defines named groups of artifact patterns that can be referenced by name in the `trust` and `unsigned` sections. This avoids repeating the same long list of patterns when multiple signers or policies share the same set of artifacts.
+Defines named groups of artifact patterns that can be referenced by name in the `trust` and `signature-optional` sections. This avoids repeating the same long list of patterns when multiple signers or policies share the same set of artifacts.
 
 ```yaml
 artifacts:
@@ -305,11 +305,11 @@ trust:
   apache-stack: apache          # Expands to all three org.apache.* patterns
   internal-libs: release-team
 
-unsigned:
+signature-optional:
   - internal-libs               # Expands to both com.internal.* patterns
 ```
 
-When a key in `trust` or an entry in `unsigned` matches a group name, it is expanded into the group's patterns. If no group matches, the key is treated as a literal artifact pattern.
+When a key in `trust` or an entry in `signature-optional` matches a group name, it is expanded into the group's patterns. If no group matches, the key is treated as a literal artifact pattern.
 
 ### `trust`
 

@@ -7,9 +7,9 @@ import java.util.List;
  * The general interface for anything that can verify evidence of identity.
  * <p>
  * This is the Layer 1 (identity verification) interface — it takes a file and returns
- * proven credentials via {@link EvidenceResult}. It operates at a higher level than
+ * proven credentials via {@link ClaimResult}. It operates at a higher level than
  * the Layer 2 {@code SignatureTool} interface, which works with parsed
- * {@code VerificationUnit}s.
+ * {@code Claim}s.
  *
  * <h2>Implementations</h2>
  * <ul>
@@ -20,7 +20,7 @@ import java.util.List;
  * SBOM verification, etc. implement this interface directly.</li>
  * </ul>
  *
- * @see EvidenceResult
+ * @see ClaimResult
  */
 public interface EvidenceProvider {
 
@@ -39,14 +39,15 @@ public interface EvidenceProvider {
     boolean isAvailable();
 
     /**
-     * Checks whether this provider can handle the given evidence file.
-     * <p>
-     * Detection is content-based (not just by file extension) where possible.
+     * Checks whether this provider can handle the given evidence.
      *
-     * @param evidenceFile the path to the evidence file
-     * @return {@code true} if this provider can verify the file
+     * <p>
+     * Detection is content-based where possible, not just by file extension.
+     *
+     * @param evidence the evidence to check
+     * @return {@code true} if this provider can verify it
      */
-    boolean canHandle(Path evidenceFile);
+    boolean canHandle(Evidence evidence);
 
     /**
      * Verifies evidence and returns results with proven credentials.
@@ -55,10 +56,10 @@ public interface EvidenceProvider {
      * signature file with two armored blocks produces two results (one per block).
      *
      * @param artifactFile the artifact that was signed
-     * @param evidenceFile the evidence file to verify
+     * @param evidence the evidence, already read to verify
      * @return the verification results with proven credentials
      * @throws ToolExecutionException if verification cannot be attempted due to
      *         infrastructure failure
      */
-    List<EvidenceResult> verify(Path artifactFile, Path evidenceFile);
+    List<ClaimResult> verify(Path artifactFile, Evidence evidence);
 }

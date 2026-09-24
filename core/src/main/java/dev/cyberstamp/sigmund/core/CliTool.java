@@ -36,7 +36,7 @@ import java.util.concurrent.TimeUnit;
  * }
  * </pre>
  */
-public final class CliTool {
+final class CliTool {
 
     private static final int TIMEOUT_SECONDS = 60;
 

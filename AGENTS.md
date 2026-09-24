@@ -53,9 +53,13 @@ Each top-level YAML section in `sigmund.yaml` maps 1:1 to a Java type:
 
 **Layer 1 — Identity Verification:** "Is this artifact from someone I trust?" via `TrustVerifier`, `EvidenceProvider`, `SignerIdentity`, `TrustPolicy`.
 
-**Layer 2 — Signature Operations:** Cryptographic signing/verification via `SignatureTool`, `SignatureFormat`, `VerificationUnit`, `VerifyResult`.
+**Layer 2 — Signature Operations:** Cryptographic signing/verification via `SignatureTool`, `SignatureFormat`, `Claim`, `VerifyResult`.
 
 **Bridge:** `SignatureEvidenceAdapter` wraps a `SignatureFormat` and its tools into an `EvidenceProvider`.
+
+### Vocabulary: evidence and claim
+
+**Evidence** is the file carrying assertions — the `.asc`, the Sigstore bundle, a DSSE envelope. A **claim** is a single verifiable assertion extracted from it. One evidence file can carry several claims: a hybrid `.asc` with a classic and a PQC block is two claims. Evidence is located and parsed by an `EvidenceProvider`; the unit of verification is a `Claim`. Use both terms as defined — never "verification unit".
 
 ### Key Abstractions
 
@@ -69,7 +73,7 @@ Each top-level YAML section in `sigmund.yaml` maps 1:1 to a Java type:
 
 ### Sealed Hierarchies
 
-`VerificationUnit` and `VerifyResult` are sealed — adding a new format requires adding `permits` in core. This is deliberate: new formats are rare and warrant core review.
+`Claim` and `VerifyResult` are sealed — adding a new format requires adding `permits` in core. This is deliberate: new formats are rare and warrant core review.
 
 ## Testing
 

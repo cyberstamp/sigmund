@@ -577,22 +577,7 @@ class SigmundConfigParserTest {
         }
     }
 
-    private static ArtifactIdentity artifact(String ns, String name, String version) {
-        return new ArtifactIdentity() {
-            @Override
-            public String namespace() {
-                return ns;
-            }
-
-            @Override
-            public String name() {
-                return name;
-            }
-
-            @Override
-            public String version() {
-                return version;
-            }
-        };
+    private static ArtifactCoords artifact(String ns, String name, String version) {
+        return new ArtifactCoords(ns, name, "", "jar", version);
     }
 }

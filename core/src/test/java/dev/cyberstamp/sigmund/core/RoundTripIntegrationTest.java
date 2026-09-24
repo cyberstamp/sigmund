@@ -134,8 +134,8 @@ class RoundTripIntegrationTest {
         assertThat(report.isPass())
                 .as("Strict verification (all signatures) should pass").isTrue();
         for (VerifyResult r : report.files().get(0).results()) {
-            assertThat(r.verdict())
-                    .as("Signature (" + r.algorithm() + ") should be valid").isEqualTo(Verdict.PASS);
+            assertThat(r.isVerified())
+                    .as("Signature (" + r.algorithm() + ") should be valid").isTrue();
         }
 
         // Print the report for manual inspection
@@ -230,9 +230,9 @@ class RoundTripIntegrationTest {
 
         // Assert: All signatures should fail due to tampering
         for (VerifyResult r : report.files().get(0).results()) {
-            assertThat(r.verdict())
+            assertThat(r.isFailed())
                     .as("Signature (" + r.algorithm() + ") should fail for tampered artifact")
-                    .isEqualTo(Verdict.FAIL);
+                    .isTrue();
         }
 
         System.out.println("=== Tampered Artifact Verification Report ===");

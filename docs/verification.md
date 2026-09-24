@@ -18,7 +18,7 @@ This guide covers how to verify artifact signatures using Sigmund. Signature ver
 - [Tool Routing](#tool-routing)
   - [How Routing Works](#how-routing-works)
   - [Tool Capabilities](#tool-capabilities)
-  - [Verdicts](#verdicts)
+  - [Outcomes and reasons](#outcomes-and-reasons)
 - [Sigstore Verification](#sigstore-verification)
   - [Auto-Detection](#auto-detection)
   - [Identity Extraction](#identity-extraction)
@@ -33,7 +33,7 @@ This guide covers how to verify artifact signatures using Sigmund. Signature ver
   - [Ephemeral vs Persistent Import](#ephemeral-vs-persistent-import)
   - [Key Fetching Limitations](#key-fetching-limitations)
 - [Verification Report Format](#verification-report-format)
-  - [Example: All Signatures Pass](#example-all-signatures-pass)
+  - [Example: All Signatures Pass](#example-all-signatures-verify)
   - [Example: Missing Key](#example-missing-key)
   - [Example: Failed Signature](#example-failed-signature)
 - [Troubleshooting](#troubleshooting)
@@ -60,10 +60,10 @@ This guide covers how to verify artifact signatures using Sigmund. Signature ver
 Sigmund verifies signatures by:
 
 1. Detecting the signature format from the file extension (`.asc` for OpenPGP, `.sigstore.json` for Sigstore)
-2. Parsing the signature file into verification units
+2. Parsing the signature file into claims
 3. Routing each unit to an appropriate verification tool (BC, Sequoia, GPG, or Sigstore)
 4. Verifying each signature against the artifact
-5. Reporting the results with an overall verdict
+5. Reporting the outcome of each signature block, and the counts across them
 
 For OpenPGP, a single `.asc` file may contain multiple signature blocks — for example, a classical v4 signature followed by a PQC v6 signature. Each block is verified independently.
 
@@ -81,23 +81,23 @@ sigmund verify-signature --file artifact.jar --signature artifact.jar.asc
 
 ```
 Signature Verification Report:
-  [1] PASS (RSA) [key: 41A21977...]
-  [2] PASS (ML-DSA-87+Ed448) [key: D62AAB33...]
-  Overall: ALL_PASS
+  [1] VERIFIED (RSA) [key: 41A21977...] [signer: Alice <alice@example.com>]
+  [2] INDETERMINATE [KEY_UNAVAILABLE] (ML-DSA-87+Ed448) [key: D62AAB33...]
+  Overall: 1 VERIFIED, 1 INDETERMINATE
 ```
 
 Each line shows:
 - **Index** — signature block number
-- **Verdict** — `PASS`, `FAIL`, `NO_KEY`, or `SKIPPED`
+- **Outcome** — `VERIFIED`, `FAILED`, or `INDETERMINATE`, the last followed by the
+  reason it could not be decided
 - **Algorithm** — the signature algorithm (e.g., `RSA`, `ML-DSA-87+Ed448`, `Ed25519`)
 - **Key ID** — the signing key's fingerprint (when available)
 - **Signer** — the signer's display name (when available)
 
-The **Overall** verdict is one of:
-- `ALL_PASS` — all signatures passed
-- `PASS_WITH_SKIPS` — at least one signature passed, none failed, some were skipped or missing keys
-- `PASS_WITH_FAILURES` — at least one signature passed, but some failed
-- `NONE_PASSED` — no signatures passed
+**Overall** counts the outcomes rather than naming a verdict of its own: a
+hybrid signature whose PQC block could not be checked reads as
+`1 VERIFIED, 1 INDETERMINATE`, which says what happened, where a single verdict
+would have to choose between "passed" and "not fully checked".
 
 ### CLI Options
 
@@ -135,7 +135,8 @@ Sigmund supports two verification modes:
 
 ### Strict Mode (Default)
 
-All signature blocks in the `.asc` file must pass for the overall result to be `PASS`. Any `FAIL`, `NO_KEY`, or `SKIPPED` result causes the overall verification to fail.
+Every signature block must verify: at least one `VERIFIED`, and no `FAILED` or
+`INDETERMINATE` block. A block nobody could check is not a pass.
 
 ```bash
 sigmund verify-signature --file artifact.jar --signature artifact.jar.asc
@@ -145,7 +146,9 @@ Use strict mode when you require all signatures to be valid — for example, whe
 
 ### Lenient Mode
 
-At least one signature block must pass, and none may fail. `NO_KEY` and `SKIPPED` results are tolerated as long as at least one signature passed.
+At least one block must verify and none may fail. `INDETERMINATE` blocks are
+tolerated, whatever left them undecided — a missing key, an unsupported
+algorithm, or a tool that could not be run.
 
 ```bash
 sigmund verify-signature --file artifact.jar --signature artifact.jar.asc --lenient
@@ -178,10 +181,11 @@ When verifying a signature file:
 2. **Inspect each block** to extract packet version, algorithm ID, and issuer fingerprint
 3. **Try each tool** in priority order
    - Each tool's `canVerify()` method checks whether it can handle the signature
-   - If a tool returns `PASS`, it is used immediately
-   - If a tool returns `NO_KEY` or `FAIL`, the next tool is tried — a different tool may have the key in its local keyring or support the algorithm
-   - If no tool returns `PASS`, the best non-PASS result is kept
-4. **Retry with key fetching** if the final result is `NO_KEY` (see [Key Discovery](#key-discovery))
+   - If a tool returns `VERIFIED`, it is used immediately
+   - Any other outcome falls through to the next tool — a different tool may have the key in its local keyring or support the algorithm
+   - If no tool verifies the block, the most conclusive result seen is kept
+   - A tool that throws is recorded as `INDETERMINATE [TOOL_UNAVAILABLE]` and the remaining tools still get their turn
+4. **Retry with key fetching** when the result is `INDETERMINATE [KEY_UNAVAILABLE]` (see [Key Discovery](#key-discovery))
 
 This fallthrough is important because each tool has access to different key stores. For example, BC checks its ephemeral cache and cert-d, GPG reads `pubring.kbx`, and Sequoia reads its own cert store. A key missing from one tool's store may be present in another's.
 
@@ -192,20 +196,34 @@ This fallthrough is important because each tool has access to different key stor
 - Shared certificate directory (`~/.local/share/pgp.cert.d`)
 - BC private keystore (in-memory)
 
-BC returns `NO_KEY` if the signing key is not found in any of these locations.
+BC returns `INDETERMINATE [KEY_UNAVAILABLE]` if the signing key is not found in any of these locations.
 
 **Sequoia (sq)** handles v5 and v6 signatures, including PQC hybrid signatures (ML-DSA). It looks up the signer's certificate in the Sequoia cert store (`~/.local/share/sequoia/certs`) and verifies using `sq verify --signer-file`.
 
 **GPG** runs `gpg --verify` against the local keyring. It handles v1-v4 signatures. When verifying hybrid signatures containing v6 PQC packets, GPG prints a warning about unknown packets but still reports "Good signature" if the v4 classical signature is valid.
 
-### Verdicts
+### Outcomes and reasons
 
-Each verification tool returns one of these verdicts:
+Each verification tool returns one of three outcomes:
 
-- **`PASS`** — signature is valid
-- **`FAIL`** — signature is invalid (tampered artifact or incorrect signature)
-- **`NO_KEY`** — signing key not found in any keyring
-- **`SKIPPED`** — tool cannot handle this signature (wrong version, unsupported algorithm, or tool unavailable)
+- **`VERIFIED`** — the signature is valid
+- **`FAILED`** — the signature is invalid: a tampered artifact or the wrong signature
+- **`INDETERMINATE`** — nothing was established either way, with a reason saying why
+
+Keeping "could not check" apart from "checked and rejected" is the point of the
+third outcome: only `FAILED` is an attack signal. The reasons are:
+
+| Reason | Meaning | Transient |
+|--------|---------|-----------|
+| `KEY_UNAVAILABLE` | The signing key is in no keyring and could not be fetched | yes |
+| `TRUST_ROOT_UNAVAILABLE` | Sigstore TUF metadata missing or too stale | yes |
+| `DISCOVERY_UNAVAILABLE` | Evidence might exist but the source could not be queried | yes |
+| `TOOL_UNAVAILABLE` | The verification tool could not be run, or broke while running | yes |
+| `UNSUPPORTED_ALGORITHM` | No installed tool can check this signature | no |
+| `EVIDENCE_MALFORMED` | The signature or bundle could not be parsed | no |
+
+A transient reason may resolve on a later run; a permanent one will not without
+installing different tooling or fixing the evidence.
 
 ## Sigstore Verification
 
@@ -274,7 +292,7 @@ discovery:
 
 ## Key Discovery
 
-When a signature verification fails with `NO_KEY`, Sigmund can automatically fetch the missing key from a keyserver.
+When verification is left undecided by `KEY_UNAVAILABLE`, Sigmund can automatically fetch the missing key from a keyserver.
 
 ### Key Fetching Configuration
 
@@ -296,7 +314,7 @@ discovery:
 
 ### How Key Fetching Works
 
-1. All tools return `NO_KEY` for a signature (key not in any local keyring)
+1. All tools return `KEY_UNAVAILABLE` for a signature (key not in any local keyring)
 2. Sigmund extracts the issuer fingerprint from the signature packet
 3. Sigmund queries each keyserver in order until a key is found
 4. The key is imported (persistently if `import-to-keyring: true`, or in-memory if `false`)
@@ -335,37 +353,41 @@ Keys remain available for future verifications.
 
 ## Verification Report Format
 
-The verification report shows the result of each signature block and an overall verdict.
+The verification report shows the outcome of each signature block, and counts
+them in its last line.
 
-### Example: All Signatures Pass
+### Example: All Signatures Verify
 
 ```
 Signature Verification Report:
-  [1] PASS (RSA) [key: 41A21977...]
-  [2] PASS (ML-DSA-87+Ed448) [key: D62AAB33...]
-  Overall: ALL_PASS
+  [1] VERIFIED (RSA) [key: 41A21977...]
+  [2] VERIFIED (ML-DSA-87+Ed448) [key: D62AAB33...]
+  Overall: 2 VERIFIED
 ```
 
 ### Example: Missing Key
 
 ```
 Signature Verification Report:
-  [1] PASS (RSA) [key: 41A21977...]
-  [2] NO_KEY (ML-DSA-87+Ed448) [key: D62AAB33...]
-  Overall: PASS_WITH_SKIPS
+  [1] VERIFIED (RSA) [key: 41A21977...]
+  [2] INDETERMINATE [KEY_UNAVAILABLE] (ML-DSA-87+Ed448) [key: D62AAB33...]
+  Overall: 1 VERIFIED, 1 INDETERMINATE
 ```
 
-In strict mode (default), this fails. In lenient mode (`--lenient`), it passes because at least one signature is valid.
+In strict mode (default), this fails: a block nobody could check is not a pass.
+In lenient mode (`--lenient`), it passes because at least one signature is valid
+and none failed.
 
 ### Example: Failed Signature
 
 ```
 Signature Verification Report:
-  [1] FAIL (RSA) [key: 41A21977...]
-  Overall: NONE_PASSED
+  [1] FAILED (RSA) [key: 41A21977...]
+  Overall: 1 FAILED
 ```
 
-This fails in both strict and lenient modes. Lenient mode requires at least one `PASS` and no `FAIL` results.
+This fails in both strict and lenient modes: a `FAILED` block is an attack
+signal, and no mode tolerates it.
 
 ## Troubleshooting
 

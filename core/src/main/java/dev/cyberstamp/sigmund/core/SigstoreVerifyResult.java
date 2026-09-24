@@ -20,20 +20,37 @@ public final class SigstoreVerifyResult extends VerifyResult {
     /**
      * Creates a new Sigstore verification result.
      *
-     * @param verdict the verification outcome
+     * @param outcome what verification established
+     * @param reason why verification could not complete, or {@code null}
      * @param signerDisplayName human-readable signer (typically the OIDC subject), or {@code null}
      * @param algorithm the algorithm name, or {@code null}
      * @param sigstoreCredential extracted Sigstore certificate credential, or {@code null}
      * @param logIndex the Rekor transparency log entry index, or {@code null}
      * @param subjectType the SAN type from the Sigstore certificate
      */
-    public SigstoreVerifyResult(Verdict verdict, String signerDisplayName,
-            String algorithm, SigstoreCredential sigstoreCredential,
+    public SigstoreVerifyResult(ClaimOutcome outcome, IndeterminateReason reason,
+            String signerDisplayName, String algorithm, SigstoreCredential sigstoreCredential,
             String logIndex, int subjectType) {
-        super(verdict, signerDisplayName, algorithm);
+        super(outcome, reason, signerDisplayName, algorithm);
         this.sigstoreCredential = sigstoreCredential;
         this.logIndex = logIndex;
         this.subjectType = subjectType;
+    }
+
+    /**
+     * Creates a result for a bundle that could not be verified, carrying nothing but the
+     * reason.
+     *
+     * <p>
+     * Sigstore verification is all-or-nothing: until the bundle parses and its chain
+     * verifies, there is no certificate to read an identity or log index from.
+     *
+     * @param reason why verification could not complete
+     * @return an indeterminate result with no certificate metadata
+     */
+    public static SigstoreVerifyResult indeterminate(IndeterminateReason reason) {
+        return new SigstoreVerifyResult(ClaimOutcome.INDETERMINATE, reason, null, null, null,
+                null, -1);
     }
 
     /**

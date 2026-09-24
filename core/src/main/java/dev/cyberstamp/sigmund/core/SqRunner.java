@@ -647,11 +647,11 @@ public class SqRunner implements SignatureTool, KeyGenerator, CertExporter {
     /**
      * {@inheritDoc}
      * <p>
-     * Accepts {@link OpenPgpVerificationUnit}s with {@code packetVersion >= 5}.
+     * Accepts {@link OpenPgpClaim}s with {@code packetVersion >= 5}.
      */
     @Override
-    public boolean canVerify(VerificationUnit unit) {
-        return unit instanceof OpenPgpVerificationUnit opgu
+    public boolean canVerify(Claim claim) {
+        return claim instanceof OpenPgpClaim opgu
                 && opgu.packetVersion() >= 5;
     }
 
@@ -703,51 +703,52 @@ public class SqRunner implements SignatureTool, KeyGenerator, CertExporter {
 
     /**
      * {@inheritDoc}
+     *
+     * <p>
+     * Sequoia verifies against its certificate store, which is the configured
+     * {@code SEQUOIA_HOME} when operations are isolated and sq's own default store otherwise.
+     */
+    @Override
+    public TrustRootRef trustRoot() {
+        String home = sqEnv.get(SEQUOIA_HOME);
+        return new TrustRootRef(TrustRootRef.KIND_OPENPGP_KEYRING,
+                home != null ? home : "sq default store");
+    }
+
+    /**
+     * {@inheritDoc}
      * <p>
      * Verifies an OpenPGP v5+ signature block by resolving the issuer certificate
      * from the Sequoia cert store.
      */
     @Override
-    public VerifyResult verify(Path artifactFile, VerificationUnit unit) {
-        if (!(unit instanceof OpenPgpVerificationUnit opgu)) {
-            return new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, -1, null, null);
+    public VerifyResult verify(Path artifactFile, Claim claim) {
+        if (!(claim instanceof OpenPgpClaim opgu)) {
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM);
         }
-        return verifyOpenPgpUnit(artifactFile, opgu);
+        return verifyOpenPgpClaim(artifactFile, opgu);
     }
 
     @Override
     public List<Credential> extractCredentials(VerifyResult result) {
-        if (result.verdict() != Verdict.PASS) {
-            return List.of();
-        }
-        if (result instanceof OpenPgpVerifyResult opvr && opvr.fingerprint() != null) {
-            String credType = opvr.version() < 6 ? Credential.TYPE_OPENPGP_V4 : Credential.TYPE_OPENPGP_V6;
-            List<Credential> creds = new ArrayList<>(2);
-            creds.add(new FingerprintCredential(credType, opvr.fingerprint()));
-            String email = GpgRunner.extractEmail(result.signerDisplayName());
-            if (email != null) {
-                creds.add(new EmailCredential(email));
-            }
-            return List.copyOf(creds);
-        }
-        return List.of();
+        return OpenPgpCredentials.from(result);
     }
 
-    private OpenPgpVerifyResult verifyOpenPgpUnit(Path artifactFile, OpenPgpVerificationUnit opgu) {
+    private OpenPgpVerifyResult verifyOpenPgpClaim(Path artifactFile, OpenPgpClaim opgu) {
         int version = opgu.packetVersion();
         String fingerprint = opgu.issuerFingerprint();
         int algoId = opgu.algorithmId();
         String algorithm = resolveAlgorithm(algoId);
 
         if (fingerprint == null) {
-            return new OpenPgpVerifyResult(Verdict.SKIPPED, null, algorithm,
-                    version, fingerprint, fingerprint);
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM, null, algorithm, version,
+                    fingerprint, fingerprint);
         }
 
         CertInfo certInfo = inspectCert(fingerprint);
         if (certInfo == null) {
-            return new OpenPgpVerifyResult(Verdict.NO_KEY, null, algorithm,
-                    version, fingerprint, fingerprint);
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, null, algorithm, version, fingerprint,
+                    fingerprint);
         }
 
         if (certInfo.algorithm() != null) {
@@ -756,8 +757,8 @@ public class SqRunner implements SignatureTool, KeyGenerator, CertExporter {
 
         Path certFile = resolveCertFile(certInfo, fingerprint);
         if (certFile == null) {
-            return new OpenPgpVerifyResult(Verdict.NO_KEY, certInfo.userId(), algorithm,
-                    version, fingerprint, fingerprint);
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, certInfo.userId(), algorithm, version,
+                    fingerprint, fingerprint);
         }
 
         return verifyWithCertFile(artifactFile, opgu.armoredBlock(), certFile,
@@ -788,7 +789,7 @@ public class SqRunner implements SignatureTool, KeyGenerator, CertExporter {
             Files.writeString(sigFile, armoredBlock);
             boolean verified = verifyCertFile(artifactFile, sigFile, certFile);
             return new OpenPgpVerifyResult(
-                    verified ? Verdict.PASS : Verdict.FAIL,
+                    verified ? ClaimOutcome.VERIFIED : ClaimOutcome.FAILED, null,
                     userId, algorithm, version, fingerprint, fingerprint);
         } catch (IOException e) {
             throw new ToolExecutionException("Failed to create temp file for SQ verification", e);
@@ -811,12 +812,13 @@ public class SqRunner implements SignatureTool, KeyGenerator, CertExporter {
      *
      * @param sequoiaHome the directory to use as {@code SEQUOIA_HOME}, or {@code null}
      *        to inherit the current environment (letting sq use its own defaults)
-     * @return a single-entry map setting {@code SEQUOIA_HOME}, or {@code null}
+     * @return a single-entry map setting {@code SEQUOIA_HOME}, or an empty map when sq is
+     *         left to its own defaults — adding nothing to the inherited environment
      */
     static Map<String, String> envFor(Path sequoiaHome) {
         return sequoiaHome != null
                 ? Map.of(SEQUOIA_HOME, sequoiaHome.toString())
-                : null;
+                : Map.of();
     }
 
     private CliTool.Result runSq(String... args) {

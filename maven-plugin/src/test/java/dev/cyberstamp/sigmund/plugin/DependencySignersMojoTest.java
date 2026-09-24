@@ -3,26 +3,33 @@ package dev.cyberstamp.sigmund.plugin;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.cyberstamp.sigmund.core.ArtifactCoords;
+import dev.cyberstamp.sigmund.core.ClaimOutcome;
+import dev.cyberstamp.sigmund.core.IndeterminateReason;
 import dev.cyberstamp.sigmund.core.OpenPgpVerifyResult;
+import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.UnverifiedResult;
-import dev.cyberstamp.sigmund.core.Verdict;
 import dev.cyberstamp.sigmund.core.VerifyResult;
 import dev.cyberstamp.sigmund.plugin.SignatureInspector.SignedArtifact;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class DependencySignersMojoTest {
 
+    private static final ArtifactCoords LIB_COORDS = ArtifactCoords.parse("com.example:lib:1.0");
+
     @Test
     void signedArtifactV4WithSigner() {
-        VerifyResult vr = new OpenPgpVerifyResult(Verdict.PASS,
+        VerifyResult vr = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                 "User <user@example.com>", "RSA", 4, "ABCD1234", "ABCD1234");
-        SignedArtifact signer = new SignedArtifact(
-                "com.example:lib:1.0", "central", vr, null, null);
-        assertThat(signer.coordinates()).isEqualTo("com.example:lib:1.0");
+        SignedArtifact signer = new SignedArtifact(LIB_COORDS, "central", vr, null, null);
+        assertThat(signer.coords()).isEqualTo(LIB_COORDS);
         assertThat(signer.repoId()).isEqualTo("central");
         assertThat(signer.verifyResult()).isInstanceOf(OpenPgpVerifyResult.class);
         OpenPgpVerifyResult opvr = (OpenPgpVerifyResult) signer.verifyResult();
@@ -33,23 +40,21 @@ class DependencySignersMojoTest {
 
     @Test
     void signedArtifactV6Detected() {
-        VerifyResult vr = new OpenPgpVerifyResult(Verdict.SKIPPED,
+        VerifyResult vr = new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.UNSUPPORTED_ALGORITHM,
                 null, null, 6, null, null);
-        SignedArtifact signer = new SignedArtifact(
-                "com.example:lib:1.0", "central", vr, null, null);
+        SignedArtifact signer = new SignedArtifact(LIB_COORDS, "central", vr, null, null);
         OpenPgpVerifyResult opvr = (OpenPgpVerifyResult) signer.verifyResult();
         assertThat(opvr.version()).isEqualTo(6);
         assertThat(opvr.preferredKeyId()).isNull();
-        assertThat(signer.verdict()).isEqualTo(Verdict.SKIPPED);
+        assertThat(signer.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue();
     }
 
     @Test
     void signedArtifactNoSignature() {
-        SignedArtifact signer = new SignedArtifact(
-                "com.example:lib:1.0", null, Verdict.SKIPPED);
+        SignedArtifact signer = SignedArtifact.noClaim(LIB_COORDS, null);
         assertThat(signer.repoId()).isNull();
-        assertThat(signer.verifyResult()).isInstanceOf(UnverifiedResult.class);
-        assertThat(signer.verdict()).isEqualTo(Verdict.SKIPPED);
+        assertThat(signer.verifyResult()).isNull();
+        assertThat(signer.hasClaim()).isFalse();
     }
 
     // --- ArtifactCoords.toString tests ---
@@ -114,9 +119,9 @@ class DependencySignersMojoTest {
 
         @Test
         void collisionProducesUniqueSuffix() {
-            VerifyResult vr1 = new OpenPgpVerifyResult(Verdict.PASS,
+            VerifyResult vr1 = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     "John Smith <john@a.com>", "RSA", 4, "KEY1", "KEY1");
-            VerifyResult vr2 = new OpenPgpVerifyResult(Verdict.PASS,
+            VerifyResult vr2 = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     "John Smith <john@b.com>", "RSA", 4, "KEY2", "KEY2");
 
             Map<String, DependencySignersMojo.SignerInfo> existingSigners = new LinkedHashMap<>();
@@ -131,7 +136,7 @@ class DependencySignersMojoTest {
 
         @Test
         void collisionWithReservedIds() {
-            VerifyResult vr = new OpenPgpVerifyResult(Verdict.PASS,
+            VerifyResult vr = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     "Alice <alice@example.com>", "RSA", 4, "KEY1", "KEY1");
             String id = mojo.resolveUniqueSignerId(vr, 1, new LinkedHashMap<>(), Set.of("alice"));
             assertThat(id).isEqualTo("alice-2");
@@ -143,7 +148,7 @@ class DependencySignersMojoTest {
 
         @Test
         void v4KeyClassifiedAsPgp4() {
-            VerifyResult vr = new OpenPgpVerifyResult(Verdict.PASS,
+            VerifyResult vr = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     "User <user@example.com>", "RSA", 4, null, "FP4");
             var info = new DependencySignersMojo.SignerInfo("test", vr);
             assertThat(info.pgp4Key).isEqualTo("FP4");
@@ -152,7 +157,7 @@ class DependencySignersMojoTest {
 
         @Test
         void v6KeyClassifiedAsPgp6() {
-            VerifyResult vr = new OpenPgpVerifyResult(Verdict.PASS,
+            VerifyResult vr = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     "User <user@example.com>", "ML-DSA-87+Ed448", 6, null, "FP6");
             var info = new DependencySignersMojo.SignerInfo("test", vr);
             assertThat(info.pgp4Key).isNull();
@@ -161,9 +166,9 @@ class DependencySignersMojoTest {
 
         @Test
         void mergeAccumulatesBothKeys() {
-            VerifyResult vr4 = new OpenPgpVerifyResult(Verdict.PASS,
+            VerifyResult vr4 = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     "User <user@example.com>", "RSA", 4, null, "FP4");
-            VerifyResult vr6 = new OpenPgpVerifyResult(Verdict.PASS,
+            VerifyResult vr6 = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     null, "ML-DSA-87+Ed448", 6, null, "FP6");
             var info = new DependencySignersMojo.SignerInfo("test", vr4);
             info.merge(vr6);
@@ -177,16 +182,56 @@ class DependencySignersMojoTest {
     class SignedArtifactEdgeCases {
 
         @Test
-        void unverifiedWithPassThrows() {
-            assertThatThrownBy(() -> new SignedArtifact("coords", null, Verdict.PASS))
+        void unverifiedResultCannotClaimVerified() {
+            assertThatThrownBy(() -> new UnverifiedResult(ClaimOutcome.VERIFIED, null))
                     .isInstanceOf(IllegalArgumentException.class);
         }
 
         @Test
-        void unverifiedWithFail() {
-            var sa = new SignedArtifact("coords", "repo", Verdict.FAIL);
-            assertThat(sa.verdict()).isEqualTo(Verdict.FAIL);
-            assertThat(sa.verifyResult()).isInstanceOf(dev.cyberstamp.sigmund.core.UnverifiedResult.class);
+        void toolUnavailableIsIndeterminateNotFailed() {
+            var sa = SignedArtifact.toolUnavailable(LIB_COORDS, "repo");
+            assertThat(sa.isFailed()).isFalse();
+            assertThat(sa.isIndeterminate(IndeterminateReason.TOOL_UNAVAILABLE)).isTrue();
+            assertThat(sa.verifyResult()).isInstanceOf(UnverifiedResult.class);
+        }
+    }
+
+    @Nested
+    class ArtifactsWithNoClaim {
+
+        /**
+         * An artifact with no signature at all carries no verify result, which is a
+         * different thing from a claim no installed tool supports.
+         */
+        private final SignedArtifact noClaim = SignedArtifact.noClaim(LIB_COORDS, "central");
+
+        private final SignedArtifact signed = new SignedArtifact(
+                ArtifactCoords.parse("com.example:other:1.0"), "central",
+                new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
+                        "RSA", 4, "ABCD1234", "ABCD1234"),
+                null, null);
+
+        @Test
+        void areListedAsUnsignedInTheReport() {
+            RecordingLog log = new RecordingLog();
+            DependencySignersMojo mojo = new DependencySignersMojo();
+            mojo.setLog(log);
+
+            mojo.logReport(List.of(noClaim, signed));
+
+            assertThat(log.lines).contains("warn: UNSIGNED", "warn:   " + LIB_COORDS);
+        }
+
+        @Test
+        void areRecordedAsSignatureOptionalInAGeneratedConfig(@TempDir Path dir) throws Exception {
+            DependencySignersMojo mojo = new DependencySignersMojo();
+            mojo.setLog(new RecordingLog());
+            Path configFile = dir.resolve("sigmund.yaml");
+
+            mojo.writeTrustConfigYaml(List.of(noClaim, signed), configFile.toFile());
+
+            SigmundConfig config = SigmundConfig.parse(configFile);
+            assertThat(config.trustPolicy().isUnsignedAllowed(LIB_COORDS)).isTrue();
         }
     }
 

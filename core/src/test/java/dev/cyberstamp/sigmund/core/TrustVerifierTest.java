@@ -2,320 +2,191 @@ package dev.cyberstamp.sigmund.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class TrustVerifierTest {
 
+    private static final String FP = "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12";
     private static final SignerIdentity ALICE = new SignerIdentity("alice", "Alice",
-            List.of(new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23")));
+            List.of(new FingerprintCredential(Credential.TYPE_OPENPGP_V4, FP)));
+    private static final ArtifactCoords COORDS = new ArtifactCoords("org.example", "lib", "", "jar", "1.0");
 
-    @Nested
-    class VerdictAssignment {
+    @TempDir
+    static Path fixtures;
 
-        @Test
-        void trustedWhenEvidenceMatchesExpectedSigner() {
-            var policy = policyFor(ALICE, ListedEvidencePolicy.ANY);
-            var provider = passingProvider("openpgp",
-                    new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23"));
-            var verifier = new TrustVerifier(policy, List.of(provider));
+    /** Real files: the verifier digests the artifact and reads the evidence it verifies. */
+    static Path artifact;
+    static Path evidenceFile;
 
-            var result = verifier.assess(
-                    artifact("org.example", "lib", "1.0"),
-                    Path.of("lib.jar"),
-                    List.of(Path.of("lib.jar.asc")));
-
-            assertThat(result.verdict()).isEqualTo(TrustVerdict.TRUSTED);
-            assertThat(result.matchedEvidence().size()).isEqualTo(1);
-        }
-
-        @Test
-        void untrustedWhenEvidenceDoesNotMatch() {
-            var policy = policyFor(ALICE, ListedEvidencePolicy.ANY);
-            var provider = passingProvider("openpgp",
-                    new FingerprintCredential("openpgp4", "DIFFERENT18F83AFD"));
-            var verifier = new TrustVerifier(policy, List.of(provider));
-
-            var result = verifier.assess(
-                    artifact("org.example", "lib", "1.0"),
-                    Path.of("lib.jar"),
-                    List.of(Path.of("lib.jar.asc")));
-
-            assertThat(result.verdict()).isEqualTo(TrustVerdict.UNTRUSTED);
-        }
-
-        @Test
-        void unsignedWhenNoEvidence() {
-            var policy = policyFor(ALICE, ListedEvidencePolicy.ANY);
-            var verifier = new TrustVerifier(policy, List.of());
-
-            var result = verifier.assess(
-                    artifact("org.example", "lib", "1.0"),
-                    Path.of("lib.jar"),
-                    List.of());
-
-            assertThat(result.verdict()).isEqualTo(TrustVerdict.UNSIGNED);
-        }
-
-        @Test
-        void notConfiguredWhenArtifactNotInPolicy() {
-            var policy = emptyPolicy();
-            var verifier = new TrustVerifier(policy, List.of());
-
-            var result = verifier.assess(
-                    artifact("com.unknown", "lib", "1.0"),
-                    Path.of("lib.jar"),
-                    List.of());
-
-            assertThat(result.verdict()).isEqualTo(TrustVerdict.NOT_CONFIGURED);
-        }
-
-        @Test
-        void verificationFailedWhenEvidenceFails() {
-            var policy = policyFor(ALICE, ListedEvidencePolicy.ANY);
-            var provider = failingProvider();
-            var verifier = new TrustVerifier(policy, List.of(provider));
-
-            var result = verifier.assess(
-                    artifact("org.example", "lib", "1.0"),
-                    Path.of("lib.jar"),
-                    List.of(Path.of("lib.jar.asc")));
-
-            assertThat(result.verdict()).isEqualTo(TrustVerdict.VERIFICATION_FAILED);
-        }
+    @BeforeAll
+    static void createFixtures() throws IOException {
+        artifact = Files.writeString(fixtures.resolve("lib.jar"), "artifact bytes");
+        evidenceFile = Files.writeString(fixtures.resolve("lib.jar.asc"), "evidence bytes");
     }
 
-    @Nested
-    class RequireAllEvidenceMatch {
-
-        @Test
-        void untrustedWhenUnmatchedEvidenceAndPolicyRequiresAll() {
-            var alice = ALICE;
-            var policy = policyFor(alice, ListedEvidencePolicy.ALL);
-            var provider = multiResultProvider(
-                    new EvidenceResult(PGP_PASS,
-                            List.of(new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23")),
-                            "openpgp"),
-                    new EvidenceResult(PGP_PASS,
-                            List.of(new FingerprintCredential("openpgp6", "UNKNOWNFINGERPRINT")),
-                            "openpgp"));
-            var verifier = new TrustVerifier(policy, List.of(provider));
-
-            var result = verifier.assess(
-                    artifact("org.example", "lib", "1.0"),
-                    Path.of("lib.jar"),
-                    List.of(Path.of("lib.jar.asc")));
-
-            assertThat(result.verdict()).isEqualTo(TrustVerdict.UNTRUSTED);
-        }
-
-        @Test
-        void trustedWhenUnmatchedEvidenceButPolicyDoesNotRequireAll() {
-            var policy = policyFor(ALICE, ListedEvidencePolicy.ANY);
-            var provider = multiResultProvider(
-                    new EvidenceResult(PGP_PASS,
-                            List.of(new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23")),
-                            "openpgp"),
-                    new EvidenceResult(PGP_PASS,
-                            List.of(new FingerprintCredential("openpgp6", "UNKNOWNFINGERPRINT")),
-                            "openpgp"));
-            var verifier = new TrustVerifier(policy, List.of(provider));
-
-            var result = verifier.assess(
-                    artifact("org.example", "lib", "1.0"),
-                    Path.of("lib.jar"),
-                    List.of(Path.of("lib.jar.asc")));
-
-            assertThat(result.verdict()).isEqualTo(TrustVerdict.TRUSTED);
-            assertThat(result.unmatchedEvidence().size()).isEqualTo(1);
-        }
+    private static ArtifactResult assess(TrustPolicy policy, List<Path> evidenceFiles,
+            ClaimResult... claims) {
+        EvidenceProvider provider = provider(claims);
+        return new TrustVerifier(policy, List.of(provider))
+                .assess(COORDS, artifact, evidenceFiles);
     }
 
-    @Nested
-    class EvidencePreservation {
-
-        @Test
-        void noKeyEvidenceIncludedInUnmatched() {
-            var policy = policyFor(ALICE, ListedEvidencePolicy.ANY);
-            var noKeyResult = new OpenPgpVerifyResult(Verdict.NO_KEY, null, null, 4,
-                    null, "DEADBEEFDEADBEEF");
-            var provider = multiResultProvider(
-                    new EvidenceResult(noKeyResult,
-                            List.of(new FingerprintCredential("openpgp4", "DEADBEEFDEADBEEF")),
-                            "openpgp"));
-            var verifier = new TrustVerifier(policy, List.of(provider));
-
-            var result = verifier.assess(
-                    artifact("org.example", "lib", "1.0"),
-                    Path.of("lib.jar"),
-                    List.of(Path.of("lib.jar.asc")));
-
-            assertThat(result.verdict()).isEqualTo(TrustVerdict.UNTRUSTED);
-            assertThat(result.unmatchedEvidence().size()).isEqualTo(1);
-            assertThat(result.unmatchedEvidence().get(0).verdict()).isEqualTo(Verdict.NO_KEY);
-        }
-
-        @Test
-        void notConfiguredCarriesEvidence() {
-            var provider = passingProvider("openpgp",
-                    new FingerprintCredential("openpgp4", "4AEE18F83AFDEB23"));
-            var verifier = new TrustVerifier(emptyPolicy(), List.of(provider));
-
-            var result = verifier.assess(
-                    artifact("org.example", "lib", "1.0"),
-                    Path.of("lib.jar"),
-                    List.of(Path.of("lib.jar.asc")));
-
-            assertThat(result.verdict()).isEqualTo(TrustVerdict.NOT_CONFIGURED);
-            assertThat(result.unmatchedEvidence().isEmpty()).isFalse();
-        }
-    }
-
-    @Nested
-    class BatchAssessment {
-
-        @Test
-        void assessAllReturnsOneResultPerRequest() {
-            var policy = emptyPolicy();
-            var verifier = new TrustVerifier(policy, List.of());
-
-            var results = verifier.assessAll(List.of(
-                    new AssessmentRequest(artifact("a", "b", "1"), Path.of("b.jar"), List.of()),
-                    new AssessmentRequest(artifact("c", "d", "2"), Path.of("d.jar"), List.of())));
-
-            assertThat(results.size()).isEqualTo(2);
-        }
-    }
-
-    // --- Helpers ---
-
-    private static ArtifactIdentity artifact(String ns, String name, String version) {
-        return new ArtifactIdentity() {
-            public String namespace() {
-                return ns;
-            }
-
-            public String name() {
-                return name;
-            }
-
-            public String version() {
-                return version;
-            }
-        };
-    }
-
-    private static TrustPolicy policyFor(SignerIdentity signer, ListedEvidencePolicy listedEvidence) {
-        return new TrustPolicy() {
-            public List<SignerIdentity> expectedSigners(ArtifactIdentity a) {
-                return List.of(signer);
-            }
-
-            public boolean isUnsignedAllowed(ArtifactIdentity a) {
-                return false;
-            }
-
-            public ListedEvidencePolicy listedEvidence() {
-                return listedEvidence;
-            }
-
-            public UnlistedEvidencePolicy unlistedEvidence() {
-                return UnlistedEvidencePolicy.IGNORE;
-            }
-
-            public UntrustedPolicy onUntrusted() {
-                return UntrustedPolicy.FAIL;
-            }
-        };
-    }
-
-    private static TrustPolicy emptyPolicy() {
-        return new TrustPolicy() {
-            public List<SignerIdentity> expectedSigners(ArtifactIdentity a) {
-                return List.of();
-            }
-
-            public boolean isUnsignedAllowed(ArtifactIdentity a) {
-                return false;
-            }
-
-            public ListedEvidencePolicy listedEvidence() {
-                return ListedEvidencePolicy.ANY;
-            }
-
-            public UnlistedEvidencePolicy unlistedEvidence() {
-                return UnlistedEvidencePolicy.IGNORE;
-            }
-
-            public UntrustedPolicy onUntrusted() {
-                return UntrustedPolicy.FAIL;
-            }
-        };
-    }
-
-    private static final VerifyResult PGP_PASS = new OpenPgpVerifyResult(
-            Verdict.PASS, null, null, 4, null, null);
-
-    private static EvidenceProvider passingProvider(String mechanism, Credential... proven) {
+    private static EvidenceProvider provider(ClaimResult... claims) {
         return new EvidenceProvider() {
-            public String name() {
-                return mechanism;
-            }
-
-            public boolean isAvailable() {
-                return true;
-            }
-
-            public boolean canHandle(Path f) {
-                return true;
-            }
-
-            public List<EvidenceResult> verify(Path a, Path e) {
-                return List.of(new EvidenceResult(PGP_PASS,
-                        List.of(proven), mechanism));
-            }
-        };
-    }
-
-    private static EvidenceProvider failingProvider() {
-        return new EvidenceProvider() {
+            @Override
             public String name() {
                 return "openpgp";
             }
 
+            @Override
             public boolean isAvailable() {
                 return true;
             }
 
-            public boolean canHandle(Path f) {
+            @Override
+            public boolean canHandle(Evidence evidence) {
                 return true;
             }
 
-            public List<EvidenceResult> verify(Path a, Path e) {
-                return List.of(new EvidenceResult(new UnverifiedResult(Verdict.FAIL), List.of(), "openpgp"));
+            @Override
+            public List<ClaimResult> verify(Path artifactFile, Evidence evidence) {
+                return List.of(claims);
             }
         };
     }
 
-    private static EvidenceProvider multiResultProvider(EvidenceResult... results) {
-        return new EvidenceProvider() {
-            public String name() {
-                return "openpgp";
-            }
+    private static ClaimResult claim(ClaimOutcome outcome, IndeterminateReason reason,
+            List<Credential> proven) {
+        return new ClaimResult("openpgp", outcome, reason, proven, "Alice <alice@example.com>",
+                AttesterRole.UNKNOWN, TrustRootRef.unknown(),
+                new EvidenceRef(evidenceFile, DigestSet.sha256(FP.toLowerCase()),
+                        Evidence.SOURCE_SIDECAR),
+                null, ClaimTimeSource.SIGNER, Instant.EPOCH, "RSA", "bc");
+    }
 
-            public boolean isAvailable() {
-                return true;
-            }
+    private static ClaimResult verifiedBy(SignerIdentity signer) {
+        return claim(ClaimOutcome.VERIFIED, null, signer.credentials());
+    }
 
-            public boolean canHandle(Path f) {
-                return true;
-            }
+    private static TrustPolicy expecting(SignerIdentity signer,
+            ListedEvidencePolicy listedEvidence) {
+        return new DefaultTrustPolicy(Map.of(COORDS.namespace(), List.of(signer)), List.of(),
+                listedEvidence, UnlistedEvidencePolicy.IGNORE, UntrustedPolicy.FAIL);
+    }
 
-            public List<EvidenceResult> verify(Path a, Path e) {
-                return List.of(results);
-            }
-        };
+    @Nested
+    class OutcomeAssignment {
+
+        @Test
+        void aClaimFromAnExpectedSignerSatisfiesThePolicy() {
+            ArtifactResult result = assess(expecting(ALICE, ListedEvidencePolicy.ALL),
+                    List.of(evidenceFile), verifiedBy(ALICE));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.SATISFIED);
+        }
+
+        @Test
+        void aClaimFromAnotherSignerIsUnsatisfied() {
+            SignerIdentity mallory = new SignerIdentity("mallory", "Mallory",
+                    List.of(new FingerprintCredential(Credential.TYPE_OPENPGP_V4, "DEADBEEF")));
+
+            ArtifactResult result = assess(expecting(ALICE, ListedEvidencePolicy.ALL),
+                    List.of(evidenceFile), verifiedBy(mallory));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.UNSATISFIED);
+        }
+
+        @Test
+        void aFailedSignatureIsTheAttackSignal() {
+            ArtifactResult result = assess(expecting(ALICE, ListedEvidencePolicy.ALL),
+                    List.of(evidenceFile), claim(ClaimOutcome.FAILED, null, List.of()));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.FAILED);
+        }
+
+        @Test
+        void noEvidenceAtAllIsNoClaimRatherThanAFailure() {
+            ArtifactResult result = assess(expecting(ALICE, ListedEvidencePolicy.ALL), List.of());
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.NO_CLAIM);
+        }
+
+        @Test
+        void anArtifactNoRuleCoversIsNotConfigured() {
+            ArtifactResult result = assess(DefaultTrustPolicy.EMPTY, List.of(evidenceFile),
+                    verifiedBy(ALICE));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.NOT_CONFIGURED);
+        }
+
+        @Test
+        void anUnavailableKeyLeavesTheVerdictUndecided() {
+            ArtifactResult result = assess(expecting(ALICE, ListedEvidencePolicy.ALL),
+                    List.of(evidenceFile),
+                    claim(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE,
+                            List.of()));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
+            assertThat(result.reason()).isEqualTo(IndeterminateReason.KEY_UNAVAILABLE);
+        }
+    }
+
+    @Nested
+    class ClaimSetMode {
+
+        @Test
+        void allClaimsRejectsEvidenceFromAnUnlistedSigner() {
+            SignerIdentity stranger = new SignerIdentity("stranger", "Stranger",
+                    List.of(new FingerprintCredential(Credential.TYPE_OPENPGP_V4, "BEEF")));
+
+            ArtifactResult result = assess(expecting(ALICE, ListedEvidencePolicy.ALL),
+                    List.of(evidenceFile), verifiedBy(ALICE), verifiedBy(stranger));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.UNSATISFIED);
+        }
+
+        @Test
+        void anyClaimAcceptsOnTheStrengthOfTheOneItNeeded() {
+            SignerIdentity stranger = new SignerIdentity("stranger", "Stranger",
+                    List.of(new FingerprintCredential(Credential.TYPE_OPENPGP_V4, "BEEF")));
+
+            ArtifactResult result = assess(expecting(ALICE, ListedEvidencePolicy.ANY),
+                    List.of(evidenceFile), verifiedBy(ALICE), verifiedBy(stranger));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.SATISFIED);
+        }
+    }
+
+    @Nested
+    class ResultContents {
+
+        @Test
+        void theSubjectIsIdentifiedByTheBytesThatWereVerified() throws IOException {
+            ArtifactResult result = assess(expecting(ALICE, ListedEvidencePolicy.ALL),
+                    List.of(evidenceFile), verifiedBy(ALICE));
+
+            assertThat(result.subject().coords()).isEqualTo(COORDS);
+            assertThat(result.subject().digests())
+                    .isEqualTo(DigestSet.sha256(artifact));
+        }
+
+        @Test
+        void everyClaimIsKeptIncludingOnesThatDidNotContribute() {
+            ArtifactResult result = assess(expecting(ALICE, ListedEvidencePolicy.ANY),
+                    List.of(evidenceFile), verifiedBy(ALICE),
+                    claim(ClaimOutcome.INDETERMINATE,
+                            IndeterminateReason.UNSUPPORTED_ALGORITHM, List.of()));
+
+            assertThat(result.claims()).hasSize(2);
+        }
     }
 }

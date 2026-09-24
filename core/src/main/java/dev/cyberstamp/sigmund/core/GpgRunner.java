@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  *
  * @see #isAvailable()
  */
-public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
+class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
 
     private static final Pattern GPG_KEY_PATTERN = Pattern.compile(
             "using (\\w+) key\\s+([0-9A-Fa-f]{16,40})", Pattern.MULTILINE);
@@ -110,14 +110,18 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
     /**
      * Result of a GPG signature verification.
      *
-     * @param verdict the verification outcome: {@link Verdict#PASS} if the signature is valid,
-     *        {@link Verdict#FAIL} if the signature does not match,
-     *        {@link Verdict#NO_KEY} if the signing key is not in the keyring
+     * @param outcome what verification established: {@link ClaimOutcome#VERIFIED} if the
+     *        signature is valid, {@link ClaimOutcome#FAILED} if it does not match, and
+     *        {@link ClaimOutcome#INDETERMINATE} if GPG could not decide
+     * @param reason why verification could not complete —
+     *        {@link IndeterminateReason#KEY_UNAVAILABLE} when the signing key is not in the
+     *        keyring — or {@code null} when the outcome is conclusive
      * @param keyId the signing key ID extracted from GPG output, or null if not found
      * @param algorithm the key algorithm (e.g., "RSA", "EDDSA"), or null if not found
      * @param signerUserId the signer's user ID (e.g., "Name &lt;email&gt;"), or null if the key is not in the keyring
      */
-    private record GpgVerifyResult(Verdict verdict, String keyId, String algorithm, String signerUserId) {
+    private record GpgVerifyResult(ClaimOutcome outcome, IndeterminateReason reason, String keyId,
+            String algorithm, String signerUserId) {
     }
 
     private final String gpgExecutable;
@@ -136,7 +140,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
     /**
      * Constructs a GpgRunner using the default "gpg" executable and default key.
      */
-    public GpgRunner() {
+    GpgRunner() {
         this("gpg", null, null);
     }
 
@@ -146,7 +150,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      * @param keyName the key name/ID to use with --local-user, or null to use
      *        GPG's default key
      */
-    public GpgRunner(String keyName) {
+    GpgRunner(String keyName) {
         this("gpg", keyName, null);
     }
 
@@ -158,7 +162,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      *        GPG's default key
      * @throws IllegalArgumentException if gpgExecutable is null or empty
      */
-    public GpgRunner(String gpgExecutable, String keyName) {
+    GpgRunner(String gpgExecutable, String keyName) {
         this(gpgExecutable, keyName, null);
     }
 
@@ -171,7 +175,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      * @param home the GPG home directory, or null to use the default
      * @throws IllegalArgumentException if gpgExecutable is null or empty
      */
-    public GpgRunner(String gpgExecutable, String keyName, String home) {
+    GpgRunner(String gpgExecutable, String keyName, String home) {
         this(gpgExecutable, keyName, home, null, false, false, List.of());
     }
 
@@ -188,7 +192,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      * @param keyservers keyserver URLs to fetch from
      * @throws IllegalArgumentException if gpgExecutable is null or empty
      */
-    public GpgRunner(String gpgExecutable, String keyName, String home,
+    GpgRunner(String gpgExecutable, String keyName, String home,
             String passphrase,
             boolean resolveSigners, boolean importToKeyring, List<String> keyservers) {
         this(gpgExecutable, keyName, home, passphrase, true, resolveSigners, importToKeyring, keyservers);
@@ -262,10 +266,17 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      * <p>
      * This method runs {@code gpg --verify <signatureFile> <artifactFile>}
      * and interprets the result.
+     * <p>
+     * Exit code 2 means GPG emitted warnings — a hybrid {@code .asc} carrying a v6 packet
+     * GnuPG does not understand produces one — so the signature counts as verified only when
+     * GPG also reports "Good signature". A missing public key is reported as
+     * {@link IndeterminateReason#KEY_UNAVAILABLE} rather than as a failure: nothing about the
+     * artifact has been established, and the key may be available on a later run.
      *
      * @param artifactFile the file that was signed
      * @param signatureFile the detached signature file to verify
-     * @return a {@link GpgVerifyResult} with the verification outcome and extracted key ID
+     * @return a {@link GpgVerifyResult} carrying the outcome, any indeterminate reason and
+     *         the extracted key ID
      * @throws IllegalArgumentException if artifactFile or signatureFile is null
      */
     private GpgVerifyResult verifyFile(Path artifactFile, Path signatureFile) {
@@ -288,16 +299,18 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
 
         // Exit code 2 means warnings (e.g. unknown packet versions); treat as
         // valid only if GPG still reports "Good signature"
-        Verdict verdict;
+        ClaimOutcome outcome;
+        IndeterminateReason reason = null;
         if (result.exitCode() == 0
                 || (result.exitCode() == 2 && result.stderr().contains("Good signature"))) {
-            verdict = Verdict.PASS;
+            outcome = ClaimOutcome.VERIFIED;
         } else if (result.stderr().contains("No public key")) {
-            verdict = Verdict.NO_KEY;
+            outcome = ClaimOutcome.INDETERMINATE;
+            reason = IndeterminateReason.KEY_UNAVAILABLE;
         } else {
-            verdict = Verdict.FAIL;
+            outcome = ClaimOutcome.FAILED;
         }
-        return new GpgVerifyResult(verdict, keyId, algorithm, signerUserId);
+        return new GpgVerifyResult(outcome, reason, keyId, algorithm, signerUserId);
     }
 
     /**
@@ -523,13 +536,25 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
     /**
      * {@inheritDoc}
      * <p>
-     * Accepts {@link OpenPgpVerificationUnit}s with {@code packetVersion <= 4}.
+     * Accepts {@link OpenPgpClaim}s with {@code packetVersion <= 4}.
      */
     @Override
-    public boolean canVerify(VerificationUnit unit) {
-        return unit instanceof OpenPgpVerificationUnit opgu
+    public boolean canVerify(Claim claim) {
+        return claim instanceof OpenPgpClaim opgu
                 && opgu.packetVersion() > 0
                 && opgu.packetVersion() <= 4;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * GnuPG verifies against the keyring in its home directory, which is the default home
+     * when none was configured.
+     */
+    @Override
+    public TrustRootRef trustRoot() {
+        return TrustRootRef.keyring(gpgHome);
     }
 
     /**
@@ -539,51 +564,16 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
      * the result into an {@link OpenPgpVerifyResult}.
      */
     @Override
-    public VerifyResult verify(Path artifactFile, VerificationUnit unit) {
-        if (!(unit instanceof OpenPgpVerificationUnit opgu)) {
-            return new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, -1, null, null);
+    public VerifyResult verify(Path artifactFile, Claim claim) {
+        if (!(claim instanceof OpenPgpClaim opgu)) {
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM);
         }
         return verifyArmoredBlock(artifactFile, opgu);
     }
 
     @Override
     public List<Credential> extractCredentials(VerifyResult result) {
-        if (result.verdict() != Verdict.PASS) {
-            return List.of();
-        }
-        if (result instanceof OpenPgpVerifyResult opvr && opvr.fingerprint() != null) {
-            List<Credential> creds = new ArrayList<>(2);
-            creds.add(new FingerprintCredential(Credential.TYPE_OPENPGP_V4, opvr.fingerprint()));
-            String email = extractEmail(result.signerDisplayName());
-            if (email != null) {
-                creds.add(new EmailCredential(email));
-            }
-            return List.copyOf(creds);
-        }
-        return List.of();
-    }
-
-    /**
-     * Extracts the email address from an OpenPGP user ID string
-     * in the format {@code "Name <email>"}.
-     *
-     * @param uid the user ID string, may be {@code null}
-     * @return the extracted email, or {@code null} if not found
-     */
-    public static String extractEmail(String uid) {
-        if (uid == null) {
-            return null;
-        }
-        int lt = uid.indexOf('<');
-        int gt = uid.indexOf('>', lt + 1);
-        if (lt >= 0 && gt > lt + 1) {
-            return uid.substring(lt + 1, gt).trim();
-        }
-        String trimmed = uid.trim();
-        if (trimmed.contains("@") && !trimmed.contains(" ")) {
-            return trimmed;
-        }
-        return null;
+        return OpenPgpCredentials.from(result);
     }
 
     /**
@@ -665,7 +655,7 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
         return listKeyUserId(keyId);
     }
 
-    private OpenPgpVerifyResult verifyArmoredBlock(Path artifactFile, OpenPgpVerificationUnit opgu) {
+    private OpenPgpVerifyResult verifyArmoredBlock(Path artifactFile, OpenPgpClaim opgu) {
         Path sigFile = null;
         try {
             sigFile = Files.createTempFile("gpg-verify-", ".asc");
@@ -679,14 +669,15 @@ public class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityReso
         }
     }
 
-    private OpenPgpVerifyResult toOpenPgpVerifyResult(GpgVerifyResult gpgResult, OpenPgpVerificationUnit opgu) {
+    private OpenPgpVerifyResult toOpenPgpVerifyResult(GpgVerifyResult gpgResult, OpenPgpClaim opgu) {
         // Prefer the full fingerprint from the signature packet's issuer fingerprint subpacket.
         // Fall back to GPG's short key ID when the subpacket is absent (older v4 signatures).
         // FingerprintCredential.matches() uses suffix matching, so the short key ID still
         // matches against a full fingerprint in the trust configuration.
         String fingerprint = opgu.issuerFingerprint() != null ? opgu.issuerFingerprint() : gpgResult.keyId();
         return new OpenPgpVerifyResult(
-                gpgResult.verdict(),
+                gpgResult.outcome(),
+                gpgResult.reason(),
                 gpgResult.signerUserId(),
                 gpgResult.algorithm(),
                 opgu.packetVersion(),

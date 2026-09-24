@@ -1,13 +1,15 @@
 package dev.cyberstamp.sigmund.plugin;
 
 import dev.cyberstamp.sigmund.core.Algorithms;
+import dev.cyberstamp.sigmund.core.ArtifactCoords;
+import dev.cyberstamp.sigmund.core.ClaimOutcome;
 import dev.cyberstamp.sigmund.core.DiscoveryConfig;
 import dev.cyberstamp.sigmund.core.FileSignatureReport;
+import dev.cyberstamp.sigmund.core.IndeterminateReason;
 import dev.cyberstamp.sigmund.core.KeyImporter;
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SignatureVerificationReport;
 import dev.cyberstamp.sigmund.core.UnverifiedResult;
-import dev.cyberstamp.sigmund.core.Verdict;
 import dev.cyberstamp.sigmund.core.VerifyResult;
 import java.io.File;
 import java.nio.file.Path;
@@ -109,17 +111,15 @@ class SignatureInspector implements AutoCloseable {
     }
 
     List<SignedArtifact> inspectSignatures(ArtifactCoords coords) {
-        String coordsStr = coords.toString();
-
         ArtifactFileResolver.ResolvedArtifact resolved = fileResolver.resolveArtifact(coords);
         if (resolved == null) {
-            return List.of(new SignedArtifact(coordsStr, null, Verdict.SKIPPED));
+            return List.of(SignedArtifact.noClaim(coords, null));
         }
 
         List<RemoteRepository> sigRepos = fileResolver.signatureRepos(resolved.sourceRepo());
         List<ArtifactFileResolver.ResolvedSignature> sigResults = resolveAllSignatures(coords, sigRepos);
         if (sigResults.isEmpty()) {
-            return List.of(new SignedArtifact(coordsStr, null, Verdict.SKIPPED));
+            return List.of(SignedArtifact.noClaim(coords, null));
         }
 
         List<SignedArtifact> entries = new ArrayList<>();
@@ -131,29 +131,29 @@ class SignatureInspector implements AutoCloseable {
             try {
                 report = sigmund.verify(resolved.artifactFile(), sigFile);
             } catch (Exception e) {
-                log.warn("Verification failed for " + coordsStr + ": " + e.getMessage());
-                entries.add(new SignedArtifact(coordsStr, repoId, Verdict.FAIL));
+                log.warn("Verification failed for " + coords + ": " + e.getMessage());
+                entries.add(SignedArtifact.toolUnavailable(coords, repoId));
                 continue;
             }
 
             if (report.files().isEmpty()) {
-                entries.add(new SignedArtifact(coordsStr, repoId, Verdict.SKIPPED));
+                entries.add(SignedArtifact.noClaim(coords, repoId));
                 continue;
             }
 
             for (FileSignatureReport fileReport : report.files()) {
                 if (fileReport.results().isEmpty()) {
-                    entries.add(new SignedArtifact(coordsStr, repoId, Verdict.SKIPPED));
+                    entries.add(SignedArtifact.noClaim(coords, repoId));
                     continue;
                 }
                 for (VerifyResult vr : fileReport.results()) {
-                    SignedArtifact entry = new SignedArtifact(coordsStr, repoId, vr,
+                    SignedArtifact entry = new SignedArtifact(coords, repoId, vr,
                             resolved.artifactFile(), sigFile);
                     SignedArtifact fetched;
                     try {
                         fetched = fetchSignerInfoIfMissing(entry);
                     } catch (Exception e) {
-                        log.debug("Signer info fetch failed for " + coordsStr + ": " + e.getMessage());
+                        log.debug("Signer info fetch failed for " + coords + ": " + e.getMessage());
                         fetched = entry;
                     }
                     entries.add(fetched);
@@ -204,7 +204,7 @@ class SignatureInspector implements AutoCloseable {
             for (VerifyResult vr : fileReport.results()) {
                 String id = vr.signerIdentifier();
                 if (id != null && id.equalsIgnoreCase(entryId)) {
-                    return new SignedArtifact(entry.coordinates(), entry.repoId(),
+                    return new SignedArtifact(entry.coords(), entry.repoId(),
                             vr, entry.artifactFile(), entry.signatureFile());
                 }
             }
@@ -230,15 +230,49 @@ class SignatureInspector implements AutoCloseable {
         return servers;
     }
 
-    record SignedArtifact(String coordinates, String repoId,
+    record SignedArtifact(ArtifactCoords coords, String repoId,
             VerifyResult verifyResult, Path artifactFile, Path signatureFile) {
 
-        SignedArtifact(String coordinates, String repoId, Verdict verdict) {
-            this(coordinates, repoId, new UnverifiedResult(verdict), null, null);
+        /**
+         * Records an artifact for which no claim was found at all — no signature file
+         * resolved, or one that yielded nothing to verify. This is the absence of
+         * evidence, not a failed or indeterminate claim.
+         */
+        static SignedArtifact noClaim(ArtifactCoords coords, String repoId) {
+            return new SignedArtifact(coords, repoId, null, null, null);
         }
 
-        Verdict verdict() {
-            return verifyResult.verdict();
+        /** Records an artifact whose verification tool could not be run. */
+        static SignedArtifact toolUnavailable(ArtifactCoords coords, String repoId) {
+            return new SignedArtifact(coords, repoId,
+                    new UnverifiedResult(ClaimOutcome.INDETERMINATE,
+                            IndeterminateReason.TOOL_UNAVAILABLE),
+                    null, null);
+        }
+
+        boolean hasClaim() {
+            return verifyResult != null;
+        }
+
+        boolean isVerified() {
+            return verifyResult != null && verifyResult.isVerified();
+        }
+
+        boolean isFailed() {
+            return verifyResult != null && verifyResult.isFailed();
+        }
+
+        boolean isIndeterminate(IndeterminateReason expected) {
+            return verifyResult != null && verifyResult.isIndeterminate(expected);
+        }
+
+        /**
+         * Whether this entry carries a claim the report can attribute to a signer. An
+         * artifact with no signature at all has no claim, and a claim no installed tool
+         * supports cannot name a key, so neither can be grouped under a signer.
+         */
+        boolean hasAttributableClaim() {
+            return hasClaim() && !isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM);
         }
     }
 }

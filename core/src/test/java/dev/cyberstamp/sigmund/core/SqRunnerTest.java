@@ -291,4 +291,25 @@ class SqRunnerTest {
             assertThat(sq.findCertFile("")).isNull();
         }
     }
+
+    @Nested
+    class TrustRootReporting {
+
+        @Test
+        void namesTheIsolatedStoreWhenOneIsConfigured(@TempDir Path home) {
+            TrustRootRef root = new SqRunner(home).trustRoot();
+
+            assertThat(root.kind()).isEqualTo(TrustRootRef.KIND_OPENPGP_KEYRING);
+            assertThat(root.identifier()).isEqualTo(home.toString());
+        }
+
+        /** No SEQUOIA_HOME is the ordinary case: sq reads the user's own cert store. */
+        @Test
+        void namesSqsDefaultStoreWhenNoHomeIsConfigured() {
+            TrustRootRef root = new SqRunner((Path) null).trustRoot();
+
+            assertThat(root.kind()).isEqualTo(TrustRootRef.KIND_OPENPGP_KEYRING);
+            assertThat(root.identifier()).isEqualTo("sq default store");
+        }
+    }
 }

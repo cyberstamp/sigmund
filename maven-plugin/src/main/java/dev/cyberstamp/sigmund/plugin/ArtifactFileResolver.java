@@ -1,5 +1,6 @@
 package dev.cyberstamp.sigmund.plugin;
 
+import dev.cyberstamp.sigmund.core.ArtifactCoords;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -8,6 +9,7 @@ import java.util.Set;
 import org.apache.maven.plugin.logging.Log;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
+import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.repository.ArtifactRepository;
 import org.eclipse.aether.repository.RemoteRepository;
@@ -62,9 +64,9 @@ class ArtifactFileResolver {
 
     ResolvedArtifact resolveArtifact(ArtifactCoords coords) {
         try {
-            org.eclipse.aether.artifact.Artifact aetherArtifact = new DefaultArtifact(
-                    coords.groupId(), coords.artifactId(),
-                    coords.classifier(), coords.type(), coords.version());
+            Artifact aetherArtifact = new DefaultArtifact(
+                    coords.namespace(), coords.name(),
+                    coords.classifier(), coords.extension(), coords.version());
             ArtifactRequest request = new ArtifactRequest(aetherArtifact, remoteRepos, null);
             ArtifactResult result = repoSystem.resolveArtifact(repoSession, request);
             Path file = result.getArtifact().getFile().toPath();
@@ -79,9 +81,9 @@ class ArtifactFileResolver {
     ResolvedSignature resolveSignature(ArtifactCoords coords, String extension,
             List<RemoteRepository> repos) {
         try {
-            org.eclipse.aether.artifact.Artifact aetherArtifact = new DefaultArtifact(
-                    coords.groupId(), coords.artifactId(),
-                    coords.classifier(), coords.type() + extension,
+            Artifact aetherArtifact = new DefaultArtifact(
+                    coords.namespace(), coords.name(),
+                    coords.classifier(), coords.extension() + extension,
                     coords.version());
             ArtifactRequest request = new ArtifactRequest(aetherArtifact, repos, null);
             ArtifactResult result = repoSystem.resolveArtifact(repoSession, request);

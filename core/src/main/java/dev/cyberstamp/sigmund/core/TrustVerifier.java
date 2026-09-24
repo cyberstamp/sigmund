@@ -1,6 +1,7 @@
 package dev.cyberstamp.sigmund.core;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,8 +28,8 @@ import java.util.List;
  * if (result.verdict() == TrustVerdict.TRUSTED) { ... }
  * }</pre>
  *
- * @see TrustResult
- * @see TrustVerdict
+ * @see ArtifactResult
+ * @see ArtifactOutcome
  */
 public class TrustVerifier {
 
@@ -47,129 +48,57 @@ public class TrustVerifier {
     }
 
     /**
-     * Assesses the trust status of a single artifact.
+     * Assesses one artifact against the policy.
      *
-     * @param artifact the artifact identity
-     * @param artifactFile the artifact file on disk
-     * @param evidenceFiles the evidence files to verify
-     * @return the trust assessment result
+     * <p>
+     * Every claim found in the evidence is verified and recorded, then the outcome is derived
+     * from them by the shared roll-up (§3.2.1) rather than here, so that a goal and a
+     * resolver-level extension cannot disagree given the same policy and the same evidence.
+     *
+     * @param coords the artifact being assessed, which selects the applicable rule
+     * @param artifactFile the resolved file, whose bytes identify the subject
+     * @param evidenceFiles the evidence resolved alongside it
+     * @return what verification established about the artifact
      */
-    public TrustResult assess(ArtifactIdentity artifact, Path artifactFile,
+    public ArtifactResult assess(ArtifactCoords coords, Path artifactFile,
             List<Path> evidenceFiles) {
-        List<SignerIdentity> expectedSigners = resolveExpectedSigners(artifact);
-        List<EvidenceResult> allEvidence = collectEvidence(artifactFile, evidenceFiles);
-
-        if (expectedSigners.isEmpty()) {
-            return checkUnsignedOrNotConfigured(artifact, evidenceFiles, allEvidence);
-        }
-
-        if (allEvidence.isEmpty()) {
-            return new TrustResult(artifact, TrustVerdict.UNSIGNED, List.of(), List.of());
-        }
-
-        if (hasVerificationFailure(allEvidence)) {
-            return new TrustResult(artifact, TrustVerdict.VERIFICATION_FAILED,
-                    List.of(), allEvidence);
-        }
-
-        return matchCredentials(artifact, expectedSigners, allEvidence);
+        Instant verifiedAt = Instant.now();
+        List<ClaimResult> claims = collectClaims(artifactFile, evidenceFiles);
+        OutcomeRollup.Result rollup = OutcomeRollup.derive(coords, claims, policy.requirements(),
+                null, policy.claimSetMode());
+        return new ArtifactResult(ArtifactSubject.of(coords, artifactFile), rollup.outcome(),
+                rollup.reason(), claims, verifiedAt);
     }
 
     /**
-     * Assesses the trust status of multiple artifacts in batch.
+     * Assesses several artifacts.
      *
-     * @param requests the assessment requests
-     * @return a list of trust results, one per request
+     * @param requests the artifacts to assess
+     * @return one result per request, in the same order
      */
-    public List<TrustResult> assessAll(List<AssessmentRequest> requests) {
-        List<TrustResult> results = new ArrayList<>(requests.size());
-        for (AssessmentRequest req : requests) {
-            results.add(assess(req.artifact(), req.artifactFile(), req.evidenceFiles()));
+    public List<ArtifactResult> assessAll(List<AssessmentRequest> requests) {
+        List<ArtifactResult> results = new ArrayList<>(requests.size());
+        for (AssessmentRequest request : requests) {
+            results.add(assess(request.artifact(), request.artifactFile(),
+                    request.evidenceFiles()));
         }
         return results;
     }
 
-    private List<SignerIdentity> resolveExpectedSigners(ArtifactIdentity artifact) {
-        return policy.expectedSigners(artifact);
-    }
-
-    private TrustResult checkUnsignedOrNotConfigured(ArtifactIdentity artifact,
-            List<Path> evidenceFiles, List<EvidenceResult> allEvidence) {
-        if (policy.isUnsignedAllowed(artifact) && (evidenceFiles == null || evidenceFiles.isEmpty())) {
-            return new TrustResult(artifact, TrustVerdict.TRUSTED, List.of(), List.of());
-        }
-        return new TrustResult(artifact, TrustVerdict.NOT_CONFIGURED, List.of(), allEvidence);
-    }
-
-    private List<EvidenceResult> collectEvidence(Path artifactFile, List<Path> evidenceFiles) {
+    private List<ClaimResult> collectClaims(Path artifactFile, List<Path> evidenceFiles) {
         if (evidenceFiles == null || evidenceFiles.isEmpty()) {
             return List.of();
         }
-        List<EvidenceResult> results = new ArrayList<>();
+        List<ClaimResult> claims = new ArrayList<>();
         for (Path evidenceFile : evidenceFiles) {
+            Evidence evidence = Evidence.read(evidenceFile, Evidence.SOURCE_SIDECAR);
             for (EvidenceProvider provider : providers) {
-                if (provider.canHandle(evidenceFile)) {
-                    results.addAll(provider.verify(artifactFile, evidenceFile));
+                if (provider.canHandle(evidence)) {
+                    claims.addAll(provider.verify(artifactFile, evidence));
                 }
             }
         }
-        return results;
+        return claims;
     }
 
-    private boolean hasVerificationFailure(List<EvidenceResult> evidence) {
-        return evidence.stream()
-                .anyMatch(e -> e.verdict() == Verdict.FAIL);
-    }
-
-    private TrustResult matchCredentials(ArtifactIdentity artifact,
-            List<SignerIdentity> expectedSigners, List<EvidenceResult> allEvidence) {
-        List<MatchedEvidence> matched = new ArrayList<>();
-        List<EvidenceResult> unmatched = new ArrayList<>();
-
-        for (EvidenceResult evidence : allEvidence) {
-            if (evidence.verdict() != Verdict.PASS) {
-                unmatched.add(evidence);
-                continue;
-            }
-            SignerIdentity matchedSigner = findMatchingSigner(expectedSigners, evidence);
-            if (matchedSigner != null) {
-                matched.add(new MatchedEvidence(matchedSigner, evidence));
-            } else {
-                unmatched.add(evidence);
-            }
-        }
-
-        TrustVerdict verdict = applyPolicy(matched, unmatched);
-        return new TrustResult(artifact, verdict, matched, unmatched);
-    }
-
-    private SignerIdentity findMatchingSigner(List<SignerIdentity> signers, EvidenceResult evidence) {
-        for (SignerIdentity signer : signers) {
-            if (credentialOverlap(signer, evidence)) {
-                return signer;
-            }
-        }
-        return null;
-    }
-
-    private boolean credentialOverlap(SignerIdentity signer, EvidenceResult evidence) {
-        for (Credential proven : evidence.provenCredentials()) {
-            for (Credential expected : signer.credentials()) {
-                if (expected.matches(proven)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private TrustVerdict applyPolicy(List<MatchedEvidence> matched, List<EvidenceResult> unmatched) {
-        if (matched.isEmpty()) {
-            return TrustVerdict.UNTRUSTED;
-        }
-        if (policy.listedEvidence() == ListedEvidencePolicy.ALL && !unmatched.isEmpty()) {
-            return TrustVerdict.UNTRUSTED;
-        }
-        return TrustVerdict.TRUSTED;
-    }
 }

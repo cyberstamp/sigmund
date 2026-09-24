@@ -8,137 +8,67 @@ import org.junit.jupiter.api.Test;
 
 class ArtifactPatternMatcherTest {
 
+    private static ArtifactCoords coords(String namespace, String name, String version) {
+        return new ArtifactCoords(namespace, name, "", "jar", version);
+    }
+
+    private static List<ArtifactPattern> patterns(String... patterns) {
+        return List.of(patterns).stream().map(ArtifactPattern::parse).toList();
+    }
+
     @Nested
     class FindBestMatch {
 
         @Test
-        void exactNamespace() {
-            String match = ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.example", "lib", "1.0"),
-                    List.of("org.example"));
-            assertThat(match).isEqualTo("org.example");
-        }
-
-        @Test
-        void wildcardName() {
-            String match = ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.example", "any-lib", "1.0"),
-                    List.of("org.example:*"));
-            assertThat(match).isEqualTo("org.example:*");
-        }
-
-        @Test
-        void exactNameAndNamespace() {
-            String match = ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.example", "lib", "1.0"),
-                    List.of("org.example:lib"));
-            assertThat(match).isEqualTo("org.example:lib");
+        void returnsNullWhenNothingMatches() {
             assertThat(ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.example", "other", "1.0"),
-                    List.of("org.example:lib"))).isNull();
+                    coords("org.example", "lib", "1.0"), patterns("com.other")))
+                    .isNull();
         }
 
         @Test
-        void threePartPattern() {
-            String match = ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.example", "lib", "2.0"),
-                    List.of("org.example:lib:2.0"));
-            assertThat(match).isEqualTo("org.example:lib:2.0");
+        void returnsTheOnlyMatch() {
             assertThat(ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.example", "lib", "1.0"),
-                    List.of("org.example:lib:2.0"))).isNull();
+                    coords("org.example", "lib", "1.0"), patterns("org.example")))
+                    .isEqualTo(ArtifactPattern.parse("org.example"));
         }
 
         @Test
-        void moreSpecificWins() {
-            String match = ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.example", "special-lib", "1.0"),
-                    List.of("org.example:*", "org.example:special-lib"));
-            assertThat(match).isEqualTo("org.example:special-lib");
-        }
-
-        @Test
-        void noMatch() {
+        void exactArtifactBeatsGroupWildcard() {
             assertThat(ArtifactPatternMatcher.findBestMatch(
-                    artifact("com.other", "lib", "1.0"),
-                    List.of("org.example:*"))).isNull();
+                    coords("org.example", "lib", "1.0"),
+                    patterns("org.example.*", "org.example:lib")))
+                    .isEqualTo(ArtifactPattern.parse("org.example:lib"));
         }
 
         @Test
-        void namespaceWildcard() {
-            String match = ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.example.sub", "lib", "1.0"),
-                    List.of("org.example.*"));
-            assertThat(match).isEqualTo("org.example.*");
+        void versionedPatternBeatsUnversioned() {
             assertThat(ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.other", "lib", "1.0"),
-                    List.of("org.example.*"))).isNull();
+                    coords("org.example", "lib", "1.0"),
+                    patterns("org.example:lib", "org.example:lib:1.0")))
+                    .isEqualTo(ArtifactPattern.parse("org.example:lib:1.0"));
         }
 
         @Test
-        void unsignedExactMatch() {
+        void deeperNamespaceBeatsShallower() {
             assertThat(ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.example", "unsigned-lib", "1.0"),
-                    List.of("org.example:unsigned-lib"))).isEqualTo("org.example:unsigned-lib");
+                    coords("org.example.sub", "lib", "1.0"),
+                    patterns("org.example.*", "org.example.sub")))
+                    .isEqualTo(ArtifactPattern.parse("org.example.sub"));
+        }
+
+        @Test
+        void catchAllAppliesWhenNothingElseMatches() {
             assertThat(ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.example", "other", "1.0"),
-                    List.of("org.example:unsigned-lib"))).isNull();
+                    coords("com.other", "lib", "1.0"), patterns("*", "org.example")))
+                    .isEqualTo(ArtifactPattern.parse("*"));
         }
 
         @Test
-        void unsignedWildcardMatch() {
-            assertThat(ArtifactPatternMatcher.findBestMatch(
-                    artifact("org.test", "anything", "1.0"),
-                    List.of("org.test:*"))).isEqualTo("org.test:*");
+        void classifiedArtifactsMatchTheirModulePattern() {
+            ArtifactCoords sources = new ArtifactCoords("org.example", "lib", "sources", "jar", "1.0");
+            assertThat(ArtifactPatternMatcher.findBestMatch(sources, patterns("org.example:lib")))
+                    .isEqualTo(ArtifactPattern.parse("org.example:lib"));
         }
-    }
-
-    @Nested
-    class MatchScore {
-
-        @Test
-        void exactNamespaceScoresHigherThanWildcard() {
-            var a = artifact("org.example", "lib", "1.0");
-            assertThat(ArtifactPatternMatcher.matchScore(a, "org.example") > ArtifactPatternMatcher.matchScore(a, "org.*"))
-                    .isTrue();
-        }
-
-        @Test
-        void deeperNamespaceScoresHigher() {
-            var a = artifact("org.example.sub", "lib", "1.0");
-            assertThat(ArtifactPatternMatcher.matchScore(a, "org.example.sub") > ArtifactPatternMatcher.matchScore(a,
-                    "org.example.*")).isTrue();
-        }
-
-        @Test
-        void noMatchReturnsNegative() {
-            assertThat(ArtifactPatternMatcher.matchScore(
-                    artifact("com.other", "lib", "1.0"), "org.example")).isEqualTo(-1);
-        }
-
-        @Test
-        void fourPartsInvalid() {
-            assertThat(ArtifactPatternMatcher.matchScore(
-                    artifact("org", "lib", "1.0"), "a:b:c:d")).isEqualTo(-1);
-        }
-    }
-
-    private static ArtifactIdentity artifact(String ns, String name, String version) {
-        return new ArtifactIdentity() {
-            @Override
-            public String namespace() {
-                return ns;
-            }
-
-            @Override
-            public String name() {
-                return name;
-            }
-
-            @Override
-            public String version() {
-                return version;
-            }
-        };
     }
 }

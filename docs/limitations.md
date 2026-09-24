@@ -32,7 +32,7 @@ This is a Bouncy Castle 1.85 limitation — its high-level API does not support 
 
 ## PQC signature verification requires Sequoia
 
-Bouncy Castle 1.85 does not recognize post-quantum composite signature algorithm IDs (30-36, defined in RFC 9980). Attempting to verify a PQC signature with BC produces a `SKIPPED` verdict.
+Bouncy Castle 1.85 does not recognize post-quantum composite signature algorithm IDs (30-36, defined in RFC 9980). Attempting to verify a PQC signature with BC produces `INDETERMINATE [UNSUPPORTED_ALGORITHM]`, which sets that claim aside rather than failing the artifact.
 
 **What this means:** PQC signature verification currently requires Sequoia `sq` 1.4.0+. If Sequoia is not installed, PQC signature blocks in hybrid `.asc` files will be skipped — the classical signature block is still verified normally.
 
@@ -42,7 +42,7 @@ BC support for PQC verification (ML-DSA-87+Ed448 and ML-DSA-65+Ed25519) is plann
 
 When `import-to-keyring` is `false` (the default), GnuPG cannot fetch public keys for verification. GnuPG requires keys to be permanently imported into the keyring before they can be used — it has no concept of ephemeral (in-memory) key storage.
 
-When a signing key is not in the GPG keyring, verification returns `NO_KEY` and automatic key fetching is skipped.
+When a signing key is not in the GPG keyring, verification returns `INDETERMINATE [KEY_UNAVAILABLE]` and automatic key fetching is skipped.
 
 **Workaround:** Either set `import-to-keyring: true` in `sigmund.yaml` to permanently import fetched keys, or use Bouncy Castle as your primary verification tool (the default). BC supports ephemeral key caching — fetched keys are held in memory for the duration of the build and discarded afterward.
 

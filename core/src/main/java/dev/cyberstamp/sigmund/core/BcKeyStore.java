@@ -62,6 +62,15 @@ class BcKeyStore {
     }
 
     /**
+     * Returns the cert-d store this key store reads and writes.
+     *
+     * @return the cert-d directory
+     */
+    Path certDHome() {
+        return certDHome;
+    }
+
+    /**
      * Searches all key sources for a public key matching the given fingerprint.
      *
      * @param fingerprint the uppercase hex fingerprint to search for
@@ -85,10 +94,12 @@ class BcKeyStore {
 
     /**
      * Caches a public key ring in memory without writing to disk.
+     *
      * <p>
-     * Used when {@link ToolsConfig#importToKeyring()} is {@code false} — the key
-     * is available for verification during this session but is not persisted to the
-     * cert-d directory.
+     * Used when key import is disabled — {@link DiscoveryConfig#importToKeyring()}, or the
+     * per-tool {@code import-to-keyring} setting the factories read. The key is available for
+     * verification for the rest of this session but never reaches the cert-d directory, so
+     * fetching a key to check one build does not silently grow the machine's trust surface.
      *
      * @param keyRing the public key ring to cache
      */

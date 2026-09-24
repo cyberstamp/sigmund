@@ -1,14 +1,15 @@
 package dev.cyberstamp.sigmund.plugin;
 
 import dev.cyberstamp.sigmund.core.Algorithms;
-import dev.cyberstamp.sigmund.core.ArtifactIdentity;
+import dev.cyberstamp.sigmund.core.ArtifactCoords;
+import dev.cyberstamp.sigmund.core.ArtifactPattern;
 import dev.cyberstamp.sigmund.core.DiscoveryConfig;
-import dev.cyberstamp.sigmund.core.GpgRunner;
+import dev.cyberstamp.sigmund.core.IndeterminateReason;
+import dev.cyberstamp.sigmund.core.OpenPgpCredentials;
 import dev.cyberstamp.sigmund.core.OpenPgpVerifyResult;
 import dev.cyberstamp.sigmund.core.PolicyConfigException;
 import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.TrustPolicy;
-import dev.cyberstamp.sigmund.core.Verdict;
 import dev.cyberstamp.sigmund.core.VerifyResult;
 import dev.cyberstamp.sigmund.plugin.SignatureInspector.SignedArtifact;
 import java.io.File;
@@ -111,31 +112,29 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         return pgpVersion + ":" + (id != null ? id : "?");
     }
 
-    private void logReport(List<SignedArtifact> results) {
+    void logReport(List<SignedArtifact> results) {
 
         // Group entries by artifact coordinate
-        Map<String, List<SignedArtifact>> byArtifact = new HashMap<>();
+        Map<ArtifactCoords, List<SignedArtifact>> byArtifact = new HashMap<>();
         for (SignedArtifact r : results) {
-            byArtifact.computeIfAbsent(r.coordinates(), k -> new ArrayList<>(2)).add(r);
+            byArtifact.computeIfAbsent(r.coords(), k -> new ArrayList<>(2)).add(r);
         }
 
         // Build signature profile for each artifact and group by shared key sets
-        Map<String, List<String>> profileToCoords = new HashMap<>();
-        List<String> unsignedCoords = new ArrayList<>();
+        Map<String, List<ArtifactCoords>> profileToCoords = new HashMap<>();
+        List<ArtifactCoords> unsignedCoords = new ArrayList<>();
 
         for (var entry : byArtifact.entrySet()) {
-            String coords = entry.getKey();
+            ArtifactCoords coords = entry.getKey();
             List<SignedArtifact> signers = entry.getValue();
 
-            boolean allUnsigned = signers.stream()
-                    .allMatch(s -> s.verdict() == Verdict.SKIPPED);
-            if (allUnsigned) {
+            if (signers.stream().noneMatch(SignedArtifact::hasAttributableClaim)) {
                 unsignedCoords.add(coords);
                 continue;
             }
 
             String profile = signers.stream()
-                    .filter(s -> s.verdict() != Verdict.SKIPPED)
+                    .filter(SignedArtifact::hasAttributableClaim)
                     .map(s -> profileKey(s.verifyResult()))
                     .sorted()
                     .distinct()
@@ -149,7 +148,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         unsignedCoords.sort(Comparator.naturalOrder());
 
         // Sort groups alphabetically by signer name; unverified groups go last
-        List<Map.Entry<String, List<String>>> sortedGroups = profileToCoords.entrySet().stream()
+        List<Map.Entry<String, List<ArtifactCoords>>> sortedGroups = profileToCoords.entrySet().stream()
                 .sorted((a, b) -> {
                     String signerA = firstSigner(a.getValue(), byArtifact);
                     String signerB = firstSigner(b.getValue(), byArtifact);
@@ -174,13 +173,13 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             }
             firstGroup = false;
 
-            List<String> coordsList = groupEntry.getValue();
+            List<ArtifactCoords> coordsList = groupEntry.getValue();
 
             // Pick the richest VerifyResult per key (prefer one with a known signer)
             Map<String, VerifyResult> bestPerKey = new HashMap<>();
-            for (String coords : coordsList) {
+            for (ArtifactCoords coords : coordsList) {
                 for (SignedArtifact as : byArtifact.get(coords)) {
-                    if (as.verdict() == Verdict.SKIPPED) {
+                    if (!as.hasAttributableClaim()) {
                         continue;
                     }
                     bestPerKey.merge(profileKey(as.verifyResult()), as.verifyResult(),
@@ -211,10 +210,10 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                 if (first.signerDisplayName() != null) {
                     getLog().info("Signer: " + first.signerDisplayName());
                     identified = true;
-                } else if (signerSub.stream().allMatch(vr -> vr.verdict() == Verdict.NO_KEY)) {
+                } else if (signerSub.stream().allMatch(vr -> vr.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE))) {
                     getLog().warn("Signer: UNKNOWN (key not in keyring)");
                     identified = false;
-                } else if (signerSub.stream().anyMatch(vr -> vr.verdict() == Verdict.FAIL)) {
+                } else if (signerSub.stream().anyMatch(VerifyResult::isFailed)) {
                     getLog().warn("Signer: VERIFICATION FAILED");
                     identified = false;
                 } else {
@@ -230,16 +229,16 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                     if (identified) {
                         getLog().info(keyLine);
                     } else {
-                        keyLine += formatVerdict(vr.verdict());
+                        keyLine += formatOutcome(vr);
                         getLog().warn(keyLine);
                     }
                 }
             }
 
             // Print artifacts
-            for (String coords : coordsList) {
+            for (ArtifactCoords coords : coordsList) {
                 boolean hasFail = byArtifact.get(coords).stream()
-                        .anyMatch(as -> as.verdict() == Verdict.FAIL);
+                        .anyMatch(SignedArtifact::isFailed);
                 String line = "     " + coords;
                 if (hasFail) {
                     getLog().error(line + "   (BAD SIGNATURE)");
@@ -257,37 +256,37 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                 getLog().info("");
             }
             getLog().warn("UNSIGNED");
-            for (String coords : unsignedCoords) {
+            for (ArtifactCoords coords : unsignedCoords) {
                 getLog().warn("  " + coords);
             }
         }
 
         // Summary statistics
-        long totalArtifacts = results.stream().map(SignedArtifact::coordinates).distinct().count();
+        long totalArtifacts = results.stream().map(SignedArtifact::coords).distinct().count();
         Map<Integer, Long> versionCounts = results.stream()
                 .filter(r -> r.verifyResult() instanceof OpenPgpVerifyResult)
                 .collect(Collectors.groupingBy(
                         r -> ((OpenPgpVerifyResult) r.verifyResult()).version(),
                         Collectors.counting()));
         long uniqueKeys = results.stream()
+                .filter(SignedArtifact::hasClaim)
                 .map(r -> r.verifyResult().signerIdentifier())
                 .filter(Objects::nonNull)
                 .distinct()
                 .count();
         long untrusted = results.stream()
-                .filter(r -> r.verdict() == Verdict.SKIPPED
-                        || r.verdict() == Verdict.FAIL)
-                .map(SignedArtifact::coordinates)
+                .filter(r -> r.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)
+                        || r.isFailed())
+                .map(SignedArtifact::coords)
                 .distinct()
                 .count();
-        Set<String> identifiedCoords = results.stream()
-                .filter(r -> r.verifyResult().signerDisplayName() != null)
-                .map(SignedArtifact::coordinates)
+        Set<ArtifactCoords> identifiedCoords = results.stream()
+                .filter(r -> r.hasClaim() && r.verifyResult().signerDisplayName() != null)
+                .map(SignedArtifact::coords)
                 .collect(Collectors.toSet());
         long unidentified = results.stream()
-                .filter(r -> r.verdict() != Verdict.SKIPPED
-                        && r.verdict() != Verdict.FAIL)
-                .map(SignedArtifact::coordinates)
+                .filter(r -> r.hasAttributableClaim() && !r.isFailed())
+                .map(SignedArtifact::coords)
                 .distinct()
                 .filter(c -> !identifiedCoords.contains(c))
                 .count();
@@ -316,9 +315,9 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         summary.append(", ").append(uniqueKeys).append(" unique key(s)");
         getLog().info("Summary: " + summary);
 
-        Set<String> pqCoords = results.stream()
-                .filter(r -> Algorithms.isPqcAlgorithmName(r.verifyResult().algorithm()))
-                .map(SignedArtifact::coordinates)
+        Set<ArtifactCoords> pqCoords = results.stream()
+                .filter(r -> r.hasClaim() && Algorithms.isPqcAlgorithmName(r.verifyResult().algorithm()))
+                .map(SignedArtifact::coords)
                 .collect(Collectors.toSet());
         getLog().info("PQ coverage: " + pqCoords.size() + "/" + totalArtifacts
                 + " dependencies have a post-quantum signature");
@@ -332,19 +331,28 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         return " (" + algo + ")";
     }
 
-    private static String formatVerdict(Verdict verdict) {
-        return switch (verdict) {
-            case NO_KEY -> " (no key)";
-            case FAIL -> " (bad signature)";
-            default -> "";
+    private static String formatOutcome(VerifyResult result) {
+        if (result.isFailed()) {
+            return " (bad signature)";
+        }
+        if (!result.isIndeterminate()) {
+            return "";
+        }
+        return switch (result.reason()) {
+            case KEY_UNAVAILABLE -> " (no key)";
+            case TRUST_ROOT_UNAVAILABLE -> " (trust root unavailable)";
+            case DISCOVERY_UNAVAILABLE -> " (evidence source unreachable)";
+            case TOOL_UNAVAILABLE -> " (verification tool unavailable)";
+            case UNSUPPORTED_ALGORITHM -> " (unsupported algorithm)";
+            case EVIDENCE_MALFORMED -> " (malformed evidence)";
         };
     }
 
-    private static String firstSigner(List<String> coordsList,
-            Map<String, List<SignedArtifact>> byArtifact) {
-        for (String coords : coordsList) {
+    private static String firstSigner(List<ArtifactCoords> coordsList,
+            Map<ArtifactCoords, List<SignedArtifact>> byArtifact) {
+        for (ArtifactCoords coords : coordsList) {
             for (SignedArtifact as : byArtifact.get(coords)) {
-                if (as.verifyResult().signerDisplayName() != null) {
+                if (as.hasClaim() && as.verifyResult().signerDisplayName() != null) {
                     return as.verifyResult().signerDisplayName();
                 }
             }
@@ -369,7 +377,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
      * Artifacts are grouped by signer, with common groupId prefixes collapsed
      * into wildcard patterns. Versions are stripped from trust patterns.
      */
-    private void writeTrustConfigYaml(List<SignedArtifact> results, File configFile)
+    void writeTrustConfigYaml(List<SignedArtifact> results, File configFile)
             throws MojoExecutionException {
         if (configFile.exists() && !overwrite) {
             throw new MojoExecutionException(
@@ -377,32 +385,34 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                             + ". Use -Dsigmund.overwrite=true to overwrite.");
         }
 
-        Map<String, List<SignedArtifact>> byArtifact = new HashMap<>();
+        Map<ArtifactCoords, List<SignedArtifact>> byArtifact = new HashMap<>();
         for (SignedArtifact r : results) {
-            byArtifact.computeIfAbsent(r.coordinates(), k -> new ArrayList<>(2)).add(r);
+            byArtifact.computeIfAbsent(r.coords(), k -> new ArrayList<>(2)).add(r);
         }
 
         Map<String, SignerInfo> signersByKey = new LinkedHashMap<>();
         Map<String, Set<String>> artifactSigners = new LinkedHashMap<>();
-        List<String> unsignedCoords = new ArrayList<>();
+        List<String> unsignedModulePatterns = new ArrayList<>();
         int signerCounter = 0;
 
         for (var entry : byArtifact.entrySet()) {
-            String coords = entry.getKey();
+            ArtifactCoords coords = entry.getKey();
             List<SignedArtifact> sigEntries = entry.getValue();
 
             boolean allUnsigned = sigEntries.stream()
-                    .allMatch(s -> s.verdict() == Verdict.SKIPPED);
+                    .noneMatch(SignedArtifact::hasAttributableClaim);
             if (allUnsigned) {
-                unsignedCoords.add(stripVersion(coords));
+                unsignedModulePatterns.add(ArtifactPattern.forModule(coords).toString());
                 continue;
             }
 
-            String strippedCoords = stripVersion(coords);
+            String strippedCoords = ArtifactPattern.forModule(coords).toString();
             for (SignedArtifact sa : sigEntries) {
+                if (!sa.hasAttributableClaim()) {
+                    continue;
+                }
                 VerifyResult vr = sa.verifyResult();
-                if (sa.verdict() == Verdict.SKIPPED
-                        || vr.signerIdentifier() == null) {
+                if (vr.signerIdentifier() == null) {
                     continue;
                 }
                 String id = vr.signerIdentifier();
@@ -425,7 +435,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(configFile.toPath()))) {
             writeSignersSection(w, signersByKey);
             writeTrustSection(w, trustPatterns);
-            writeUnsignedSection(w, unsignedCoords);
+            writeUnsignedSection(w, unsignedModulePatterns);
             if (w.checkError()) {
                 throw new IOException("Error writing trust config");
             }
@@ -435,18 +445,6 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
 
         getLog().info("");
         getLog().info("Trust configuration written to " + configFile.getPath());
-    }
-
-    /**
-     * Strips the version (and type/classifier if default) from a coordinate string,
-     * leaving just {@code groupId:artifactId}.
-     */
-    private static String stripVersion(String coords) {
-        String[] parts = coords.split(":");
-        if (parts.length >= 2) {
-            return parts[0] + ":" + parts[1];
-        }
-        return coords;
     }
 
     /**
@@ -470,9 +468,9 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
 
         TrustPolicy trustPolicy = existing.trustPolicy();
 
-        Map<String, List<SignedArtifact>> byArtifact = new HashMap<>();
+        Map<ArtifactCoords, List<SignedArtifact>> byArtifact = new HashMap<>();
         for (SignedArtifact r : results) {
-            byArtifact.computeIfAbsent(r.coordinates(), k -> new ArrayList<>(2)).add(r);
+            byArtifact.computeIfAbsent(r.coords(), k -> new ArrayList<>(2)).add(r);
         }
 
         Map<String, SignerInfo> newSigners = new LinkedHashMap<>();
@@ -481,27 +479,29 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         int signerCounter = existing.signers().names().size();
 
         for (var entry : byArtifact.entrySet()) {
-            String coords = entry.getKey();
+            ArtifactCoords coords = entry.getKey();
             List<SignedArtifact> sigEntries = entry.getValue();
 
-            ArtifactIdentity identity = MavenArtifactIdentity.fromCoords(coords);
+            ArtifactCoords identity = coords;
             if (trustPolicy.isUnsignedAllowed(identity)
                     || !trustPolicy.expectedSigners(identity).isEmpty()) {
                 continue;
             }
 
             boolean allUnsigned = sigEntries.stream()
-                    .allMatch(s -> s.verdict() == Verdict.SKIPPED);
+                    .noneMatch(SignedArtifact::hasAttributableClaim);
             if (allUnsigned) {
-                newUnsigned.add(stripVersion(coords));
+                newUnsigned.add(ArtifactPattern.forModule(coords).toString());
                 continue;
             }
 
-            String strippedCoords = stripVersion(coords);
+            String strippedCoords = ArtifactPattern.forModule(coords).toString();
             for (SignedArtifact sa : sigEntries) {
+                if (!sa.hasAttributableClaim()) {
+                    continue;
+                }
                 VerifyResult vr = sa.verifyResult();
-                if (sa.verdict() == Verdict.SKIPPED
-                        || vr.signerIdentifier() == null) {
+                if (vr.signerIdentifier() == null) {
                     continue;
                 }
                 String id = vr.signerIdentifier();
@@ -631,7 +631,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                 .distinct().sorted()
                 .map(c -> "  - " + c)
                 .toList();
-        insertAtSectionEnd(lines, "unsigned", newLines);
+        insertAtSectionEnd(lines, "signature-optional", newLines);
     }
 
     /**
@@ -712,7 +712,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         if (unsignedCoords.isEmpty()) {
             return;
         }
-        w.println("unsigned:");
+        w.println("signature-optional:");
         unsignedCoords.stream().distinct().sorted().forEach(c -> w.println("  - " + c));
     }
 
@@ -754,12 +754,12 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             if (vr instanceof OpenPgpVerifyResult opvr) {
                 classifyKey(opvr);
             }
-            this.email = GpgRunner.extractEmail(vr.signerDisplayName());
+            this.email = OpenPgpCredentials.email(vr.signerDisplayName());
         }
 
         void merge(VerifyResult vr) {
             if (email == null && vr.signerDisplayName() != null) {
-                email = GpgRunner.extractEmail(vr.signerDisplayName());
+                email = OpenPgpCredentials.email(vr.signerDisplayName());
             }
             if (vr instanceof OpenPgpVerifyResult opvr) {
                 classifyKey(opvr);

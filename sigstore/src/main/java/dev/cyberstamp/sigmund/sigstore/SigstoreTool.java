@@ -1,17 +1,19 @@
 package dev.cyberstamp.sigmund.sigstore;
 
+import dev.cyberstamp.sigmund.core.Claim;
+import dev.cyberstamp.sigmund.core.ClaimOutcome;
 import dev.cyberstamp.sigmund.core.Credential;
 import dev.cyberstamp.sigmund.core.EmailCredential;
+import dev.cyberstamp.sigmund.core.IndeterminateReason;
 import dev.cyberstamp.sigmund.core.SignResult;
 import dev.cyberstamp.sigmund.core.SignatureFormat;
 import dev.cyberstamp.sigmund.core.SignatureTool;
 import dev.cyberstamp.sigmund.core.SigningInfo;
+import dev.cyberstamp.sigmund.core.SigstoreClaim;
 import dev.cyberstamp.sigmund.core.SigstoreCredential;
-import dev.cyberstamp.sigmund.core.SigstoreVerificationUnit;
 import dev.cyberstamp.sigmund.core.SigstoreVerifyResult;
 import dev.cyberstamp.sigmund.core.ToolExecutionException;
-import dev.cyberstamp.sigmund.core.Verdict;
-import dev.cyberstamp.sigmund.core.VerificationUnit;
+import dev.cyberstamp.sigmund.core.TrustRootRef;
 import dev.cyberstamp.sigmund.core.VerifyResult;
 import dev.sigstore.KeylessSigner;
 import dev.sigstore.KeylessSignerException;
@@ -69,6 +71,7 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
     private final KeylessSigner signer;
     private final KeylessVerifier verifier;
     private final String sigstoreSubject;
+    private final TrustRootRef trustRoot;
 
     /**
      * Creates a new Sigstore tool.
@@ -78,11 +81,40 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
      * @param verifier the keyless verifier
      * @param sigstoreSubject the expected OIDC subject for signing info display, or {@code null}
      */
-    SigstoreTool(SigstoreSignatureFormat format, KeylessSigner signer, KeylessVerifier verifier, String sigstoreSubject) {
+    SigstoreTool(SigstoreSignatureFormat format, KeylessSigner signer, KeylessVerifier verifier,
+            String sigstoreSubject) {
+        this(format, signer, verifier, sigstoreSubject, TrustRootRef.unknown());
+    }
+
+    /**
+     * Creates a tool that records which Sigstore trust root it verifies against.
+     *
+     * @param format the bundle format
+     * @param signer the keyless signer, or {@code null} when verify-only
+     * @param verifier the keyless verifier, or {@code null} when sign-only
+     * @param sigstoreSubject the expected OIDC subject for signing info display, or {@code null}
+     * @param trustRoot the trust root the verifier was built with
+     */
+    SigstoreTool(SigstoreSignatureFormat format, KeylessSigner signer, KeylessVerifier verifier,
+            String sigstoreSubject, TrustRootRef trustRoot) {
+        this.trustRoot = trustRoot;
         this.format = format;
         this.signer = signer;
         this.verifier = verifier;
         this.sigstoreSubject = sigstoreSubject;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Sigstore verification is local, but which certificates it accepts depends entirely on
+     * the TUF-distributed trust root the verifier was built with — the public-good instance,
+     * staging, or a private deployment.
+     */
+    @Override
+    public TrustRootRef trustRoot() {
+        return trustRoot;
     }
 
     @Override
@@ -123,8 +155,8 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
     }
 
     @Override
-    public boolean canVerify(VerificationUnit unit) {
-        return unit instanceof SigstoreVerificationUnit;
+    public boolean canVerify(Claim claim) {
+        return claim instanceof SigstoreClaim;
     }
 
     /**
@@ -162,7 +194,7 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
     /**
      * Verifies a Sigstore bundle against an artifact.
      * <p>
-     * Parses the bundle JSON from the {@link SigstoreVerificationUnit}, delegates
+     * Parses the bundle JSON from the {@link SigstoreClaim}, delegates
      * cryptographic verification to {@link KeylessVerifier#verify(Path, Bundle,
      * dev.sigstore.VerificationOptions)}, and on success populates the result with
      * identity metadata (OIDC issuer, subject, algorithm, Rekor log index) extracted
@@ -172,22 +204,22 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
      * the trusted root fetched at {@link KeylessVerifier} construction time.
      *
      * @param artifactFile the artifact that was signed
-     * @param unit the Sigstore verification unit
+     * @param claim the Sigstore claim
      * @return the verification result with OIDC identity and Rekor log index
      * @throws ToolExecutionException for infrastructure failures (network, configuration)
      */
     @Override
-    public VerifyResult verify(Path artifactFile, VerificationUnit unit) {
+    public VerifyResult verify(Path artifactFile, Claim claim) {
         if (verifier == null) {
             throw new IllegalStateException("Verification not configured");
         }
-        SigstoreVerificationUnit su = (SigstoreVerificationUnit) unit;
+        SigstoreClaim su = (SigstoreClaim) claim;
 
         Bundle bundle;
         try {
             bundle = Bundle.from(new StringReader(su.jsonBundle()));
         } catch (BundleParseException e) {
-            return new SigstoreVerifyResult(Verdict.FAIL, null, null, null, null, -1);
+            return evidenceMalformed();
         }
 
         try {
@@ -213,7 +245,7 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
      */
     @Override
     public List<Credential> extractCredentials(VerifyResult result) {
-        if (result.verdict() != Verdict.PASS) {
+        if (!result.isVerified()) {
             return List.of();
         }
         SigstoreVerifyResult sr = (SigstoreVerifyResult) result;
@@ -241,13 +273,37 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
         }
     }
 
-    private VerifyResult handleVerificationException(KeylessVerificationException e) {
-        Throwable cause = e.getCause();
-        if (isInfrastructureFailure(cause)) {
-            throw new ToolExecutionException(
-                    "Sigstore verification infrastructure failure: " + e.getMessage(), e);
+    /**
+     * Maps a verification exception to an outcome, keeping an attack signal distinct from
+     * an infrastructure problem.
+     *
+     * <p>
+     * A failure caused by I/O means the trust root could not be reached or read, which says
+     * nothing about the artifact: the outcome is indeterminate and transient, so a cached
+     * earlier result or a later run can settle it. Anything else means the bundle itself did
+     * not verify, which is the attack signal.
+     *
+     * @param e the exception raised by the Sigstore verifier
+     * @return the mapped result
+     */
+    VerifyResult handleVerificationException(KeylessVerificationException e) {
+        if (isInfrastructureFailure(e.getCause())) {
+            return SigstoreVerifyResult.indeterminate(IndeterminateReason.TRUST_ROOT_UNAVAILABLE);
         }
-        return new SigstoreVerifyResult(Verdict.FAIL, null, null, null, null, -1);
+        return new SigstoreVerifyResult(ClaimOutcome.FAILED, null, null, null, null, null, -1);
+    }
+
+    /**
+     * Builds the result for evidence that could not be parsed.
+     *
+     * <p>
+     * A bundle that will not parse has not failed verification — nothing was verified. The
+     * reason is permanent: the same bytes will not parse on a later run either.
+     *
+     * @return an indeterminate result citing malformed evidence
+     */
+    static VerifyResult evidenceMalformed() {
+        return SigstoreVerifyResult.indeterminate(IndeterminateReason.EVIDENCE_MALFORMED);
     }
 
     private boolean isInfrastructureFailure(Throwable cause) {
@@ -269,7 +325,7 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
         String logIndex = extractLogIndex(bundle);
         String algorithm = cert.getPublicKey().getAlgorithm();
 
-        return new SigstoreVerifyResult(Verdict.PASS, subject, algorithm,
+        return new SigstoreVerifyResult(ClaimOutcome.VERIFIED, null, subject, algorithm,
                 sigstoreCredential, logIndex, subjectType);
     }
 

@@ -12,7 +12,7 @@ import java.util.List;
  * @see TrustVerifier#assessAll(List)
  */
 public record AssessmentRequest(
-        ArtifactIdentity artifact,
+        ArtifactCoords artifact,
         Path artifactFile,
         List<Path> evidenceFiles) {
 

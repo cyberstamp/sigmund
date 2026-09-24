@@ -28,13 +28,13 @@ public interface TrustPolicy {
     /**
      * Looks up expected signers for an artifact.
      * <p>
-     * Returns an empty list if the artifact has no trust mapping ({@link TrustVerdict#NOT_CONFIGURED}).
+     * Returns an empty list if the artifact has no trust mapping ({@link ArtifactOutcome#NOT_CONFIGURED}).
      * A trust mapping with zero signers is a configuration error caught at parse time.
      *
      * @param artifact the artifact to look up
      * @return the expected signers, or an empty list if not configured
      */
-    List<SignerIdentity> expectedSigners(ArtifactIdentity artifact);
+    List<SignerIdentity> expectedSigners(ArtifactCoords artifact);
 
     /**
      * Checks whether this artifact is explicitly marked as unsigned-ok.
@@ -42,7 +42,7 @@ public interface TrustPolicy {
      * @param artifact the artifact to check
      * @return {@code true} if the artifact is allowed to be unsigned
      */
-    boolean isUnsignedAllowed(ArtifactIdentity artifact);
+    boolean isUnsignedAllowed(ArtifactCoords artifact);
 
     /**
      * Returns the policy for evaluating listed evidence.
@@ -67,4 +67,55 @@ public interface TrustPolicy {
      * @see UntrustedPolicy
      */
     UntrustedPolicy onUntrusted();
+
+    /**
+     * Returns the requirements this policy places on an artifact's verified claims.
+     *
+     * <p>
+     * A claim satisfies a signer when one of the credentials it proved matches one the signer
+     * is configured with. An artifact with no expected signers has no applicable requirement,
+     * which is {@link ArtifactOutcome#NOT_CONFIGURED} rather than a failure: policy is silent
+     * about it.
+     *
+     * @return the evaluator for this policy
+     */
+    default RequirementEvaluator requirements() {
+        return (coords, verifiedClaims) -> {
+            List<SignerIdentity> expected = expectedSigners(coords);
+            if (expected.isEmpty()) {
+                return null;
+            }
+            List<ClaimResult> accepted = verifiedClaims.stream()
+                    .filter(claim -> matchesAny(expected, claim))
+                    .toList();
+            List<ClaimResult> unaccepted = verifiedClaims.stream()
+                    .filter(claim -> !matchesAny(expected, claim))
+                    .toList();
+            return new RequirementEvaluator.Evaluation(!accepted.isEmpty(), accepted, unaccepted);
+        };
+    }
+
+    /**
+     * Returns what to do with claims beyond those that satisfied the requirements.
+     *
+     * @return the claim-set mode
+     */
+    default ClaimSetMode claimSetMode() {
+        return listedEvidence() == ListedEvidencePolicy.ANY
+                ? ClaimSetMode.ANY_CLAIM
+                : ClaimSetMode.ALL_CLAIMS;
+    }
+
+    private static boolean matchesAny(List<SignerIdentity> signers, ClaimResult claim) {
+        for (SignerIdentity signer : signers) {
+            for (Credential expected : signer.credentials()) {
+                for (Credential proven : claim.attesterCredentials()) {
+                    if (expected.matches(proven)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
 }

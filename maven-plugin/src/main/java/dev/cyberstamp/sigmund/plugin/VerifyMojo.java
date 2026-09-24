@@ -1,35 +1,24 @@
 package dev.cyberstamp.sigmund.plugin;
 
-import dev.cyberstamp.sigmund.core.Algorithms;
-import dev.cyberstamp.sigmund.core.ArtifactIdentity;
+import dev.cyberstamp.sigmund.core.ArtifactCoords;
+import dev.cyberstamp.sigmund.core.ArtifactResult;
 import dev.cyberstamp.sigmund.core.AssessmentRequest;
-import dev.cyberstamp.sigmund.core.Credential;
 import dev.cyberstamp.sigmund.core.DiscoveryConfig;
-import dev.cyberstamp.sigmund.core.EvidenceResult;
-import dev.cyberstamp.sigmund.core.FingerprintCredential;
 import dev.cyberstamp.sigmund.core.ListedEvidencePolicy;
-import dev.cyberstamp.sigmund.core.MatchedEvidence;
-import dev.cyberstamp.sigmund.core.OpenPgpVerifyResult;
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.SignerIdentity;
 import dev.cyberstamp.sigmund.core.TrustPolicy;
-import dev.cyberstamp.sigmund.core.TrustResult;
-import dev.cyberstamp.sigmund.core.TrustVerdict;
 import dev.cyberstamp.sigmund.core.TrustVerifier;
 import dev.cyberstamp.sigmund.core.UnlistedEvidencePolicy;
 import dev.cyberstamp.sigmund.core.UntrustedPolicy;
-import dev.cyberstamp.sigmund.core.UnverifiedResult;
-import dev.cyberstamp.sigmund.core.Verdict;
-import dev.cyberstamp.sigmund.core.VerifyResult;
+import dev.cyberstamp.sigmund.core.VerificationReport;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
@@ -48,6 +37,14 @@ public class VerifyMojo extends AbstractDependencyMojo {
     @Parameter(property = "sigmund.verifyPomFiles", defaultValue = "false")
     private boolean verifyPomFiles;
 
+    /**
+     * When {@code true}, the report explains every artifact claim by claim: the tool that
+     * verified it, the algorithm, the credentials proven, the trust root, the evidence file
+     * and when the claim was made. The grouped summary alone is the default.
+     */
+    @Parameter(property = "sigmund.detail", defaultValue = "false")
+    boolean detail;
+
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         if (skip) {
@@ -65,16 +62,7 @@ public class VerifyMojo extends AbstractDependencyMojo {
             List<ArtifactCoords> artifacts = resolveDependencies();
             getLog().info("Verifying signers for " + artifacts.size() + " dependency(ies)...");
 
-            List<ArtifactCoords> toAssess = new ArrayList<>();
-            List<String> skippedCoords = new ArrayList<>();
-            for (ArtifactCoords artifact : artifacts) {
-                ArtifactIdentity id = MavenArtifactIdentity.from(artifact);
-                if (trustPolicy.isUnsignedAllowed(id)) {
-                    skippedCoords.add(artifact.toString());
-                } else {
-                    toAssess.add(artifact);
-                }
-            }
+            List<ArtifactCoords> toAssess = new ArrayList<>(artifacts);
 
             if (verifyPomFiles) {
                 addPomArtifacts(toAssess);
@@ -85,29 +73,20 @@ public class VerifyMojo extends AbstractDependencyMojo {
                     sigmund.signatureFileExtensions());
 
             List<AssessmentRequest> requests = new ArrayList<>(toAssess.size());
-            List<ArtifactCoords> assessedCoords = new ArrayList<>(toAssess.size());
-
             for (ArtifactCoords coords : toAssess) {
                 ArtifactFileResolver.ResolvedFiles resolved = resolver.resolve(coords);
                 if (resolved == null) {
                     throw new MojoFailureException("Could not resolve artifact " + coords);
                 }
-                ArtifactIdentity identity = MavenArtifactIdentity.from(coords);
-                requests.add(new AssessmentRequest(identity, resolved.artifactFile(),
+                requests.add(new AssessmentRequest(coords, resolved.artifactFile(),
                         resolved.evidenceFiles()));
-                assessedCoords.add(coords);
             }
 
-            List<TrustResult> results = verifier.assessAll(requests);
+            List<ArtifactResult> results = verifier.assessAll(requests);
 
-            Map<Integer, List<EnrichedSignerInfo>> enriched = enrichResults(results);
-
-            boolean failPolicy = trustPolicy.onUntrusted() == UntrustedPolicy.FAIL;
-            boolean verifyAll = trustPolicy.listedEvidence() == ListedEvidencePolicy.ALL;
-
-            reportResults(results, assessedCoords, enriched, skippedCoords,
-                    failPolicy, verifyAll);
-            failIfNeeded(results, assessedCoords, failPolicy, verifyAll);
+            VerificationReport report = VerificationReport.of(results, trustPolicy);
+            reportResults(report);
+            failIfNeeded(report);
         } catch (Exception e) {
             if (e instanceof MojoExecutionException mee) {
                 throw mee;
@@ -129,77 +108,77 @@ public class VerifyMojo extends AbstractDependencyMojo {
         Set<String> seen = new LinkedHashSet<>();
         List<ArtifactCoords> poms = new ArrayList<>();
         for (ArtifactCoords artifact : artifacts) {
-            if ("pom".equals(artifact.type())) {
+            if ("pom".equals(artifact.extension())) {
                 continue;
             }
-            String key = artifact.groupId() + ":" + artifact.artifactId() + ":" + artifact.version();
+            String key = artifact.namespace() + ":" + artifact.name() + ":" + artifact.version();
             if (seen.add(key)) {
                 poms.add(new ArtifactCoords(
-                        artifact.groupId(), artifact.artifactId(), "", "pom", artifact.version()));
+                        artifact.namespace(), artifact.name(), "", "pom", artifact.version()));
             }
         }
         artifacts.addAll(poms);
     }
 
-    record EnrichedSignerInfo(String signerDisplayName, String keyLine, boolean fallback) {
-        EnrichedSignerInfo(String signerDisplayName, String keyLine) {
-            this(signerDisplayName, keyLine, false);
-        }
-    }
-
     /**
-     * Extracts display-ready signer info from unmatched evidence in trust results.
-     * Uses the {@link VerifyResult} already carried by {@link EvidenceResult},
-     * avoiding re-verification.
+     * Logs what verification established, at severities this build tool understands.
      *
-     * @return map from result index to the extracted signer info list
+     * <p>
+     * What to say and what it means come from core, so that every insertion point reports
+     * alike; only the mapping to Maven's log levels is decided here.
+     *
+     * @param report what the run found
      */
-    private Map<Integer, List<EnrichedSignerInfo>> enrichResults(List<TrustResult> results) {
-        Map<Integer, List<EnrichedSignerInfo>> enriched = new HashMap<>();
-        for (int i = 0; i < results.size(); i++) {
-            TrustResult result = results.get(i);
-            if (result.unmatchedEvidence().isEmpty()) {
-                continue;
-            }
-            List<EnrichedSignerInfo> infos = new ArrayList<>();
-            for (EvidenceResult evidence : result.unmatchedEvidence()) {
-                EnrichedSignerInfo info = extractSignerInfo(evidence.verifyResult());
-                if (info != null) {
-                    infos.add(info);
+    void reportResults(VerificationReport report) {
+        report.byOutcome().forEach((outcome, results) -> {
+            int level = switch (outcome) {
+                case SATISFIED, NOT_CONFIGURED -> LOG_INFO;
+                case FAILED -> LOG_ERROR;
+                case UNSATISFIED, NO_CLAIM, INDETERMINATE -> LOG_WARN;
+            };
+            logLine(level, "");
+            logLine(level, outcome + " (" + results.size() + ")");
+            for (VerificationReport.AttesterGroup group : VerificationReport.groupByAttester(results)) {
+                for (String line : group.summary()) {
+                    logLine(level, "  " + line);
+                }
+                if (detail) {
+                    for (String line : group.detail()) {
+                        logLine(level, "  " + line);
+                    }
+                }
+                for (ArtifactResult result : group.artifacts()) {
+                    logLine(level, "    " + result.subject().coords());
+                    if (detail) {
+                        // at the severity of the outcome being explained: detail about a
+                        // failing artifact that an operator has to raise the log level to see
+                        // is detail they will not read
+                        for (String line : VerificationReport.explain(result)) {
+                            logLine(level, "      " + line);
+                        }
+                    }
                 }
             }
-            if (!infos.isEmpty()) {
-                enriched.put(i, infos);
-            }
-        }
-        return enriched;
+        });
     }
 
     /**
-     * Extracts display-ready signer info from a {@link VerifyResult}.
+     * Fails the build when the policy does not tolerate what was found.
      *
-     * @return the enriched info, or {@code null} if the result has no useful identity data
+     * @param report what the run found
+     * @throws MojoFailureException when an artifact's outcome blocks
      */
-    private static EnrichedSignerInfo extractSignerInfo(VerifyResult vr) {
-        if (vr instanceof OpenPgpVerifyResult opvr) {
-            String label = Algorithms.versionLabel(opvr.version());
-            String algo = vr.algorithm() != null ? " (" + vr.algorithm() + ")" : "";
-            String keyId = opvr.preferredKeyId() != null ? opvr.preferredKeyId() : "unknown";
-            String suffix = vr.verdict() != Verdict.PASS ? " (" + vr.verdict() + ")" : "";
-            return new EnrichedSignerInfo(opvr.signerDisplayName(), label + algo + ": " + keyId + suffix);
+    private void failIfNeeded(VerificationReport report) throws MojoFailureException {
+        List<ArtifactResult> blocking = report.blocking();
+        if (blocking.isEmpty()) {
+            return;
         }
-        if (vr.signerDisplayName() != null) {
-            String keyLine = vr.algorithm() != null ? vr.algorithm() : "unknown";
-            if (vr.verdict() != Verdict.PASS) {
-                keyLine += " (" + vr.verdict() + ")";
-            }
-            return new EnrichedSignerInfo(vr.signerDisplayName(), keyLine);
-        }
-        if (vr instanceof UnverifiedResult) {
-            return new EnrichedSignerInfo(null,
-                    "signature present, verification failed", true);
-        }
-        return null;
+        String coords = blocking.stream()
+                .map(result -> result.subject().coords() + " (" + result.outcome() + ")")
+                .collect(Collectors.joining(", "));
+        throw new MojoFailureException(
+                "Verification blocked the build for " + blocking.size() + " artifact(s): "
+                        + coords);
     }
 
     private SigmundConfig loadAndValidateConfig() throws MojoExecutionException {
@@ -268,442 +247,7 @@ public class VerifyMojo extends AbstractDependencyMojo {
                         + "': must be 'all' or 'any'");
     }
 
-    /**
-     * Identifies untrusted signer keys that are trusted for other artifacts,
-     * so the report can annotate them as "(trusted for other artifacts)".
-     */
-    private Set<String> buildTrustedAnnotations(
-            Map<String, List<String>> untrustedBySigner,
-            List<TrustResult> results,
-            Map<Integer, List<EnrichedSignerInfo>> enriched,
-            List<SignerIdentity> allTrustedSigners) {
-        Set<String> annotated = new LinkedHashSet<>();
-        for (String untrustedKey : untrustedBySigner.keySet()) {
-            if (isKnownToTrustedSigner(untrustedKey, results, enriched, allTrustedSigners)) {
-                annotated.add(untrustedKey);
-            }
-        }
-        return annotated;
-    }
-
-    /**
-     * Checks whether the given untrusted key matches any signer that is
-     * trusted for at least one other artifact in this build.
-     */
-    private boolean isKnownToTrustedSigner(String untrustedKey,
-            List<TrustResult> results,
-            Map<Integer, List<EnrichedSignerInfo>> enriched,
-            List<SignerIdentity> allTrustedSigners) {
-        for (int i = 0; i < results.size(); i++) {
-            TrustResult result = results.get(i);
-            if (result.verdict() != TrustVerdict.UNTRUSTED) {
-                continue;
-            }
-            for (EvidenceResult ue : result.unmatchedEvidence()) {
-                for (Credential proven : ue.provenCredentials()) {
-                    if (!formatCredentialKeyLine(proven).equals(untrustedKey)) {
-                        continue;
-                    }
-                    for (SignerIdentity trusted : allTrustedSigners) {
-                        for (Credential expected : trusted.credentials()) {
-                            if (expected.matches(proven)) {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-            List<EnrichedSignerInfo> infos = enriched.get(i);
-            if (infos != null) {
-                for (EnrichedSignerInfo info : infos) {
-                    String name = info.signerDisplayName() != null
-                            ? info.signerDisplayName()
-                            : info.keyLine();
-                    if (!name.equals(untrustedKey)) {
-                        continue;
-                    }
-                    for (SignerIdentity trusted : allTrustedSigners) {
-                        if (trusted.displayName() != null
-                                && trusted.displayName().equals(info.signerDisplayName())) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Classifies trust results and prints the grouped console report:
-     * trusted signers, untrusted/unsigned/not-configured sections, and summary.
-     */
-    private void reportResults(List<TrustResult> results, List<ArtifactCoords> coords,
-            Map<Integer, List<EnrichedSignerInfo>> enriched, List<String> skippedCoords,
-            boolean failPolicy, boolean verifyAll) {
-
-        Map<String, List<String>> trustedBySigner = new LinkedHashMap<>();
-        Map<String, String> trustedDisplayNames = new LinkedHashMap<>();
-        Map<String, Set<String>> trustedKeyLines = new LinkedHashMap<>();
-        List<SignerIdentity> allTrustedSigners = new ArrayList<>();
-
-        Map<String, List<String>> untrustedBySigner = new LinkedHashMap<>();
-        List<String> unsignedCoords = new ArrayList<>();
-        List<String> verificationFailedCoords = new ArrayList<>();
-
-        Map<String, List<String>> notConfiguredBySigner = new LinkedHashMap<>();
-        List<String> notConfiguredUnsigned = new ArrayList<>();
-        Map<String, Set<String>> notConfiguredUnknown = new LinkedHashMap<>();
-
-        Map<String, List<String>> unverifiedWarnings = new LinkedHashMap<>();
-
-        for (int i = 0; i < results.size(); i++) {
-            TrustResult result = results.get(i);
-            String coordStr = coords.get(i).toString();
-
-            switch (result.verdict()) {
-                case TRUSTED -> {
-                    String signerRef = result.matchedEvidence().isEmpty()
-                            ? "unknown"
-                            : result.matchedEvidence().get(0).signer().id();
-                    String displayName = result.matchedEvidence().isEmpty()
-                            ? "unknown"
-                            : result.matchedEvidence().get(0).signer().displayName();
-
-                    trustedBySigner.computeIfAbsent(signerRef, k -> new ArrayList<>())
-                            .add(coordStr);
-                    trustedDisplayNames.putIfAbsent(signerRef, displayName);
-                    for (MatchedEvidence me : result.matchedEvidence()) {
-                        allTrustedSigners.add(me.signer());
-                    }
-                    Set<String> keyLines = trustedKeyLines.computeIfAbsent(
-                            signerRef, k -> new LinkedHashSet<>());
-                    for (MatchedEvidence me : result.matchedEvidence()) {
-                        for (Credential cred : me.evidence().provenCredentials()) {
-                            keyLines.add(formatCredentialKeyLine(cred));
-                        }
-                    }
-
-                    if (verifyAll && !result.unmatchedEvidence().isEmpty()) {
-                        for (EvidenceResult ue : result.unmatchedEvidence()) {
-                            for (Credential cred : ue.provenCredentials()) {
-                                unverifiedWarnings
-                                        .computeIfAbsent(coordStr, k -> new ArrayList<>())
-                                        .add(formatCredentialKeyLine(cred));
-                            }
-                        }
-                    }
-                }
-
-                case UNTRUSTED -> {
-                    List<String> signerNames = new ArrayList<>();
-                    for (EvidenceResult ue : result.unmatchedEvidence()) {
-                        for (Credential cred : ue.provenCredentials()) {
-                            signerNames.add(formatCredentialKeyLine(cred));
-                        }
-                    }
-                    if (signerNames.isEmpty()) {
-                        List<EnrichedSignerInfo> infos = enriched.get(i);
-                        if (infos != null) {
-                            for (EnrichedSignerInfo info : infos) {
-                                if (info.fallback()) {
-                                    continue;
-                                }
-                                if (info.signerDisplayName() != null) {
-                                    signerNames.add(info.signerDisplayName());
-                                } else {
-                                    signerNames.add(info.keyLine());
-                                }
-                            }
-                        }
-                    }
-                    if (signerNames.isEmpty()) {
-                        signerNames.add("unknown");
-                    }
-                    for (String signer : signerNames) {
-                        untrustedBySigner.computeIfAbsent(signer, k -> new ArrayList<>())
-                                .add(coordStr);
-                    }
-                }
-
-                case UNSIGNED -> unsignedCoords.add(coordStr);
-
-                case NOT_CONFIGURED -> {
-                    List<EnrichedSignerInfo> infos = enriched.get(i);
-                    if (infos == null || infos.isEmpty()) {
-                        notConfiguredUnsigned.add(coordStr);
-                    } else {
-                        boolean hasSigner = infos.stream()
-                                .anyMatch(info -> info.signerDisplayName() != null);
-                        if (hasSigner) {
-                            for (EnrichedSignerInfo info : infos) {
-                                String signerName = info.signerDisplayName() != null
-                                        ? info.signerDisplayName()
-                                        : "unknown";
-                                notConfiguredBySigner
-                                        .computeIfAbsent(signerName, k -> new ArrayList<>())
-                                        .add(coordStr);
-                            }
-                        } else {
-                            Set<String> keyLines = notConfiguredUnknown
-                                    .computeIfAbsent(coordStr, k -> new LinkedHashSet<>());
-                            for (EnrichedSignerInfo info : infos) {
-                                keyLines.add(info.keyLine());
-                            }
-                        }
-                    }
-                }
-
-                case VERIFICATION_FAILED -> verificationFailedCoords.add(coordStr);
-            }
-        }
-
-        Set<String> trustedForOtherArtifacts = buildTrustedAnnotations(
-                untrustedBySigner, results, enriched, allTrustedSigners);
-
-        boolean firstGroup = true;
-        firstGroup = reportTrusted(trustedBySigner, trustedDisplayNames, trustedKeyLines,
-                firstGroup);
-        firstGroup = reportUntrusted(untrustedBySigner, unsignedCoords,
-                notConfiguredBySigner, notConfiguredUnsigned, notConfiguredUnknown,
-                verificationFailedCoords, unverifiedWarnings,
-                trustedForOtherArtifacts, failPolicy, firstGroup);
-        reportSkipped(skippedCoords, firstGroup);
-
-        int passed = 0;
-        int problems = 0;
-        for (TrustResult r : results) {
-            if (r.verdict() == TrustVerdict.TRUSTED
-                    && !(verifyAll && !r.unmatchedEvidence().isEmpty())) {
-                passed++;
-            } else {
-                problems++;
-            }
-        }
-        int skipped = skippedCoords.size();
-
-        getLog().info("");
-        StringBuilder summary = new StringBuilder("Summary: ").append(passed).append(" passed");
-        if (failPolicy && problems > 0) {
-            summary.append(", ").append(problems).append(" failed");
-        } else if (problems > 0) {
-            summary.append(", ").append(problems).append(" warning(s)");
-        }
-        if (skipped > 0) {
-            summary.append(", ").append(skipped).append(" skipped");
-        }
-        getLog().info(summary.toString());
-    }
-
-    /**
-     * Prints the trusted signers section, grouped by signer with key lines
-     * and artifact coordinates.
-     *
-     * @return updated {@code firstGroup} flag
-     */
-    private boolean reportTrusted(Map<String, List<String>> trustedBySigner,
-            Map<String, String> displayNames, Map<String, Set<String>> trustedKeyLines,
-            boolean firstGroup) {
-        List<Map.Entry<String, List<String>>> sorted = trustedBySigner.entrySet()
-                .stream()
-                .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
-                .toList();
-        for (var group : sorted) {
-            if (!firstGroup) {
-                getLog().info("");
-            }
-            firstGroup = false;
-            String label = displayNames.getOrDefault(group.getKey(), group.getKey());
-            getLog().info("Signer: " + label);
-            Set<String> keyLines = trustedKeyLines.get(group.getKey());
-            if (keyLines != null) {
-                keyLines.forEach(k -> getLog().info("   " + k));
-            }
-            group.getValue().stream().sorted().forEach(c -> getLog().info("     " + c));
-        }
-        return firstGroup;
-    }
-
-    /**
-     * Prints the untrusted/unsigned/not-configured/verification-failed sections.
-     *
-     * @return updated {@code firstGroup} flag
-     */
-    private boolean reportUntrusted(
-            Map<String, List<String>> untrustedBySigner,
-            List<String> unsignedCoords,
-            Map<String, List<String>> notConfiguredBySigner,
-            List<String> notConfiguredUnsigned,
-            Map<String, Set<String>> notConfiguredUnknown,
-            List<String> verificationFailedCoords,
-            Map<String, List<String>> unverifiedWarnings,
-            Set<String> trustedForOtherArtifacts,
-            boolean failPolicy, boolean firstGroup) {
-        boolean hasAny = !untrustedBySigner.isEmpty() || !unsignedCoords.isEmpty()
-                || !notConfiguredBySigner.isEmpty() || !notConfiguredUnsigned.isEmpty()
-                || !notConfiguredUnknown.isEmpty() || !verificationFailedCoords.isEmpty()
-                || !unverifiedWarnings.isEmpty();
-        if (!hasAny) {
-            return firstGroup;
-        }
-
-        int level = failPolicy ? LOG_ERROR : LOG_WARN;
-
-        if (!untrustedBySigner.isEmpty()) {
-            if (!firstGroup) {
-                logLine(level, "");
-            }
-            firstGroup = false;
-            logLine(level, "UNTRUSTED");
-            untrustedBySigner.entrySet().stream()
-                    .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
-                    .forEach(e -> {
-                        String annotation = trustedForOtherArtifacts.contains(e.getKey())
-                                ? " (trusted for other artifacts)"
-                                : "";
-                        logLine(level, "Signer: " + e.getKey() + annotation);
-                        e.getValue().stream().sorted().forEach(c -> logLine(level, "     " + c));
-                    });
-        }
-
-        if (!notConfiguredBySigner.isEmpty() || !notConfiguredUnknown.isEmpty()
-                || !notConfiguredUnsigned.isEmpty()) {
-            List<Map.Entry<String, List<String>>> sortedNotConfigured = notConfiguredBySigner.entrySet().stream()
-                    .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
-                    .toList();
-            for (var e : sortedNotConfigured) {
-                if (!firstGroup) {
-                    logLine(level, "");
-                }
-                firstGroup = false;
-                logLine(level, "Signer: " + e.getKey());
-                e.getValue().stream().sorted().distinct()
-                        .forEach(c -> logLine(level, "     " + c));
-            }
-            if (!notConfiguredUnknown.isEmpty()) {
-                if (!firstGroup) {
-                    logLine(level, "");
-                }
-                firstGroup = false;
-                logLine(level, "SIGNER UNKNOWN");
-                notConfiguredUnknown.entrySet().stream()
-                        .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
-                        .forEach(entry -> {
-                            entry.getValue().forEach(k -> logLine(level, "   " + k));
-                            logLine(level, "     " + entry.getKey());
-                        });
-            }
-            if (!notConfiguredUnsigned.isEmpty()) {
-                if (!firstGroup) {
-                    logLine(level, "");
-                }
-                firstGroup = false;
-                logLine(level, "UNSIGNED (not configured)");
-                notConfiguredUnsigned.stream().sorted()
-                        .forEach(c -> logLine(level, "     " + c));
-            }
-        }
-
-        if (!unsignedCoords.isEmpty()) {
-            if (!firstGroup) {
-                logLine(level, "");
-            }
-            firstGroup = false;
-            logLine(level, "UNSIGNED");
-            unsignedCoords.stream().sorted().forEach(c -> logLine(level, "     " + c));
-        }
-
-        if (!verificationFailedCoords.isEmpty()) {
-            if (!firstGroup) {
-                logLine(level, "");
-            }
-            firstGroup = false;
-            logLine(level, "VERIFICATION FAILED");
-            verificationFailedCoords.stream().sorted()
-                    .forEach(c -> logLine(level, "     " + c));
-        }
-
-        if (!unverifiedWarnings.isEmpty()) {
-            if (!firstGroup) {
-                logLine(LOG_WARN, "");
-            }
-            firstGroup = false;
-            logLine(LOG_WARN, "UNVERIFIED SIGNATURES");
-            unverifiedWarnings.entrySet().stream()
-                    .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
-                    .forEach(e -> {
-                        e.getValue().forEach(k -> logLine(LOG_WARN, "   " + k));
-                        logLine(LOG_WARN, "     " + e.getKey());
-                    });
-        }
-
-        return firstGroup;
-    }
-
-    /**
-     * Prints the trusted-unsigned section (artifacts allowed to be unsigned
-     * by the trust policy).
-     */
-    private void reportSkipped(List<String> skippedCoords, boolean firstGroup) {
-        if (skippedCoords.isEmpty()) {
-            return;
-        }
-        if (!firstGroup) {
-            getLog().info("");
-        }
-        getLog().info("TRUSTED UNSIGNED");
-        skippedCoords.stream().sorted().forEach(c -> getLog().info("     " + c));
-    }
-
-    /**
-     * Throws {@link MojoFailureException} if the fail policy is active and any
-     * artifact has a non-trusted verdict.
-     */
-    private void failIfNeeded(List<TrustResult> results, List<ArtifactCoords> coords,
-            boolean failPolicy, boolean verifyAll) throws MojoFailureException {
-        if (!failPolicy) {
-            return;
-        }
-        List<String> failures = new ArrayList<>();
-        for (int i = 0; i < results.size(); i++) {
-            TrustResult result = results.get(i);
-            String artifactId = coords.get(i).toString();
-            switch (result.verdict()) {
-                case UNTRUSTED -> failures.add(artifactId + ": untrusted signer");
-                case UNSIGNED -> failures.add(artifactId + ": unsigned");
-                case NOT_CONFIGURED -> failures.add(artifactId + ": not configured");
-                case VERIFICATION_FAILED -> failures.add(artifactId + ": verification failed");
-                case TRUSTED -> {
-                    if (verifyAll && !result.unmatchedEvidence().isEmpty()) {
-                        failures.add(artifactId + ": unverified signatures");
-                    }
-                }
-                default -> {
-                }
-            }
-        }
-        if (!failures.isEmpty()) {
-            throw new MojoFailureException(
-                    failures.size() + " artifact(s) failed signer verification:\n"
-                            + String.join("\n", failures));
-        }
-    }
-
-    /**
-     * Formats a credential as a display line (e.g., {@code "PGP4: ABCD1234..."}).
-     */
-    private static String formatCredentialKeyLine(Credential cred) {
-        if (cred instanceof FingerprintCredential fp) {
-            String label = switch (fp.type()) {
-                case Credential.TYPE_OPENPGP_V4 -> Algorithms.versionLabel(4);
-                case Credential.TYPE_OPENPGP_V6 -> Algorithms.versionLabel(6);
-                default -> fp.type();
-            };
-            return label + ": " + fp.fingerprint();
-        }
-        return cred.type() + ": " + cred.displayName();
-    }
-
+    private static final int LOG_INFO = 0;
     private static final int LOG_WARN = 1;
     private static final int LOG_ERROR = 2;
 
@@ -727,12 +271,12 @@ public class VerifyMojo extends AbstractDependencyMojo {
             UntrustedPolicy onUntrusted) implements TrustPolicy {
 
         @Override
-        public List<SignerIdentity> expectedSigners(ArtifactIdentity artifact) {
+        public List<SignerIdentity> expectedSigners(ArtifactCoords artifact) {
             return delegate.expectedSigners(artifact);
         }
 
         @Override
-        public boolean isUnsignedAllowed(ArtifactIdentity artifact) {
+        public boolean isUnsignedAllowed(ArtifactCoords artifact) {
             return delegate.isUnsignedAllowed(artifact);
         }
     }

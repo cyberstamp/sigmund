@@ -1045,7 +1045,7 @@
       <span class="layer-tag">Layer 1 &mdash; Identity Verification (Trust)</span>
       <p style="font-size:.88rem;margin-bottom:1rem;margin-top:.5rem">Answers: "Is this artifact from someone I trust?"</p>
       <div class="concept-chips">
-        <span class="chip">ArtifactIdentity</span>
+        <span class="chip">ArtifactSubject</span>
         <span class="chip">SignerIdentity</span>
         <span class="chip">Credential</span>
         <span class="chip">TrustPolicy</span>
@@ -1070,7 +1070,7 @@
       <p style="font-size:.88rem;margin-bottom:1rem;margin-top:.5rem">Answers: "Is this signature cryptographically valid?"</p>
       <div class="concept-chips">
         <span class="chip">SignatureFormat</span>
-        <span class="chip">VerificationUnit</span>
+        <span class="chip">Claim</span>
         <span class="chip">SignatureTool</span>
         <span class="chip">VerifyResult</span>
         <span class="chip">Signer</span>
@@ -1221,7 +1221,7 @@
     </div>
     <div class="cred-card" style="border-color:rgba(251,191,36,.3)">
       <h4 style="color:var(--amber)">Curated: Formats</h4>
-      <p>Sealed <code>VerificationUnit</code> and <code>VerifyResult</code> hierarchies. New formats require a core release.</p>
+      <p>Sealed <code>Claim</code> and <code>VerifyResult</code> hierarchies. New formats require a core release.</p>
       <p style="margin-top:.5rem"><strong>Rationale:</strong> new packet structures and verification semantics warrant review.</p>
     </div>
   </div>
@@ -1398,7 +1398,7 @@
     <div class="flow-arrow-down">&darr;</div>
 
     <div class="flow-row">
-      <span class="flow-node fn-decision">VerificationUnit[]</span>
+      <span class="flow-node fn-decision">Claim[]</span>
     </div>
     <div class="flow-arrow-down">&darr; for each unit</div>
 

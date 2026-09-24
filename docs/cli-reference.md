@@ -9,7 +9,7 @@ The Sigmund CLI provides command-line tools for key management, artifact signing
 
 ## Contents
 
-- [Building the CLI](#building-the-cli)
+- [Getting the CLI](#getting-the-cli)
 - [Global Options](#global-options)
 - [Commands](#commands)
   - [sigmund keygen](#sigmund-keygen)
@@ -208,22 +208,15 @@ sigmund verify-signature --file target/my-artifact-1.0.jar \
 Sample output:
 
 ```
-Verification Report
-  File:      target/my-artifact-1.0.jar
-  Signature: target/my-artifact-1.0.jar.asc
-
-PGP6 (ML-DSA-87+Ed448): PASS
-  Signer: Alice <alice@example.com>
-  Fingerprint: D62AAB339E45E5EA2FD036872B01D46A517A2991...
-  Tool: sq
-
-PGP4 (EdDSA): PASS
-  Signer: Alice <alice@example.com>
-  Fingerprint: 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
-  Tool: gpg
-
-Overall: PASS
+Signature Verification Report:
+  [1] VERIFIED (ML-DSA-87+Ed448) [key: D62AAB33...] [signer: Alice <alice@example.com>]
+  [2] VERIFIED (EdDSA) [key: 4AEE18F8...] [signer: Alice <alice@example.com>]
+  Overall: 2 VERIFIED
 ```
+
+The last line counts outcomes rather than naming a verdict of its own. A block
+left undecided reads as `INDETERMINATE` followed by the reason, for example
+`INDETERMINATE [KEY_UNAVAILABLE]`.
 
 Exit codes:
 - `0` — Verification passed

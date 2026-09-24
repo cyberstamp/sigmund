@@ -47,8 +47,8 @@ class BcSqCrossToolTest {
 
         BcRunner bcRunner = new BcRunner(bcStore, null, null);
         VerifyResult result = verifyWithBc(bcRunner, artifact, sigFile);
-        assertThat(result.verdict())
-                .as("BC verification of SQ Ed25519 signature failed").isEqualTo(Verdict.PASS);
+        assertThat(result.isVerified())
+                .as("BC verification of SQ Ed25519 signature failed").isTrue();
     }
 
     @Test
@@ -122,8 +122,8 @@ class BcSqCrossToolTest {
         OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
         assertThat(info.version() > 0).as("Failed to parse signature packet").isTrue();
 
-        OpenPgpVerificationUnit unit = new OpenPgpVerificationUnit(
-                armored, info.version(), info.issuerFingerprint(), info.algorithmId());
-        return runner.verify(artifact, unit);
+        OpenPgpClaim claim = new OpenPgpClaim(
+                armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
+        return runner.verify(artifact, claim);
     }
 }

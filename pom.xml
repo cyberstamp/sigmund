@@ -57,6 +57,7 @@
         <maven.compiler.source>${maven.compiler.release}</maven.compiler.source>
         <maven.compiler.target>${maven.compiler.release}</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <javadoc.check.skip>false</javadoc.check.skip>
         <readme.update.skip>true</readme.update.skip>
         <quarkus.platform.version>3.38.1</quarkus.platform.version>
         <surefire-plugin.version>3.5.6</surefire-plugin.version>
@@ -138,6 +139,10 @@
                     <version>${surefire-plugin.version}</version>
                 </plugin>
                 <plugin>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>${maven-javadoc-plugin.version}</version>
+                </plugin>
+                <plugin>
                     <artifactId>maven-jar-plugin</artifactId>
                     <version>${maven-jar-plugin.version}</version>
                 </plugin>
@@ -156,6 +161,36 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+        <plugins>
+            <plugin>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>javadoc-check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>javadoc-no-fork</goal>
+                        </goals>
+                        <configuration>
+                            <!--
+                              Checked at private visibility: a comment attached to the wrong
+                              member, or a @link to something that no longer exists, is
+                              invisible at the default public/protected visibility. Doclint is
+                              limited to reference and syntax so undocumented internals do not
+                              fail the build - the project documents public API, not every
+                              private field. Scoped to this execution so the published javadoc
+                              jar keeps the default visibility.
+                            -->
+                            <show>private</show>
+                            <doclint>reference,syntax</doclint>
+                            <failOnWarnings>true</failOnWarnings>
+                            <quiet>true</quiet>
+                            <skip>${javadoc.check.skip}</skip>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
     <profiles>
         <profile>

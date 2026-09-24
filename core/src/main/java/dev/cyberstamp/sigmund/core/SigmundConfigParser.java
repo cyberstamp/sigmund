@@ -541,11 +541,4 @@ class SigmundConfigParser {
         return child != null && !child.isNull() ? child.asBoolean() : defaultValue;
     }
 
-    private static boolean boolField(JsonNode root, String section, String field, boolean defaultValue) {
-        JsonNode sectionNode = root.get(section);
-        if (sectionNode == null || sectionNode.isNull()) {
-            return defaultValue;
-        }
-        return boolOrDefault(sectionNode, field, defaultValue);
-    }
 }

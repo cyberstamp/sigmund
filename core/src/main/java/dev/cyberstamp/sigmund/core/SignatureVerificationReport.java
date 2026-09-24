@@ -1,12 +1,16 @@
 package dev.cyberstamp.sigmund.core;
 
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Hierarchical verification report for direct signature verification (without trust policy).
  * <p>
- * Aggregates per-file sub-reports. Callers can check the overall verdict or drill
- * into each file's results.
+ * Aggregates per-file sub-reports. Callers can read the counts by claim outcome, ask whether
+ * the file passed strictly or leniently, or drill into each file's results.
  */
 public class SignatureVerificationReport {
 
@@ -22,35 +26,39 @@ public class SignatureVerificationReport {
     }
 
     /**
-     * Returns the aggregate verification verdict.
+     * Returns how many claims reached each outcome across every file in this report.
      *
-     * @return the overall verdict
+     * <p>
+     * Counts rather than a single summary name: "2 verified, 1 indeterminate" says what
+     * happened, where a name like "pass with skips" hides the numbers and speaks a vocabulary
+     * the model no longer uses — an unverifiable claim is indeterminate, with a reason, not
+     * skipped.
+     *
+     * @return counts by claim outcome, omitting outcomes nothing reached
      */
-    public ReportVerdict verdict() {
-        boolean anyPass = false;
-        boolean anyFail = false;
-        boolean anySkip = false;
+    public Map<ClaimOutcome, Integer> counts() {
+        Map<ClaimOutcome, Integer> counts = new EnumMap<>(ClaimOutcome.class);
         for (FileSignatureReport file : files) {
-            for (VerifyResult r : file.results()) {
-                switch (r.verdict()) {
-                    case PASS -> anyPass = true;
-                    case FAIL -> anyFail = true;
-                    case NO_KEY, SKIPPED -> anySkip = true;
-                    default -> {
-                    }
-                }
+            for (VerifyResult result : file.results()) {
+                counts.merge(result.outcome(), 1, Integer::sum);
             }
         }
-        if (!anyPass && !anyFail && !anySkip) {
-            return ReportVerdict.NONE_PASSED;
+        return Collections.unmodifiableMap(counts);
+    }
+
+    /**
+     * Renders the counts as a one-line summary, such as {@code 2 VERIFIED, 1 INDETERMINATE}.
+     *
+     * @return the summary, or {@code no claims found} when nothing was verified
+     */
+    public String summary() {
+        Map<ClaimOutcome, Integer> counts = counts();
+        if (counts.isEmpty()) {
+            return "no claims found";
         }
-        if (anyPass && !anyFail) {
-            return anySkip ? ReportVerdict.PASS_WITH_SKIPS : ReportVerdict.ALL_PASS;
-        }
-        if (anyPass) {
-            return ReportVerdict.PASS_WITH_FAILURES;
-        }
-        return ReportVerdict.NONE_PASSED;
+        return counts.entrySet().stream()
+                .map(entry -> entry.getValue() + " " + entry.getKey())
+                .collect(Collectors.joining(", "));
     }
 
     /**
@@ -65,20 +73,26 @@ public class SignatureVerificationReport {
     /**
      * Strict pass: all signatures must be valid.
      *
-     * @return {@code true} if verdict is {@link ReportVerdict#ALL_PASS}
+     * @return {@code true} when at least one claim verified and none failed or was left
+     *         undecided
      */
     public boolean isPass() {
-        return verdict() == ReportVerdict.ALL_PASS;
+        Map<ClaimOutcome, Integer> counts = counts();
+        return counts.containsKey(ClaimOutcome.VERIFIED)
+                && !counts.containsKey(ClaimOutcome.FAILED)
+                && !counts.containsKey(ClaimOutcome.INDETERMINATE);
     }
 
     /**
      * Lenient pass: at least one signature valid, none failed.
      *
-     * @return {@code true} if verdict is ALL_PASS or PASS_WITH_SKIPS
+     * @return {@code true} when at least one claim verified and none failed, whatever was
+     *         left undecided
      */
     public boolean isLenientPass() {
-        var o = verdict();
-        return o == ReportVerdict.ALL_PASS || o == ReportVerdict.PASS_WITH_SKIPS;
+        Map<ClaimOutcome, Integer> counts = counts();
+        return counts.containsKey(ClaimOutcome.VERIFIED)
+                && !counts.containsKey(ClaimOutcome.FAILED);
     }
 
     /**
@@ -97,12 +111,15 @@ public class SignatureVerificationReport {
                 sb.append('\n');
             }
         }
-        sb.append("  Overall: ").append(verdict());
+        sb.append("  Overall: ").append(summary());
         return sb.toString();
     }
 
     private void formatResult(StringBuilder sb, VerifyResult r) {
-        sb.append(r.verdict());
+        sb.append(r.outcome());
+        if (r.reason() != null) {
+            sb.append(" [").append(r.reason()).append(']');
+        }
         if (r.algorithm() != null) {
             sb.append(" (").append(r.algorithm()).append(')');
         }

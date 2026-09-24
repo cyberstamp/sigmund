@@ -361,14 +361,15 @@ public class Sigmund implements AutoCloseable {
     }
 
     private FileSignatureReport verifySingleFile(Path artifactFile, Path signatureFile) {
-        SignatureFormat format = findFormat(signatureFile);
+        Evidence evidence = Evidence.read(signatureFile, Evidence.SOURCE_SIDECAR);
+        SignatureFormat format = findFormat(evidence);
         if (format == null) {
             return new FileSignatureReport(signatureFile, "unknown", List.of());
         }
-        List<VerificationUnit> units = format.parse(signatureFile);
+        List<Claim> claims = format.parse(evidence);
         List<VerifyResult> results = new ArrayList<>();
-        for (VerificationUnit unit : units) {
-            VerifyResult result = verifyUnit(artifactFile, unit);
+        for (Claim claim : claims) {
+            VerifyResult result = verifyClaim(artifactFile, claim);
             if (result != null) {
                 results.add(result);
             }
@@ -376,9 +377,9 @@ public class Sigmund implements AutoCloseable {
         return new FileSignatureReport(signatureFile, format.name(), results);
     }
 
-    private SignatureFormat findFormat(Path signatureFile) {
+    private SignatureFormat findFormat(Evidence evidence) {
         for (SignatureFormat format : formats) {
-            if (format.canHandle(signatureFile)) {
+            if (format.canHandle(evidence)) {
                 return format;
             }
         }
@@ -386,30 +387,31 @@ public class Sigmund implements AutoCloseable {
     }
 
     /**
-     * Verifies a single verification unit against the artifact file.
+     * Verifies a single claim against the artifact file.
      * <p>
-     * Tries each tool in priority order. Only {@link Verdict#PASS} stops
-     * iteration immediately; {@code NO_KEY} and {@code FAIL} fall through
-     * to the next tool, keeping the highest-ranked non-PASS result. This
+     * Tries each tool in priority order. Only {@link ClaimOutcome#VERIFIED} stops
+     * iteration immediately; a claim no tool supports falls through to the next tool, and
+     * the most conclusive answer seen so far is kept
+     * ({@link VerifyResult#isMoreConclusiveThan}). This
      * allows tools with different key stores (BC ephemeral cache, GPG
      * {@code pubring.kbx}, Sequoia cert store) to complement each other.
      *
      * @return the best result, or {@code null} if all tools returned {@code SKIPPED}
      */
-    private VerifyResult verifyUnit(Path artifactFile, VerificationUnit unit) {
+    private VerifyResult verifyClaim(Path artifactFile, Claim claim) {
         VerifyResult best = null;
         for (SignatureTool tool : tools) {
-            if (!tool.canVerify(unit)) {
+            if (!tool.canVerify(claim)) {
                 continue;
             }
-            VerifyResult result = tool.verify(artifactFile, unit);
-            if (result.verdict() == Verdict.PASS) {
+            VerifyResult result = tool.verify(artifactFile, claim);
+            if (result.isVerified()) {
                 return result;
             }
-            if (result.verdict() == Verdict.SKIPPED) {
+            if (result.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)) {
                 continue;
             }
-            if (best == null || result.verdict().outranks(best.verdict())) {
+            if (result.isMoreConclusiveThan(best)) {
                 best = result;
             }
         }
@@ -708,8 +710,12 @@ public class Sigmund implements AutoCloseable {
         private static final List<SignatureToolFactory> BUILTIN_FACTORIES = List.of(
                 new BcToolFactory(), new GpgToolFactory(), new SqToolFactory());
 
+        /** Built-in factories followed by ServiceLoader-discovered ones, resolved once. */
+        private static final List<SignatureToolFactory> ALL_FACTORIES = loadAllFactories();
+
         /**
          * Returns all factories: built-in factories followed by ServiceLoader-discovered ones.
+         *
          * <p>
          * Discovered factories whose {@link SignatureToolFactory#supportedCredentialTypes()}
          * overlap with a built-in factory's types are included. When such overlap exists and
@@ -718,8 +724,6 @@ public class Sigmund implements AutoCloseable {
          *
          * @return the combined list of factories
          */
-        private static final List<SignatureToolFactory> ALL_FACTORIES = loadAllFactories();
-
         private static List<SignatureToolFactory> loadAllFactories() {
             List<SignatureToolFactory> all = new ArrayList<>(BUILTIN_FACTORIES);
             ServiceLoader.load(SignatureToolFactory.class).forEach(all::add);

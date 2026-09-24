@@ -26,7 +26,7 @@ This document describes how Sigmund works internally — the three-tool system, 
   - [Layer 2: Signature Operations](#layer-2-signature-operations)
   - [Layer 1: Identity Verification](#layer-1-identity-verification)
   - [Credential Types and Matching](#credential-types-and-matching)
-  - [Trust Verdicts](#trust-verdicts)
+  - [Artifact Outcomes](#artifact-outcomes)
 - [Supported Cipher Suites](#supported-cipher-suites)
   - [Phase 1 (Implemented)](#phase-1-implemented)
   - [Phase 2 (Planned for BC)](#phase-2-planned-for-bc)
@@ -54,7 +54,7 @@ Sigmund supports three OpenPGP backends, each with distinct capabilities:
 
 ## Toolchain and Routing
 
-Verification units are routed to tools based on a configurable toolchain. The default toolchain is:
+Claims are routed to tools based on a configurable toolchain. The default toolchain is:
 
 ```
 [bc, sq, gpg]
@@ -64,16 +64,16 @@ BC attempts verification first. If BC cannot fully verify a signature (missing k
 
 The routing mechanism works as follows:
 
-1. Each signature file is parsed into one or more `VerificationUnit`s by its `SignatureFormat`
+1. Each signature file is parsed into one or more `Claim`s by its `SignatureFormat`
 2. For each unit, tools are checked in toolchain order
 3. Each tool where `canVerify(unit)` returns true attempts verification
-4. If a tool returns `PASS`, it is used immediately
-5. If a tool returns `NO_KEY` or `FAIL`, the next tool is tried — a different tool may have the key in its local keyring or support the algorithm
-6. If no tool returns `PASS`, the best non-PASS result is used (`FAIL` over `NO_KEY` over `SKIPPED`)
+4. If a tool returns `VERIFIED`, it is used immediately
+5. If a tool does not verify the block, the next tool is tried — a different tool may have the key in its local keyring or support the algorithm
+6. If no tool verifies it, the most conclusive result seen is kept (`FAILED` over an undecided one, and among undecided ones a transient reason over a permanent one)
 
 For example, a hybrid `.asc` with both a PGP4 (RSA) and PGP6 (ML-DSA) signature:
-- **PGP4 block:** BC may return `NO_KEY` if the key is not in its stores, but GPG finds it in `pubring.kbx` and returns `PASS`
-- **PGP6 block:** BC and GPG cannot verify ML-DSA, but Sequoia finds the key in its cert store and returns `PASS`
+- **PGP4 block:** BC may return `KEY_UNAVAILABLE` if the key is not in its stores, but GPG finds it in `pubring.kbx` and verifies it
+- **PGP6 block:** BC and GPG cannot verify ML-DSA, but Sequoia finds the key in its cert store and verifies it
 
 Configure the toolchain in `sigmund.yaml`:
 
@@ -218,35 +218,35 @@ artifact.jar + artifact.jar.asc
     |
     +-- for each block:
     |     route to tool based on priority and canVerify()
-    |     bc / sq / gpg verify --> VerifyResult (PASS/FAIL/NO_KEY/SKIPPED)
+    |     bc / sq / gpg verify --> VerifyResult (VERIFIED/FAILED/INDETERMINATE + reason)
     |
     +-- SignatureVerificationReport (all results)
 ```
 
-Each armored block is parsed into a `VerificationUnit` and routed to the first available tool in the priority list that can handle it (via `canVerify()`).
+Each armored block is parsed into a `Claim` and routed to the first available tool in the priority list that can handle it (via `canVerify()`).
 
 ### BC Verification
 
-BC handles any `OpenPgpVerificationUnit` (v4 or v6 classic algorithms). Verification steps:
+BC handles any `OpenPgpClaim` (v4 or v6 classic algorithms). Verification steps:
 
 1. Extract issuer fingerprint from the signature packet's Issuer Fingerprint subpacket (type 33)
 2. Search for the signer's public key in GnuPG pubring, cert-d, or BC private store
 3. If key not found and key fetching is enabled, attempt to import from keyservers
 4. Parse the signature packet using Bouncy Castle's `BcPGPObjectFactory`
 5. Verify the signature against the artifact using BC's `PGPSignature.verify()`
-6. Return `PASS` or `FAIL`
+6. Return `VERIFIED` or `FAILED`
 
 ### sq Verification (v5+ packets)
 
-The issuer fingerprint is extracted from the signature packet, used to look up the signer's certificate in the Sequoia cert store (`sq inspect --cert`), locate the cert file in cert-d, and verify with `sq verify --signer-file`. If the certificate is not in the store, the result is `NO_KEY`. If `sq` is not available or the fingerprint cannot be extracted, the result is `SKIPPED`.
+The issuer fingerprint is extracted from the signature packet, used to look up the signer's certificate in the Sequoia cert store (`sq inspect --cert`), locate the cert file in cert-d, and verify with `sq verify --signer-file`. If the certificate is not in the store, the result is `INDETERMINATE [KEY_UNAVAILABLE]`. If `sq` is not available or the fingerprint cannot be extracted, it is `INDETERMINATE` citing `TOOL_UNAVAILABLE` or `UNSUPPORTED_ALGORITHM`.
 
 ### gpg Verification (v1-v4 packets)
 
 Runs `gpg --verify` against the local keyring. GPG exit codes are interpreted as:
-- **Exit 0** — signature valid (`PASS`)
-- **Exit 2 with "Good signature" in stderr** — signature valid but GPG encountered an unknown packet (`PASS`). This is the expected result for hybrid `.asc` files containing v6 PQC packets.
-- **Exit 1** — bad signature (`FAIL`)
-- **stderr contains "No public key"** — signer's key not in keyring (`NO_KEY`)
+- **Exit 0** — signature valid (`VERIFIED`)
+- **Exit 2 with "Good signature" in stderr** — signature valid but GPG encountered an unknown packet (`VERIFIED`). This is the expected result for hybrid `.asc` files containing v6 PQC packets.
+- **Exit 1** — bad signature (`FAILED`)
+- **stderr contains "No public key"** — signer's key not in keyring (`KEY_UNAVAILABLE`)
 
 The block's public-key algorithm ID is used to classify the signature as PQC or classical in the report. PQC algorithm IDs are 30-36 per the IANA OpenPGP Public Key Algorithms registry (RFC 9980).
 
@@ -264,8 +264,8 @@ Sigmund implements a two-layer architecture separating cryptographic verificatio
 Layer 2 is the `SignatureTool` SPI, implemented by `BcRunner`, `SqRunner`, and `GpgRunner`. Each tool:
 
 1. Declares capabilities via `supportedCredentialTypes()` (e.g., `["openpgp4", "openpgp6"]`)
-2. Routes verification via `canVerify(VerificationUnit)` (packet version and algorithm)
-3. Performs cryptographic verification → `VerifyResult` (verdict + metadata)
+2. Routes verification via `canVerify(Claim)` (packet version and algorithm)
+3. Performs cryptographic verification → `VerifyResult` (outcome, reason, and metadata)
 4. Extracts proven credentials via `extractCredentials(VerifyResult)` → `List<Credential>`
 
 The credential type is determined by the packet version that was cryptographically verified:
@@ -277,18 +277,26 @@ The credential type is determined by the packet version that was cryptographical
 Layer 1 is the `EvidenceProvider` interface, bridged from Layer 2 via `SignatureEvidenceAdapter`. The adapter:
 
 1. Delegates `canHandle(Path)` to `SignatureFormat`
-2. Parses signature files into `VerificationUnit`s
+2. Parses signature files into `Claim`s
 3. Routes each unit to the appropriate `SignatureTool`
-4. Handles key fetching on `NO_KEY` verdict (if `resolve-signers` is enabled)
-5. Wraps `VerifyResult` + extracted credentials into `EvidenceResult`
+4. Handles key fetching when a claim is left undecided by `KEY_UNAVAILABLE` (if `resolve-signers` is enabled)
+5. Records a tool that throws as `INDETERMINATE [TOOL_UNAVAILABLE]` rather than letting it end the run
+6. Wraps `VerifyResult` + the credentials the tool extracted into a `ClaimResult`, which also
+   carries the evidence it was read from, the trust root it was checked against, the tool that
+   checked it, and when the claim was made
 
-The `TrustVerifier` consumes `EvidenceResult`s and performs trust assessment:
+The `TrustVerifier` consumes `ClaimResult`s and produces one `ArtifactResult` per artifact:
 
-1. **Resolve policy** — look up expected signers for the artifact
-2. **Check unsigned** — if unsigned-ok and no evidence → TRUSTED
-3. **Verify evidence** — each provider verifies matching files → `EvidenceResult`s
-4. **Match identity** — check credential bag overlap between expected signers and evidence
-5. **Apply policy** — produce verdict based on matches and policy settings
+1. **Collect claims** — each provider verifies the evidence resolved for the artifact
+2. **Evaluate requirements** — `TrustPolicy.requirements()` decides which verified claims the
+   policy accepts, and which it does not
+3. **Roll up** — `OutcomeRollup` derives the `ArtifactOutcome` from the claims and that
+   evaluation, in a fixed order: a failed claim dominates, claims no installed tool supports
+   are set aside, no applicable rule means `NOT_CONFIGURED`, requirements met means
+   `SATISFIED`, and otherwise the most informative remaining state decides
+
+The roll-up lives in core rather than in an integration so that a goal and a resolver-level
+extension cannot reach different outcomes from the same policy and the same evidence.
 
 ### Credential Types and Matching
 
@@ -305,11 +313,13 @@ Sigmund supports multiple credential types:
   - Matches: every non-null field in the configured credential must equal the corresponding field in the extracted credential. Null fields are wildcards. This enables flexible trust policies — matching on `issuer` + `source-repository-uri` trusts all releases from a repository without pinning to a specific workflow ref.
   - Extracted from Fulcio certificates during Sigstore verification. When the certificate subject is an email (SAN type `rfc822Name`), an `EmailCredential` is also extracted, enabling cross-backend matching.
 
-Identity matching works via credential overlap: a signer identity matches an evidence result if any credential in the signer's credential bag matches any proven credential in the evidence.
+Identity matching works via credential overlap: a claim satisfies a signer when one of the
+credentials it proved matches one the signer is configured with.
 
-The matching logic in `TrustVerifier.credentialOverlap()`:
+The matching logic lives in `TrustPolicy.requirements()`, the default
+`RequirementEvaluator`:
 ```java
-for (Credential proven : evidence.provenCredentials()) {
+for (Credential proven : claim.attesterCredentials()) {
     for (Credential expected : signer.credentials()) {
         if (expected.matches(proven)) {
             return true;
@@ -318,13 +328,21 @@ for (Credential proven : evidence.provenCredentials()) {
 }
 ```
 
-### Trust Verdicts
+It is a separate interface from the roll-up on purpose: deriving an outcome needs to know
+whether requirements were met and which claims met them, not what a requirement is.
 
-- `TRUSTED` — at least one expected signer matched, and policy requirements met
-- `UNTRUSTED` — no expected signers matched, or unmatched evidence per `listed-evidence`/`unlisted-evidence` policy
-- `UNSIGNED` — no evidence files provided
-- `VERIFICATION_FAILED` — at least one signature failed cryptographic verification
-- `NOT_CONFIGURED` — no expected signers configured for this artifact
+### Artifact Outcomes
+
+- `SATISFIED` — the claims found meet what the policy requires of this artifact
+- `UNSATISFIED` — verification succeeded, but not by a signer the policy accepts
+- `FAILED` — a signature did not verify; an attack signal, and never tolerated
+- `NO_CLAIM` — no evidence was found at all
+- `INDETERMINATE` — nothing could be established either way, with a reason saying why
+- `NOT_CONFIGURED` — no rule applies to this artifact
+
+`NO_CLAIM` replaces the older `UNSIGNED`, which stops being accurate once provenance exists:
+an artifact can be unsigned but attested, or signed but unattested. Separating `FAILED` from
+`INDETERMINATE` is what keeps "checked and rejected" apart from "could not check".
 
 ## Supported Cipher Suites
 

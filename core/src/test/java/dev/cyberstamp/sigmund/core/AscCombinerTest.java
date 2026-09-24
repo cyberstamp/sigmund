@@ -2,6 +2,7 @@ package dev.cyberstamp.sigmund.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 class AscCombinerTest {
@@ -106,6 +107,26 @@ class AscCombinerTest {
     void extractAllBlocksSingleBlock() {
         var blocks = AscCombiner.extractAllBlocks(ARMORED_BLOCK_1);
         assertThat(blocks.size()).isEqualTo(1);
+    }
+
+    // --- claim time ---
+
+    @Test
+    void inspectSignaturePacketExtractsCreationTime() {
+        // ARMORED_BLOCK_1 carries a hashed subpacket of type 2 (signature creation time)
+        // with the value 0x61740009
+        assertThat(AscCombiner.inspectSignaturePacket(ARMORED_BLOCK_1).creationTime())
+                .isEqualTo(Instant.ofEpochSecond(0x61740009L));
+    }
+
+    @Test
+    void creationTimeIsAbsentWhenNoSubpacketCarriesIt() {
+        // v4 packet declaring zero-length hashed and unhashed subpacket areas
+        byte[] noSubpackets = new byte[] {
+                (byte) 0x88, 0x08, 0x04, 0x00, 0x11, 0x08, 0x00, 0x00, 0x00, 0x00
+        };
+        assertThat(AscCombiner.inspectSignaturePacket(AscCombiner.armor(noSubpackets))
+                .creationTime()).isNull();
     }
 
     // --- inspectSignaturePacket version detection ---

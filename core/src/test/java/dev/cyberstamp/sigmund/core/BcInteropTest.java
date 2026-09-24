@@ -36,11 +36,11 @@ class BcInteropTest {
         OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
         assertThat(info.version() > 0).isTrue();
 
-        OpenPgpVerificationUnit unit = new OpenPgpVerificationUnit(
-                armored, info.version(), info.issuerFingerprint(), info.algorithmId());
+        OpenPgpClaim claim = new OpenPgpClaim(
+                armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
 
-        VerifyResult result = signer.verify(artifact, unit);
-        assertThat(result.verdict()).isEqualTo(Verdict.PASS);
+        VerifyResult result = signer.verify(artifact, claim);
+        assertThat(result.isVerified()).isTrue();
     }
 
     @ParameterizedTest
@@ -62,11 +62,11 @@ class BcInteropTest {
 
         String armored = Files.readString(sigFile);
         OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-        OpenPgpVerificationUnit unit = new OpenPgpVerificationUnit(
-                armored, info.version(), info.issuerFingerprint(), info.algorithmId());
+        OpenPgpClaim claim = new OpenPgpClaim(
+                armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
 
-        VerifyResult result = signer.verify(artifact, unit);
-        assertThat(result.verdict()).isEqualTo(Verdict.FAIL);
+        VerifyResult result = signer.verify(artifact, claim);
+        assertThat(result.isFailed()).isTrue();
     }
 
     @ParameterizedTest
@@ -78,11 +78,12 @@ class BcInteropTest {
         String fp = bcRunner.generateKey("Test <test@example.com>", cipherSuite);
         BcRunner signer = new BcRunner(store, fp, null);
 
-        Sigmund sigmund = Sigmund.builder()
+        try (Sigmund sigmund = Sigmund.builder()
                 .addTool(signer)
-                .build();
+                .build()) {
 
-        assertThat(sigmund.tool("bc")).isNotNull();
-        assertThat(sigmund.tool("bc").isAvailable()).isTrue();
+            assertThat(sigmund.tool("bc")).isNotNull();
+            assertThat(sigmund.tool("bc").isAvailable()).isTrue();
+        }
     }
 }

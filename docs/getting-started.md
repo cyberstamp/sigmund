@@ -121,10 +121,10 @@ trust:
   com.other:tool: [signer-2, signer-3]
 ```
 
-**unsigned** — Lists artifacts allowed to be unsigned:
+**signature-optional** — Lists artifacts allowed to carry no signature:
 
 ```yaml
-unsigned:
+signature-optional:
   - com.internal:util
 ```
 
@@ -141,28 +141,34 @@ mvn sigmund:verify
 **On success**, you'll see output like:
 
 ```
-Signer: Alice Developer <alice@example.com>
-   PGP4: 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
-     com.example:lib-a:1.0
-     com.example:lib-b:2.0
+SATISFIED (2)
+  openpgp VERIFIED by bc (Ed25519) - Alice Developer <alice@example.com>
+    com.example:lib-a:1.0
+    com.example:lib-b:2.0
 
-TRUSTED UNSIGNED
-     com.internal:util:1.0
-
-Summary: 3 passed, 1 skipped
+NO_CLAIM (1)
+    com.internal:util:1.0
 ```
+
+Results are grouped by outcome, and within an outcome by who attested them.
+`com.internal:util` reached `NO_CLAIM` because no signature was found for it;
+listing it under `signature-optional` is what keeps that from failing the build.
+Add `-Dsigmund.detail` to see the key each group proved, the trust root it was
+checked against, and the evidence file behind each artifact.
 
 **When untrusted artifacts are found**, the default behavior is to fail the build:
 
 ```
-UNTRUSTED
-Signer: Bob Malicious <bob@evil.com>
-     com.sketchy:malware:1.0
+UNSATISFIED (1)
+  openpgp VERIFIED by bc (RSA) - Bob Malicious <bob@evil.com>
+    com.sketchy:malware:1.0
 
-Summary: 2 passed, 1 failed
-[ERROR] 1 artifact(s) failed signer verification:
-com.sketchy:malware:1.0: untrusted signer
+[ERROR] Verification blocked the build for 1 artifact(s): com.sketchy:malware:1.0 (UNSATISFIED)
 ```
+
+The signature verified — `UNSATISFIED` says the policy does not accept the
+signer, not that the cryptography failed. That case is `FAILED`, and no setting
+tolerates it.
 
 The `on-untrusted` setting controls failure behavior. The default is `fail`. Set it to `warn` in `sigmund.yaml` to report issues without failing the build:
 
@@ -182,7 +188,7 @@ mvn sigmund:dependency-signers \
   -Dsigmund.updateTrustConfig=true
 ```
 
-This appends new entries to the existing `sigmund.yaml` file, preserving all existing content including comments and formatting. New signers are added to the `signers` section, new trust patterns to the `trust` section, and new unsigned artifacts to the `unsigned` section.
+This appends new entries to the existing `sigmund.yaml` file, preserving all existing content including comments and formatting. New signers are added to the `signers` section, new trust patterns to the `trust` section, and artifacts found without a signature to the `signature-optional` section.
 
 Review changes before committing:
 

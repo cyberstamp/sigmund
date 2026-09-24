@@ -11,13 +11,13 @@ This guide covers identity-based trust verification for Maven dependencies using
 - [The sigmund.yaml Trust Configuration](#the-sigmundyaml-trust-configuration)
   - [1. Signers](#1-signers)
   - [2. Trust Mappings](#2-trust-mappings)
-  - [3. Unsigned Artifacts](#3-unsigned-artifacts)
+  - [3. Signature-Optional Artifacts](#3-signature-optional-artifacts)
   - [4. Policy Configuration](#4-policy-configuration)
-  - [5. Discovery Configuration](#5-discovery-configuration)
+  - [5. Verification Configuration](#5-verification-configuration)
 - [Complete Example](#complete-example)
 - [Running Trust Verification](#running-trust-verification)
   - [Example Output](#example-output)
-  - [Output Sections](#output-sections)
+  - [Outcomes](#outcomes)
   - [Exit Codes](#exit-codes)
   - [Maven Properties](#maven-properties)
 - [Generating Trust Configuration](#generating-trust-configuration)
@@ -67,7 +67,7 @@ Sigmund's `verify` goal:
 2. Downloads signature files (`.asc`) from Maven repositories
 3. Verifies each signature and extracts proven credentials
 4. Matches credentials against your `sigmund.yaml` trust mappings
-5. Reports trusted/untrusted/unsigned artifacts
+5. Reports each artifact's outcome, grouped by outcome and then by attester
 6. Fails the build if untrusted artifacts are found (configurable)
 
 ## The `sigmund.yaml` Trust Configuration
@@ -303,51 +303,50 @@ The goal reads `sigmund.yaml` from your project root (configurable with `-Dsigmu
 ### Example Output
 
 ```
-Verifying signers for 42 dependency(ies)...
+SATISFIED (40)
+  openpgp VERIFIED by bc (RSA) - Apache Software Foundation
+    org.apache.commons:commons-lang3:3.12.0
+    org.apache.maven:maven-core:3.9.0
+  openpgp VERIFIED by sq (ML-DSA-87+Ed448) - Quarkus Team
+    io.quarkus:quarkus-arc:3.0.0
+    io.quarkus:quarkus-core:3.0.0
 
-Signer: Apache Software Foundation
-   PGP4 (RSA): 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
-     org.apache.maven:maven-core:3.9.0
-     org.apache.commons:commons-lang3:3.12.0
+UNSATISFIED (1)
+  openpgp VERIFIED by gpg (RSA) - Unknown <unknown@example.com>
+    com.other:tool:3.0
 
-Signer: Quarkus Team
-   PGP4 (RSA): BBE7232D7991050B54C8EA0ADC08637CA615D22C
-   PGP6 (ML-DSA-87+Ed448): D62AAB339E45E5EA2FD0368...
-     io.quarkus:quarkus-core:3.0.0
-     io.quarkus:quarkus-arc:3.0.0
-
-UNTRUSTED
-  Signer: Unknown <unknown@example.com> (not in trust config)
-     PGP4: DEADBEEFDEADBEEF
-       com.other:tool:3.0
-
-UNSIGNED (not allowed)
-     org.wildfly.common:wildfly-common:2.0.1
-
-TRUSTED UNSIGNED (skipped)
-     com.internal:util:1.0
-
-Summary: 40 passed, 2 failed
+NO_CLAIM (1)
+    org.wildfly.common:wildfly-common:2.0.1
 ```
 
-### Output Sections
+Results are grouped by outcome, and within an outcome by who attested them.
+Artifacts nothing attested carry no group header. Add `-Dsigmund.detail` for the
+credentials proven, the trust root, and the evidence each claim was read from.
 
-| Section | Description |
-|---------|-------------|
-| **Signer** | Trusted artifacts, grouped by signer with key information |
-| **UNTRUSTED** | Artifacts signed by keys not in your trust config |
-| **UNSIGNED (not allowed)** | Unsigned artifacts not listed in the `unsigned` section |
-| **TRUSTED UNSIGNED (skipped)** | Artifacts listed in the `unsigned` section (skipped) |
-| **VERIFICATION_FAILED** | Artifacts with invalid signatures (cryptographic failure) |
+### Outcomes
+
+| Outcome | Meaning |
+|---------|---------|
+| **SATISFIED** | The claims found meet what the policy requires of this artifact |
+| **UNSATISFIED** | Verification succeeded, but not by a signer the policy accepts |
+| **FAILED** | A signature did not verify — an attack signal, never tolerated |
+| **NO_CLAIM** | No evidence was found at all |
+| **INDETERMINATE** | Verification could not be decided; the reason says why (for example a key that could not be fetched) |
+| **NOT_CONFIGURED** | No rule in the policy applies to this artifact |
+
+An artifact listed in `signature-optional` reaches `NO_CLAIM` like any other
+artifact without evidence; what the listing changes is whether that blocks.
 
 ### Exit Codes
 
 | Exit Code | Condition |
 |-----------|-----------|
-| `0` | All dependencies are trusted |
-| `1` | Untrusted, unsigned, or verification-failed artifacts found (when `on-untrusted: fail`) |
+| `0` | Nothing found blocks the build |
+| `1` | A blocking outcome was found: `FAILED` always, and `UNSATISFIED`, `INDETERMINATE` or an unlisted `NO_CLAIM` when `on-untrusted: fail` |
 
 When `on-untrusted: warn` is set, warnings are logged but the build succeeds.
+`FAILED` blocks regardless: a signature that does not verify is not a coverage
+question.
 
 ### Maven Properties
 
@@ -379,7 +378,7 @@ This creates a `sigmund.yaml` in your project root by:
 2. Downloading and verifying their signatures
 3. Grouping artifacts by signer (based on proven credentials)
 4. Collapsing common groupId prefixes into wildcard patterns (e.g., `io.quarkus.*`)
-5. Listing unsigned artifacts in the `unsigned` section
+5. Listing artifacts with no signature in the `signature-optional` section
 
 The generated file can be used directly with `mvn sigmund:verify`.
 
@@ -401,7 +400,7 @@ trust:
   org.apache.maven.*: signer-2
   com.example:specific-lib: signer-1
 
-unsigned:
+signature-optional:
   - com.internal.utils:helper-lib
 ```
 
@@ -581,9 +580,9 @@ This usually means:
 
 Run `mvn sigmund:dependency-signers` to see the actual signer credentials, then compare with your config.
 
-### "UNSIGNED (not allowed)" for artifacts that should be signed
+### "NO_CLAIM" for artifacts that should be signed
 
-The artifact might not have a `.asc` signature file in the repository. Check Maven Central or your artifact repository. If the artifact is legitimately unsigned, add it to the `unsigned` section.
+The artifact might not have a `.asc` signature file in the repository. Check Maven Central or your artifact repository. If the artifact is legitimately unsigned, add it to the `signature-optional` section.
 
 ### Fingerprint mismatches
 

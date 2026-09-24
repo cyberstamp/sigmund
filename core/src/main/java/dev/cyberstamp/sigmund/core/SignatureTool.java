@@ -18,7 +18,7 @@ import java.util.Set;
  *
  * <h2>Verification routing</h2>
  * <p>
- * {@link #canVerify(VerificationUnit)} lets each tool declare what it can handle within
+ * {@link #canVerify(Claim)} lets each tool declare what it can handle within
  * its format. For OpenPGP, GPG handles {@code packetVersion <= 4} and Sequoia handles
  * {@code packetVersion >= 5}. This keeps all routing decisions out of the facade.
  *
@@ -37,7 +37,7 @@ import java.util.Set;
  * (e.g., GPG may lock the keyring during concurrent operations).
  *
  * @see SignatureFormat
- * @see VerificationUnit
+ * @see Claim
  * @see VerifyResult
  */
 public interface SignatureTool {
@@ -88,7 +88,7 @@ public interface SignatureTool {
      * This is a <strong>capability</strong> declaration — it says what the tool <em>can</em> do,
      * not what it <em>will</em> do in a given configuration. Used by the builder to route
      * signer credentials to tools for signing. Not used for verification —
-     * {@link #canVerify(VerificationUnit)} handles that based on unit content.
+     * {@link #canVerify(Claim)} handles that based on claim content.
      *
      * @return the supported credential type strings
      *         (e.g., {@code ["openpgp4"]}, {@code ["openpgp4", "openpgp6"]})
@@ -96,15 +96,30 @@ public interface SignatureTool {
     Set<String> supportedCredentialTypes();
 
     /**
-     * Checks whether this tool can verify the given unit.
+     * Checks whether this tool can verify the given claim.
      * <p>
      * For OpenPGP, routing is based on the signature packet version: GPG handles
-     * v1–v4, Sequoia handles v5+. For Sigstore, the tool handles its own unit type.
+     * v1–v4, Sequoia handles v5+. For Sigstore, the tool handles its own claim type.
      *
-     * @param unit the verification unit to check
-     * @return {@code true} if this tool can verify the unit
+     * @param claim the claim to check
+     * @return {@code true} if this tool can verify the claim
      */
-    boolean canVerify(VerificationUnit unit);
+    boolean canVerify(Claim claim);
+
+    /**
+     * Returns the trust root this tool verifies against.
+     *
+     * <p>
+     * The root is a property of how the tool was configured, not of an individual claim, so
+     * it is reported once rather than per result. Recording it is what lets two runs that
+     * disagree about the same artifact be told apart: one machine's keyring held the signer's
+     * key, another's did not.
+     *
+     * @return the trust root, or {@link TrustRootRef#unknown()} when the tool cannot say
+     */
+    default TrustRootRef trustRoot() {
+        return TrustRootRef.unknown();
+    }
 
     /**
      * Signs an artifact file and writes the signature to the output path.
@@ -122,17 +137,17 @@ public interface SignatureTool {
     SignResult sign(Path artifactFile, Path outputSig);
 
     /**
-     * Verifies a single verification unit against an artifact file.
+     * Verifies a single claim against an artifact file.
      * <p>
      * Returns a result object, never throws for verification outcomes (invalid signature,
      * missing key). Throws only for infrastructure failures.
      *
      * @param artifactFile the artifact that was signed
-     * @param unit the verification unit to verify
+     * @param claim the claim to verify
      * @return the typed verification result
      * @throws ToolExecutionException if verification cannot be attempted
      */
-    VerifyResult verify(Path artifactFile, VerificationUnit unit);
+    VerifyResult verify(Path artifactFile, Claim claim);
 
     /**
      * Extracts proven credentials from a verification result.
@@ -142,7 +157,8 @@ public interface SignatureTool {
      * {@code version < 6} → {@code FingerprintCredential("openpgp4", ...)},
      * {@code version >= 6} → {@code FingerprintCredential("openpgp6", ...)}.
      * <p>
-     * Returns an empty list if the result is not {@link Verdict#PASS}.
+     * Returns an empty list unless the result is {@link ClaimOutcome#VERIFIED}: an
+     * unverified claim proves no credential.
      *
      * @param result the verification result to extract credentials from
      * @return the proven credentials, or an empty list if verification did not pass

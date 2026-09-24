@@ -11,7 +11,7 @@ import java.util.List;
  * <p>
  * Each signature format (OpenPGP, Sigstore, etc.) has its own file format, detection
  * rules, and combining semantics. {@code SignatureFormat} keeps the facade and tools
- * format-agnostic — they work with {@link VerificationUnit}s parsed from files,
+ * format-agnostic — they work with {@link Claim}s parsed from files,
  * not with raw file content.
  *
  * <h2>Format vs tool distinction</h2>
@@ -22,7 +22,7 @@ import java.util.List;
  *
  * <h2>Content-based detection</h2>
  * <p>
- * {@link #canHandle(Path)} reads the file to detect the format by content, not just
+ * {@link #canHandle(Evidence)} inspects content to detect the format, not just
  * by file extension. This handles cases where file extensions are missing or incorrect.
  *
  * @see SignatureTool#signatureFormat()
@@ -52,41 +52,41 @@ public interface SignatureFormat {
      * <p>
      * Detection is extension-first for performance: if the file name matches
      * {@link #fileExtension()}, returns {@code true} immediately. Otherwise,
-     * delegates to {@link #canHandleByContent(Path)} for content-based detection.
+     * delegates to {@link #canHandleByContent(Evidence)} for content-based detection.
      *
-     * @param signatureFile the path to the signature file
-     * @return {@code true} if this format can parse the file
+     * @param evidence the evidence to check
+     * @return {@code true} if this format can parse it
      */
-    default boolean canHandle(Path signatureFile) {
-        if (signatureFile.getFileName().toString().endsWith(fileExtension())) {
+    default boolean canHandle(Evidence evidence) {
+        if (evidence.file().getFileName().toString().endsWith(fileExtension())) {
             return true;
         }
-        return canHandleByContent(signatureFile);
+        return canHandleByContent(evidence);
     }
 
     /**
      * Checks whether this format can handle the given signature file by inspecting its content.
      * <p>
-     * Called by {@link #canHandle(Path)} when the file extension does not match.
+     * Called by {@link #canHandle(Evidence)} when the file extension does not match.
      * Implementations read the file and inspect its structure.
      *
-     * @param signatureFile the path to the signature file
-     * @return {@code true} if this format can parse the file based on its content
+     * @param evidence the evidence to check
+     * @return {@code true} if this format can parse it, judged from its content
      */
-    boolean canHandleByContent(Path signatureFile);
+    boolean canHandleByContent(Evidence evidence);
 
     /**
-     * Parses a signature file into individually verifiable units.
+     * Parses a signature file into individually verifiable claims.
      * <p>
-     * A single file may produce multiple units — for example, an OpenPGP {@code .asc}
+     * A single file may produce multiple claims — for example, an OpenPGP {@code .asc}
      * file may contain two armored blocks (classical and PQC), each parsed into a
-     * separate {@link OpenPgpVerificationUnit}.
+     * separate {@link OpenPgpClaim}.
      *
-     * @param signatureFile the path to the signature file
-     * @return the parsed verification units
+     * @param evidence the evidence to parse
+     * @return the parsed claims
      * @throws ToolExecutionException if the file cannot be read or parsed
      */
-    List<VerificationUnit> parse(Path signatureFile);
+    List<Claim> parse(Evidence evidence);
 
     /**
      * Returns whether this format supports combining multiple signatures into a single file.

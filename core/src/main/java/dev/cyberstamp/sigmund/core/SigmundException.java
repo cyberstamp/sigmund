@@ -4,7 +4,7 @@ package dev.cyberstamp.sigmund.core;
  * Base exception for all Sigmund errors.
  * <p>
  * Sigmund distinguishes between <em>verification outcomes</em> (represented as result objects
- * such as {@link EvidenceResult} and {@link TrustResult}) and <em>infrastructure failures</em>
+ * such as {@link ClaimResult} and {@link ArtifactResult}) and <em>infrastructure failures</em>
  * (represented as exceptions). This exception and its subclasses cover infrastructure failures —
  * situations where an operation could not be attempted or completed.
  *

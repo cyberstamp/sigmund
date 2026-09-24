@@ -4,13 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.cyberstamp.sigmund.core.ClaimOutcome;
 import dev.cyberstamp.sigmund.core.Credential;
 import dev.cyberstamp.sigmund.core.EmailCredential;
-import dev.cyberstamp.sigmund.core.OpenPgpVerificationUnit;
+import dev.cyberstamp.sigmund.core.IndeterminateReason;
+import dev.cyberstamp.sigmund.core.OpenPgpClaim;
+import dev.cyberstamp.sigmund.core.SigstoreClaim;
 import dev.cyberstamp.sigmund.core.SigstoreCredential;
-import dev.cyberstamp.sigmund.core.SigstoreVerificationUnit;
 import dev.cyberstamp.sigmund.core.SigstoreVerifyResult;
-import dev.cyberstamp.sigmund.core.Verdict;
+import dev.cyberstamp.sigmund.core.VerifyResult;
+import dev.sigstore.KeylessVerificationException;
+import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 import org.bouncycastle.asn1.x509.GeneralName;
@@ -65,15 +69,15 @@ class SigstoreToolTest {
     @Nested
     class CanVerify {
         @Test
-        void acceptsSigstoreUnit() {
+        void acceptsSigstoreClaim() {
             assertThat(metadataOnlyTool().canVerify(
-                    new SigstoreVerificationUnit("{}"))).isTrue();
+                    new SigstoreClaim("{}", null))).isTrue();
         }
 
         @Test
-        void rejectsOpenPgpUnit() {
+        void rejectsOpenPgpClaim() {
             assertThat(metadataOnlyTool().canVerify(
-                    new OpenPgpVerificationUnit("block", 4, null, 0))).isFalse();
+                    new OpenPgpClaim("block", 4, null, 0, null))).isFalse();
         }
     }
 
@@ -85,8 +89,7 @@ class SigstoreToolTest {
                     .issuer("https://accounts.google.com")
                     .subject("alice@example.com")
                     .build();
-            var result = new SigstoreVerifyResult(
-                    Verdict.PASS, "alice@example.com", "EC",
+            var result = new SigstoreVerifyResult(ClaimOutcome.VERIFIED, null, "alice@example.com", "EC",
                     sc, "12345", GeneralName.rfc822Name);
 
             List<Credential> credentials = metadataOnlyTool().extractCredentials(result);
@@ -110,8 +113,7 @@ class SigstoreToolTest {
                     .subject("https://github.com/org/repo/.github/workflows/release.yml@refs/tags/v1.0")
                     .sourceRepositoryUri("https://github.com/org/repo")
                     .build();
-            var result = new SigstoreVerifyResult(
-                    Verdict.PASS,
+            var result = new SigstoreVerifyResult(ClaimOutcome.VERIFIED, null,
                     "https://github.com/org/repo/.github/workflows/release.yml@refs/tags/v1.0",
                     "EC", sc, "67890",
                     GeneralName.uniformResourceIdentifier);
@@ -126,8 +128,7 @@ class SigstoreToolTest {
 
         @Test
         void failedVerificationProducesNoCredentials() {
-            var result = new SigstoreVerifyResult(
-                    Verdict.FAIL, null, null, null, null, -1);
+            var result = new SigstoreVerifyResult(ClaimOutcome.FAILED, null, null, null, null, null, -1);
             assertThat(metadataOnlyTool().extractCredentials(result).isEmpty()).isTrue();
         }
 
@@ -136,8 +137,7 @@ class SigstoreToolTest {
             var sc = new SigstoreCredential.Builder()
                     .subject("alice@example.com")
                     .build();
-            var result = new SigstoreVerifyResult(
-                    Verdict.PASS, "alice@example.com", "EC",
+            var result = new SigstoreVerifyResult(ClaimOutcome.VERIFIED, null, "alice@example.com", "EC",
                     sc, "12345", GeneralName.rfc822Name);
 
             List<Credential> credentials = metadataOnlyTool().extractCredentials(result);
@@ -149,8 +149,7 @@ class SigstoreToolTest {
 
         @Test
         void missingSubjectProducesNoCredentials() {
-            var result = new SigstoreVerifyResult(
-                    Verdict.PASS, null, "EC",
+            var result = new SigstoreVerifyResult(ClaimOutcome.VERIFIED, null, null, "EC",
                     null, "12345", -1);
 
             assertThat(metadataOnlyTool().extractCredentials(result).isEmpty()).isTrue();
@@ -172,8 +171,39 @@ class SigstoreToolTest {
 
         @Test
         void verifyThrowsWithoutVerifier() {
-            assertThatThrownBy(() -> metadataOnlyTool().verify(null, new SigstoreVerificationUnit("{}")))
+            assertThatThrownBy(() -> metadataOnlyTool().verify(null, new SigstoreClaim("{}", null)))
                     .isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Nested
+    class FailureMapping {
+
+        @Test
+        void unparseableBundleIsIndeterminateNotFailed() {
+            VerifyResult result = SigstoreTool.evidenceMalformed();
+            assertThat(result.isFailed()).isFalse();
+            assertThat(result.isIndeterminate(IndeterminateReason.EVIDENCE_MALFORMED)).isTrue();
+        }
+
+        @Test
+        void infrastructureFailureIsIndeterminateRatherThanThrown() {
+            KeylessVerificationException networkFailure = new KeylessVerificationException(
+                    "could not reach the trust root", new IOException("connection refused"));
+
+            VerifyResult result = metadataOnlyTool().handleVerificationException(networkFailure);
+
+            assertThat(result.isIndeterminate(IndeterminateReason.TRUST_ROOT_UNAVAILABLE)).isTrue();
+        }
+
+        @Test
+        void badSignatureRemainsFailed() {
+            KeylessVerificationException badSignature = new KeylessVerificationException("signature did not verify");
+
+            VerifyResult result = metadataOnlyTool().handleVerificationException(badSignature);
+
+            assertThat(result.isFailed()).isTrue();
+            assertThat(result.reason()).isNull();
         }
     }
 }

@@ -3,9 +3,9 @@ package dev.cyberstamp.sigmund.core;
 /**
  * A {@link VerifyResult} for cases where no real verification was performed.
  * <p>
- * Used when a signature file is missing ({@link Verdict#SKIPPED}) or when
+ * Used when no tool could verify a claim, or when
  * verification fails before producing a format-specific result
- * ({@link Verdict#FAIL}).
+ * evidence could not be parsed at all.
  *
  * @see VerifyResult
  */
@@ -14,12 +14,14 @@ public final class UnverifiedResult extends VerifyResult {
     /**
      * Creates an unverified result with the given verdict.
      *
-     * @param verdict the verification outcome (must not be {@link Verdict#PASS})
+     * @param outcome what verification established; never {@link ClaimOutcome#VERIFIED}
+     * @param reason why verification could not complete, or {@code null} when it failed
      */
-    public UnverifiedResult(Verdict verdict) {
-        super(verdict, null, null);
-        if (verdict == Verdict.PASS) {
-            throw new IllegalArgumentException("UnverifiedResult cannot have verdict PASS");
+    public UnverifiedResult(ClaimOutcome outcome, IndeterminateReason reason) {
+        super(outcome, reason, null, null);
+        if (outcome == ClaimOutcome.VERIFIED) {
+            throw new IllegalArgumentException(
+                    "UnverifiedResult cannot claim a verified outcome: no tool verified it");
         }
     }
 }

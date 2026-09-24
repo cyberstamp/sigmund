@@ -5,6 +5,7 @@ import dev.cyberstamp.sigmund.core.SignatureTool;
 import dev.cyberstamp.sigmund.core.SignatureToolFactory;
 import dev.cyberstamp.sigmund.core.SigstoreCredential;
 import dev.cyberstamp.sigmund.core.ToolExecutionException;
+import dev.cyberstamp.sigmund.core.TrustRootRef;
 import dev.sigstore.KeylessSigner;
 import dev.sigstore.KeylessVerifier;
 import dev.sigstore.TrustedRootProvider;
@@ -96,7 +97,8 @@ public class SigstoreToolFactory implements SignatureToolFactory {
 
             KeylessSigner signer = signerBuilder.build();
             KeylessVerifier verifier = buildVerifier(settings, staging);
-            return new SigstoreTool(format, signer, verifier, sigstoreSubject);
+            return new SigstoreTool(format, signer, verifier, sigstoreSubject,
+                    trustRootRef(settings, staging));
         } catch (Exception e) {
             throw new ToolExecutionException(
                     "Failed to create Sigstore signing tool: " + e.getMessage(), e);
@@ -115,11 +117,28 @@ public class SigstoreToolFactory implements SignatureToolFactory {
         boolean staging = "true".equals(settings.get("staging"));
         try {
             KeylessVerifier verifier = buildVerifier(settings, staging);
-            return new SigstoreTool(format, null, verifier, null);
+            return new SigstoreTool(format, null, verifier, null,
+                    trustRootRef(settings, staging));
         } catch (Exception e) {
             throw new ToolExecutionException(
                     "Failed to create Sigstore verification tool: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Names the trust root {@link #buildVerifier} will use, so results record which
+     * certificates were acceptable rather than only that verification was local.
+     *
+     * @param settings tool settings from the {@code tools.sigstore} config section
+     * @param staging whether the staging deployment was selected
+     * @return the trust root reference
+     */
+    private static TrustRootRef trustRootRef(Map<String, String> settings, boolean staging) {
+        String trustedRoot = settings.get("trusted-root");
+        if (trustedRoot != null && !trustedRoot.isBlank()) {
+            return TrustRootRef.sigstore(trustedRoot);
+        }
+        return TrustRootRef.sigstore(staging ? "staging" : "public-good");
     }
 
     private KeylessVerifier buildVerifier(Map<String, String> settings, boolean staging)

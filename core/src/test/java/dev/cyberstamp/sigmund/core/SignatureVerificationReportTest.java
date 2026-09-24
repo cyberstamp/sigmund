@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +17,7 @@ class SignatureVerificationReportTest {
         @Test
         void allPass() {
             var report = reportWith(passResult(), passResult());
-            assertThat(report.verdict()).isEqualTo(ReportVerdict.ALL_PASS);
+            assertThat(report.counts()).containsExactly(Map.entry(ClaimOutcome.VERIFIED, 2));
             assertThat(report.isPass()).isTrue();
             assertThat(report.isLenientPass()).isTrue();
         }
@@ -24,7 +25,7 @@ class SignatureVerificationReportTest {
         @Test
         void passWithSkipped() {
             var report = reportWith(passResult(), skippedResult());
-            assertThat(report.verdict()).isEqualTo(ReportVerdict.PASS_WITH_SKIPS);
+            assertThat(report.counts()).containsEntry(ClaimOutcome.INDETERMINATE, 1);
             assertThat(report.isPass()).isFalse();
             assertThat(report.isLenientPass()).isTrue();
         }
@@ -32,7 +33,7 @@ class SignatureVerificationReportTest {
         @Test
         void passWithNoKey() {
             var report = reportWith(passResult(), noKeyResult());
-            assertThat(report.verdict()).isEqualTo(ReportVerdict.PASS_WITH_SKIPS);
+            assertThat(report.counts()).containsEntry(ClaimOutcome.INDETERMINATE, 1);
             assertThat(report.isPass()).isFalse();
             assertThat(report.isLenientPass()).isTrue();
         }
@@ -40,7 +41,7 @@ class SignatureVerificationReportTest {
         @Test
         void passWithFailures() {
             var report = reportWith(passResult(), failResult());
-            assertThat(report.verdict()).isEqualTo(ReportVerdict.PASS_WITH_FAILURES);
+            assertThat(report.counts()).containsEntry(ClaimOutcome.FAILED, 1);
             assertThat(report.isPass()).isFalse();
             assertThat(report.isLenientPass()).isFalse();
         }
@@ -48,7 +49,7 @@ class SignatureVerificationReportTest {
         @Test
         void allFail() {
             var report = reportWith(failResult(), failResult());
-            assertThat(report.verdict()).isEqualTo(ReportVerdict.NONE_PASSED);
+            assertThat(report.counts()).doesNotContainKey(ClaimOutcome.VERIFIED);
             assertThat(report.isPass()).isFalse();
             assertThat(report.isLenientPass()).isFalse();
         }
@@ -56,13 +57,13 @@ class SignatureVerificationReportTest {
         @Test
         void allSkipped() {
             var report = reportWith(skippedResult());
-            assertThat(report.verdict()).isEqualTo(ReportVerdict.NONE_PASSED);
+            assertThat(report.counts()).doesNotContainKey(ClaimOutcome.VERIFIED);
         }
 
         @Test
         void emptyReport() {
             var report = new SignatureVerificationReport(List.of());
-            assertThat(report.verdict()).isEqualTo(ReportVerdict.NONE_PASSED);
+            assertThat(report.counts()).doesNotContainKey(ClaimOutcome.VERIFIED);
             assertThat(report.isPass()).isFalse();
             assertThat(report.isLenientPass()).isFalse();
         }
@@ -71,7 +72,7 @@ class SignatureVerificationReportTest {
         void emptyFileReport() {
             var report = new SignatureVerificationReport(
                     List.of(new FileSignatureReport(Path.of("test.asc"), "openpgp", List.of())));
-            assertThat(report.verdict()).isEqualTo(ReportVerdict.NONE_PASSED);
+            assertThat(report.counts()).doesNotContainKey(ClaimOutcome.VERIFIED);
         }
     }
 
@@ -83,7 +84,7 @@ class SignatureVerificationReportTest {
             var file1 = new FileSignatureReport(Path.of("a.asc"), "openpgp", List.of(passResult()));
             var file2 = new FileSignatureReport(Path.of("b.asc"), "openpgp", List.of(failResult()));
             var report = new SignatureVerificationReport(List.of(file1, file2));
-            assertThat(report.verdict()).isEqualTo(ReportVerdict.PASS_WITH_FAILURES);
+            assertThat(report.counts()).containsEntry(ClaimOutcome.FAILED, 1);
         }
 
         @Test
@@ -103,13 +104,13 @@ class SignatureVerificationReportTest {
             String formatted = report.format();
             assertThat(formatted).contains("Signature Verification Report:");
             assertThat(formatted).contains("[1]");
-            assertThat(formatted).contains("PASS");
-            assertThat(formatted).contains("Overall: ALL_PASS");
+            assertThat(formatted).contains("VERIFIED");
+            assertThat(formatted).contains("Overall: 1 VERIFIED");
         }
 
         @Test
         void formatIncludesAlgorithm() {
-            var result = new OpenPgpVerifyResult(Verdict.PASS,
+            var result = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     "Alice", "RSA", 4, "ABCD1234", "FULL_FP");
             var report = reportWith(result);
             String formatted = report.format();
@@ -118,7 +119,7 @@ class SignatureVerificationReportTest {
 
         @Test
         void formatIncludesKeyId() {
-            var result = new OpenPgpVerifyResult(Verdict.PASS,
+            var result = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     null, null, 4, "ABCD1234", "FULL_FP");
             var report = reportWith(result);
             String formatted = report.format();
@@ -127,7 +128,7 @@ class SignatureVerificationReportTest {
 
         @Test
         void formatIncludesSignerName() {
-            var result = new OpenPgpVerifyResult(Verdict.PASS,
+            var result = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     "Alice <alice@example.com>", "RSA", 4, null, null);
             var report = reportWith(result);
             String formatted = report.format();
@@ -143,18 +144,20 @@ class SignatureVerificationReportTest {
     }
 
     private static OpenPgpVerifyResult passResult() {
-        return new OpenPgpVerifyResult(Verdict.PASS, null, "RSA", 4, null, null);
+        return new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, null, "RSA", 4, null, null);
     }
 
     private static OpenPgpVerifyResult failResult() {
-        return new OpenPgpVerifyResult(Verdict.FAIL, null, null, 4, null, null);
+        return new OpenPgpVerifyResult(ClaimOutcome.FAILED, null, null, null, 4, null, null);
     }
 
     private static OpenPgpVerifyResult skippedResult() {
-        return new OpenPgpVerifyResult(Verdict.SKIPPED, null, null, 4, null, null);
+        return new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.UNSUPPORTED_ALGORITHM, null, null, 4,
+                null, null);
     }
 
     private static OpenPgpVerifyResult noKeyResult() {
-        return new OpenPgpVerifyResult(Verdict.NO_KEY, null, null, 4, null, null);
+        return new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE, null, null, 4, null,
+                null);
     }
 }

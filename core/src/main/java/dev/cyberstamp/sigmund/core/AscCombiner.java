@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import org.bouncycastle.bcpg.ArmoredInputStream;
@@ -19,10 +20,43 @@ import org.bouncycastle.bcpg.ArmoredOutputStream;
  * This is particularly useful for combining classical and post-quantum signatures
  * into a single .asc file with two separate armored blocks.
  */
-public final class AscCombiner {
+final class AscCombiner {
 
     private static final String BEGIN_MARKER = "-----BEGIN PGP ";
     private static final String END_MARKER = "-----END PGP ";
+
+    /** Packet tag for compressed data, which may wrap a signature packet. */
+    private static final int TAG_COMPRESSED_DATA = 8;
+
+    /** Signature subpacket type carrying the signer's key fingerprint (RFC 9580 §5.2.3.35). */
+    private static final int SUBPACKET_TYPE_ISSUER_FINGERPRINT = 33;
+
+    /** Signature subpacket type carrying the signature creation time (RFC 9580 §5.2.3.11). */
+    private static final int SUBPACKET_TYPE_CREATION_TIME = 2;
+
+    /**
+     * A half-open range of bytes within a dearmored packet: the subpacket areas of a
+     * signature, and the value of a single subpacket inside them.
+     *
+     * @param start index of the first byte
+     * @param end index one past the last byte
+     */
+    private record ByteRange(int start, int end) {
+    }
+
+    /**
+     * The hashed and unhashed subpacket areas of a signature packet.
+     *
+     * <p>
+     * Locating them differs by version: v4 declares two-byte area lengths, while v6 declares
+     * four-byte lengths and may carry a salt before them. Resolving the areas once means
+     * every subpacket — issuer fingerprint, creation time — is read from the same place.
+     *
+     * @param hashed the area covered by the signature
+     * @param unhashed the area that is not covered by the signature
+     */
+    private record SubpacketAreas(ByteRange hashed, ByteRange unhashed) {
+    }
 
     /**
      * Private constructor to prevent instantiation of this utility class.
@@ -171,10 +205,12 @@ public final class AscCombiner {
             int version = detectVersionFromPackets(raw);
             int bodyOffset = packetBodyOffset(raw);
             int algoId = extractPublicKeyAlgoId(raw, bodyOffset, version);
-            String fingerprint = extractIssuerFingerprintFromPackets(raw);
-            return new OpenPgpSignaturePacketInfo(version, algoId, fingerprint);
+            SubpacketAreas areas = resolveSubpacketAreas(raw);
+            String fingerprint = extractIssuerFingerprintFromPackets(raw, areas);
+            Instant creationTime = extractCreationTimeFromPackets(raw, areas);
+            return new OpenPgpSignaturePacketInfo(version, algoId, fingerprint, creationTime);
         } catch (IOException e) {
-            return new OpenPgpSignaturePacketInfo(-1, -1, null);
+            return new OpenPgpSignaturePacketInfo(-1, -1, null, null);
         }
     }
 
@@ -194,86 +230,100 @@ public final class AscCombiner {
         return offset < raw.length ? raw[offset] & 0xFF : -1;
     }
 
-    private static final int SUBPACKET_TYPE_ISSUER_FINGERPRINT = 33;
-
-    private static String extractIssuerFingerprintFromPackets(byte[] raw) {
+    private static SubpacketAreas resolveSubpacketAreas(byte[] raw) {
         int bodyOffset = packetBodyOffset(raw);
         if (bodyOffset < 0 || bodyOffset >= raw.length) {
             return null;
         }
         int version = raw[bodyOffset] & 0xFF;
-        if (version == 4) {
-            // v4: version(1) + sig type(1) + pubkey algo(1) + hash algo(1) + 2-byte hashed subpacket length
-            return tryExtractFromV4Subpackets(raw, bodyOffset + 4);
-        }
-        // v5/v6: version(1) + sig type(1) + pubkey algo(1) + hash algo(1), then possibly salt
+        // version(1) + signature type(1) + public-key algorithm(1) + hash algorithm(1)
         int base = bodyOffset + 4;
-        // Some v6 implementations (e.g. sq for PQC) omit the salt field;
-        // RFC 9580 v6 includes salt length + salt before the hashed subpackets.
-        // Try without salt first, then with salt.
-        String fp = tryExtractFromSubpackets(raw, base);
-        if (fp == null && base < raw.length) {
-            int saltLen = raw[base] & 0xFF;
-            fp = tryExtractFromSubpackets(raw, base + 1 + saltLen);
+        if (version == 4) {
+            return areasWithLengthSize(raw, base, 2);
         }
-        return fp;
+        // Some v6 implementations (sq for PQC among them) omit the salt RFC 9580 specifies,
+        // so try the layout without a salt first and fall back to skipping one. The variant
+        // that yields an issuer fingerprint is the one that parsed correctly.
+        SubpacketAreas withoutSalt = areasWithLengthSize(raw, base, 4);
+        if (carriesIssuerFingerprint(raw, withoutSalt)) {
+            return withoutSalt;
+        }
+        if (base < raw.length) {
+            int saltLength = raw[base] & 0xFF;
+            SubpacketAreas withSalt = areasWithLengthSize(raw, base + 1 + saltLength, 4);
+            if (carriesIssuerFingerprint(raw, withSalt)) {
+                return withSalt;
+            }
+        }
+        return withoutSalt;
     }
 
-    private static String tryExtractFromV4Subpackets(byte[] raw, int pos) {
-        if (pos + 2 > raw.length) {
-            return null;
-        }
-        int hashedLen = ((raw[pos] & 0xFF) << 8) | (raw[pos + 1] & 0xFF);
-        pos += 2;
-        if (hashedLen < 0 || pos + hashedLen > raw.length) {
-            return null;
-        }
-        String fp = findIssuerFingerprint(raw, pos, pos + hashedLen);
-        if (fp != null) {
-            return fp;
-        }
-        pos += hashedLen;
-        if (pos + 2 > raw.length) {
-            return null;
-        }
-        int unhashedLen = ((raw[pos] & 0xFF) << 8) | (raw[pos + 1] & 0xFF);
-        pos += 2;
-        if (unhashedLen < 0 || pos + unhashedLen > raw.length) {
-            return null;
-        }
-        return findIssuerFingerprint(raw, pos, pos + unhashedLen);
+    private static boolean carriesIssuerFingerprint(byte[] raw, SubpacketAreas areas) {
+        return areas != null && findIssuerFingerprint(raw, areas.hashed()) != null;
     }
 
-    private static String tryExtractFromSubpackets(byte[] raw, int pos) {
-        if (pos + 4 > raw.length) {
+    private static SubpacketAreas areasWithLengthSize(byte[] raw, int pos, int lengthSize) {
+        int hashedLength = readLength(raw, pos, lengthSize);
+        if (hashedLength < 0) {
             return null;
         }
-        int hashedLen = ((raw[pos] & 0xFF) << 24) | ((raw[pos + 1] & 0xFF) << 16)
-                | ((raw[pos + 2] & 0xFF) << 8) | (raw[pos + 3] & 0xFF);
-        if (hashedLen < 0 || hashedLen > 65535 || pos + 4 + hashedLen > raw.length) {
+        int hashedStart = pos + lengthSize;
+        int hashedEnd = hashedStart + hashedLength;
+        if (hashedEnd > raw.length) {
             return null;
         }
-        pos += 4;
-        String fp = findIssuerFingerprint(raw, pos, pos + hashedLen);
-        if (fp != null) {
-            return fp;
+        ByteRange hashed = new ByteRange(hashedStart, hashedEnd);
+        int unhashedLength = readLength(raw, hashedEnd, lengthSize);
+        if (unhashedLength < 0) {
+            return new SubpacketAreas(hashed, new ByteRange(hashedEnd, hashedEnd));
         }
-        pos += hashedLen;
-        if (pos + 4 > raw.length) {
-            return null;
-        }
-        int unhashedLen = ((raw[pos] & 0xFF) << 24) | ((raw[pos + 1] & 0xFF) << 16)
-                | ((raw[pos + 2] & 0xFF) << 8) | (raw[pos + 3] & 0xFF);
-        if (unhashedLen < 0 || unhashedLen > 65535 || pos + 4 + unhashedLen > raw.length) {
-            return null;
-        }
-        pos += 4;
-        return findIssuerFingerprint(raw, pos, pos + unhashedLen);
+        int unhashedStart = hashedEnd + lengthSize;
+        int unhashedEnd = Math.min(unhashedStart + unhashedLength, raw.length);
+        return new SubpacketAreas(hashed, new ByteRange(unhashedStart, unhashedEnd));
     }
 
-    private static String findIssuerFingerprint(byte[] data, int start, int end) {
-        int pos = start;
-        while (pos < end) {
+    private static int readLength(byte[] raw, int pos, int lengthSize) {
+        if (pos + lengthSize > raw.length) {
+            return -1;
+        }
+        int length = 0;
+        for (int i = 0; i < lengthSize; i++) {
+            length = (length << 8) | (raw[pos + i] & 0xFF);
+        }
+        return length >= 0 && length <= 65535 ? length : -1;
+    }
+
+    private static String extractIssuerFingerprintFromPackets(byte[] raw, SubpacketAreas areas) {
+        if (areas == null) {
+            return null;
+        }
+        String fingerprint = findIssuerFingerprint(raw, areas.hashed());
+        return fingerprint != null ? fingerprint : findIssuerFingerprint(raw, areas.unhashed());
+    }
+
+    /**
+     * Extracts the signature creation time, which the signer sets and nothing else attests.
+     *
+     * <p>
+     * Only the hashed area is consulted: a creation time in the unhashed area is not covered
+     * by the signature, so it proves nothing about when the signature was made.
+     */
+    private static Instant extractCreationTimeFromPackets(byte[] raw, SubpacketAreas areas) {
+        return areas == null ? null : findCreationTime(raw, areas.hashed());
+    }
+
+    /**
+     * Locates a signature subpacket of the given type within a subpacket area.
+     *
+     * @param data the dearmored packet bytes
+     * @param area the subpacket area to search
+     * @param type the subpacket type to look for, ignoring the critical-flag bit
+     * @return the range holding the subpacket's value, just past its type byte, or
+     *         {@code null} when the area holds no such subpacket
+     */
+    private static ByteRange findSubpacket(byte[] data, ByteRange area, int type) {
+        int pos = area.start();
+        while (pos < area.end()) {
             if (pos >= data.length) {
                 return null;
             }
@@ -299,24 +349,39 @@ public final class AscCombiner {
             if (subLen < 1 || pos + subLen > data.length) {
                 return null;
             }
-            int type = data[pos] & 0x7F; // bit 7 is the critical flag
-            if (type == SUBPACKET_TYPE_ISSUER_FINGERPRINT && subLen >= 2) {
-                int fpLen = subLen - 2; // minus type byte and key version byte
-                if (fpLen > 0) {
-                    StringBuilder sb = new StringBuilder(fpLen * 2);
-                    for (int i = 0; i < fpLen; i++) {
-                        sb.append(String.format("%02X", data[pos + 2 + i]));
-                    }
-                    return sb.toString();
-                }
+            if ((data[pos] & 0x7F) == type) { // bit 7 is the critical flag
+                return new ByteRange(pos + 1, pos + subLen);
             }
             pos += subLen;
         }
         return null;
     }
 
-    private static final int TAG_SIGNATURE = 2;
-    private static final int TAG_COMPRESSED_DATA = 8;
+    private static String findIssuerFingerprint(byte[] data, ByteRange area) {
+        ByteRange value = findSubpacket(data, area, SUBPACKET_TYPE_ISSUER_FINGERPRINT);
+        if (value == null || value.end() - value.start() < 2) {
+            return null;
+        }
+        // the value begins with a key version byte, then the fingerprint itself
+        StringBuilder sb = new StringBuilder();
+        for (int i = value.start() + 1; i < value.end(); i++) {
+            sb.append(String.format("%02X", data[i]));
+        }
+        return sb.toString();
+    }
+
+    private static Instant findCreationTime(byte[] data, ByteRange area) {
+        ByteRange value = findSubpacket(data, area, SUBPACKET_TYPE_CREATION_TIME);
+        if (value == null || value.end() - value.start() < 4) {
+            return null;
+        }
+        int at = value.start();
+        long seconds = ((long) (data[at] & 0xFF) << 24)
+                | ((long) (data[at + 1] & 0xFF) << 16)
+                | ((long) (data[at + 2] & 0xFF) << 8)
+                | (data[at + 3] & 0xFF);
+        return Instant.ofEpochSecond(seconds);
+    }
 
     private static int detectVersionFromPackets(byte[] raw) {
         if (raw.length < 2) {

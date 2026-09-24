@@ -1,9 +1,11 @@
 package dev.cyberstamp.sigmund.plugin;
 
+import dev.cyberstamp.sigmund.core.ClaimOutcome;
 import dev.cyberstamp.sigmund.core.DiscoveryConfig;
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SignatureVerificationReport;
 import java.io.File;
+import java.util.Map;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
@@ -98,18 +100,18 @@ public class VerifySignatureMojo extends AbstractSigmundMojo {
     }
 
     private String failureMessage(SignatureVerificationReport report) {
-        boolean hasResults = report.files().stream()
-                .anyMatch(f -> !f.results().isEmpty());
-        return switch (report.verdict()) {
-            case NONE_PASSED -> !hasResults
-                    ? "No signatures found in signature file"
-                    : "No signatures could be verified - check that the required keys are available";
-            case PASS_WITH_FAILURES ->
-                "Signature verification failed - one or more signatures are invalid";
-            case PASS_WITH_SKIPS ->
-                "Not all signatures could be verified - use sigmund.lenient=true to tolerate skipped signatures";
-            case ALL_PASS ->
-                throw new IllegalStateException("failureMessage called with ALL_PASS outcome");
-        };
+        Map<ClaimOutcome, Integer> counts = report.counts();
+        if (counts.isEmpty()) {
+            return "No signatures found in signature file";
+        }
+        if (counts.containsKey(ClaimOutcome.FAILED)) {
+            return "Signature verification failed - one or more signatures are invalid";
+        }
+        if (!counts.containsKey(ClaimOutcome.VERIFIED)) {
+            return "No signatures could be verified (" + report.summary()
+                    + ") - check that the required keys are available";
+        }
+        return "Not all signatures could be verified (" + report.summary()
+                + ") - use sigmund.lenient=true to tolerate undecided signatures";
     }
 }

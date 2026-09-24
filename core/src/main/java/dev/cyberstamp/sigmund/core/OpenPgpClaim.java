@@ -1,5 +1,7 @@
 package dev.cyberstamp.sigmund.core;
 
+import java.time.Instant;
+
 /**
  * A single OpenPGP signature block extracted from an armored signature file.
  * <p>
@@ -17,9 +19,34 @@ package dev.cyberstamp.sigmund.core;
  *        or {@code -1} if extraction failed
  * @see Algorithms#algorithmName(int)
  */
-public record OpenPgpVerificationUnit(
+public record OpenPgpClaim(
         String armoredBlock,
         int packetVersion,
         String issuerFingerprint,
-        int algorithmId) implements VerificationUnit {
+        int algorithmId,
+        Instant creationTime) implements Claim {
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * For OpenPGP this is the signature creation subpacket.
+     */
+    @Override
+    public Instant claimTime() {
+        return creationTime;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Always {@link ClaimTimeSource#SIGNER}: the creation subpacket is covered by
+     * the signature but chosen by the signer, and OpenPGP has no timestamp authority to
+     * corroborate it.
+     */
+    @Override
+    public ClaimTimeSource claimTimeSource() {
+        return ClaimTimeSource.SIGNER;
+    }
 }
