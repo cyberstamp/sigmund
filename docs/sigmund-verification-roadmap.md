@@ -79,6 +79,7 @@ flowchart LR
   P4 --> P5
   S --> P5
   P5 -.-> X[P6-P9 parked]
+  B[P10 Backend capabilities]
 ```
 
 **Next: the hook spike (P5.1).** The design's central claim is that
@@ -206,6 +207,22 @@ not silently.
 
 **Demo:** the extension blocks a tampered plugin dependency that the goal
 cannot see.
+
+### P10 — Backend capabilities
+
+Independent of the other phases. Signing and routing still assume each tool handles fixed
+signature versions with one key; GnuPG may gain v6 through RFC 9980, which requires the
+v6 key format — German government funders are pressing for it and work is in progress,
+with no announced date ([LWN, 2026-08-24](https://lwn.net/Articles/1090390/)).
+
+| ID | Task | Refs | Depends | Status |
+|---|---|---|---|---|
+| P10.1 | One signing key per credential type per tool — for example `openpgp4` and `openpgp6` fingerprints for `sq` — so a single tool produces a v4 and a v6 signature in one session, combined into one `.asc` as the cross-tool hybrid flow already does | — | — | todo |
+| P10.2 | Routing from detected capability: each OpenPGP tool reports the signature versions and algorithms its installed version supports (`gpg --version`, `sq version`) instead of fixed packet versions in `canVerify`, so `gpg` is offered v6 signatures once the installed GnuPG reads them, and v5 once a tool does | §1.1 | — | todo |
+| P10.3 | Signing capability follows P10.2: `supportedCredentialTypes()` from the installed version, so `gpg` can sign with a v6 key when it supports one; `BackendAgreementTest` and `ForgedSubkeyBindingTest` cover v6 through `gpg` when available | — | P10.1, P10.2 | todo |
+
+**Demo:** `sq` alone signs an artifact with a v4 and a v6 key in one run; the hybrid
+`.asc` verifies under every installed backend.
 
 ## Parked phases
 
