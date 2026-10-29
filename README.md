@@ -121,7 +121,7 @@ tools:
 For hybrid PQC signing, generate a PQC key with Sequoia and add it to the config:
 
 ```bash
-java -jar cli/target/sigmund.jar keygen --tool sq --userid "Your Name <you@example.com>"
+sq key generate --own-key --userid "Your Name <you@example.com>" --cipher-suite mldsa87-ed448 --profile rfc9580
 ```
 
 Then configure both classic and PQC in `sigmund.yaml`:

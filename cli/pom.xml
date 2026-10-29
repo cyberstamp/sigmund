@@ -14,6 +14,15 @@
     </properties>
     <dependencyManagement>
         <dependencies>
+            <!-- Ahead of the Quarkus BOM, which pins an older Protobuf runtime than sigstore-java's
+                 generated classes load on; the first imported BOM wins. -->
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-bom</artifactId>
+                <version>${protobuf.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>quarkus-bom</artifactId>

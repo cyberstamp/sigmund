@@ -697,7 +697,7 @@ Configured in the top-level `tools.bc` section.
 | `tsk-file` | (none) | Path to an exported Transferable Secret Key (TSK) file for signing |
 | `signing-key-env` | `SIGMUND_BC_SIGNING_KEY` | Environment variable name containing the ASCII-armored private key. For ephemeral CI runners. |
 | `passphrase-env` | `SIGMUND_BC_PASSPHRASE` | Environment variable name containing the passphrase. If not set, falls back to interactive prompt. |
-| `cipher-suite` | `ed25519` | Algorithm `sigmund keygen --tool bc` generates when `--cipher-suite` is not given (see supported values below) |
+| `cipher-suite` | `ed25519` | Algorithm `sigmund keygen` generates when `--cipher-suite` is not given (see supported values below) |
 
 **Supported cipher suites (BC):**
 
@@ -744,8 +744,8 @@ Configured in the top-level `tools.sq` section.
 Sigmund runs `sq` under its own crypto policy, which replaces the host's system policy for those
 runs; see [Accepted algorithms](verification.md#accepted-algorithms).
 
-**Cipher suites for `sigmund keygen --tool sq --cipher-suite`:** there is no `tools.sq`
-setting for this — keys for `sq` are usually generated with `sq key generate` itself.
+**Cipher suites:** keys for `sq` are generated with `sq key generate` itself, not through
+Sigmund; see [Generating a PQC Key](signing.md#generating-a-pqc-key).
 
 Sequoia supports the post-quantum hybrid cipher suites of RFC 9980, which extends OpenPGP v6 (RFC 9580):
 - `mldsa87-ed448` — ML-DSA-87 + Ed448 (default)

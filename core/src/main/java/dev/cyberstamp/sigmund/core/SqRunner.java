@@ -15,45 +15,12 @@ import java.util.regex.Pattern;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 
 /**
- * Wrapper for the Sequoia (sq) command-line tool for PQC key generation,
- * signing, verification, and certificate export.
- * <p>
- * This class provides a Java interface to Sequoia's post-quantum cryptography
- * capabilities, using hybrid cipher suites as defined in RFC 9580. The default
- * cipher suite is {@value #DEFAULT_CIPHER_SUITE} (configurable via
- * {@link #generateKey(String, String)}). When a Sequoia home directory is
- * provided, operations are isolated via the SEQUOIA_HOME environment variable;
- * otherwise sq uses its own defaults.
+ * Wrapper for the Sequoia (sq) command-line tool for signing, verification, and certificate
+ * export, including post-quantum hybrid signatures (RFC 9980). Keys are generated with sq
+ * itself ({@code sq key generate}), not through Sigmund. When a Sequoia home directory is
+ * provided, operations are isolated via the SEQUOIA_HOME environment variable; otherwise sq
+ * uses its own defaults.
  *
- * <p>
- * Example usage:
- *
- * <pre>
- * {
- *     &#64;code
- *     // Initialize with a dedicated Sequoia home directory
- *     Path sqHome = Path.of("/tmp/my-sq-keys");
- *     SqRunner sq = new SqRunner(sqHome);
- *
- *     // Generate a PQC key
- *     String fingerprint = sq.generateKey("Alice &lt;alice@example.com&gt;");
- *
- *     // Sign an artifact
- *     String signature = sq.sign(
- *             Path.of("artifact.jar"),
- *             Path.of("artifact.jar.sig"),
- *             fingerprint);
- *
- *     // Verify the signature
- *     boolean valid = sq.verify(
- *             Path.of("artifact.jar"),
- *             Path.of("artifact.jar.sig"),
- *             fingerprint);
- *
- *     // Export the certificate for distribution
- *     String cert = sq.exportCert(fingerprint);
- * }
- * </pre>
  * <p>
  * Note: This class requires the {@code sq} executable to be available on the
  * system PATH or at the location specified via the constructor.
@@ -61,10 +28,10 @@ import org.bouncycastle.openpgp.PGPPublicKeyRing;
  *
  * @see #isAvailable()
  */
-public class SqRunner implements SignatureTool, KeyGenerator, CertExporter {
+public class SqRunner implements SignatureTool, CertExporter {
 
     /** Default cipher suite for PQC key generation (ML-DSA-87 + Ed448 hybrid). */
-    public static final String DEFAULT_CIPHER_SUITE = "mldsa87-ed448";
+    static final String DEFAULT_CIPHER_SUITE = "mldsa87-ed448";
 
     private static final Set<String> SUPPORTED_CREDENTIAL_TYPES = Set.of(Credential.TYPE_PGP4,
             Credential.TYPE_PGP6);
@@ -154,29 +121,12 @@ public class SqRunner implements SignatureTool, KeyGenerator, CertExporter {
     }
 
     /**
-     * Generates a new PQC key using the default cipher suite ({@value #DEFAULT_CIPHER_SUITE}).
-     *
-     * @param userId the user ID for the key (e.g., "Alice &lt;alice@example.com&gt;")
-     * @return the 64-character hexadecimal fingerprint of the generated key
-     * @throws IllegalArgumentException if userId is null or empty
-     * @throws RuntimeException if the sq command fails
-     * @throws IllegalStateException if the fingerprint cannot be parsed from the output
-     * @see #generateKey(String, String)
-     */
-    public String generateKey(String userId) {
-        return generateKey(userId, DEFAULT_CIPHER_SUITE);
-    }
-
-    /**
-     * Generates a new PQC key using the specified cipher suite.
+     * Generates a new key in sq's store, for tests that need sq to hold a key.
      * <p>
-     * This method runs:
-     * {@code sq key generate --userid <userId> --cipher-suite <cipherSuite>
-     * --profile rfc9580 --own-key}
-     *
-     * <p>
-     * The key is stored in the SEQUOIA_HOME directory and can be used for signing
-     * operations via the returned fingerprint.
+     * Sigmund does not generate keys for sq: sq's own {@code sq key generate} covers
+     * passphrases, expiry and profiles. This runs
+     * {@code sq key generate --userid <userId> --cipher-suite <cipherSuite> --profile rfc9580
+     * --own-key --without-password}, so the key is v6 and unprotected.
      *
      * @param userId the user ID for the key (e.g., "Alice &lt;alice@example.com&gt;")
      * @param cipherSuite the Sequoia cipher suite identifier
@@ -186,22 +136,7 @@ public class SqRunner implements SignatureTool, KeyGenerator, CertExporter {
      * @throws RuntimeException if the sq command fails
      * @throws IllegalStateException if the fingerprint cannot be parsed from the output
      */
-    public String generateKey(String userId, String cipherSuite) {
-        return generateKey(userId, cipherSuite, Credential.TYPE_PGP6);
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Sequoia keys are generated as v6 ({@code --profile rfc9580}), which its post-quantum
-     * suites require, so the only credential type accepted is {@code pgp6}.
-     */
-    @Override
-    public String generateKey(String userId, String cipherSuite, String credentialType) {
-        if (credentialType != null && !Credential.TYPE_PGP6.equals(credentialType)) {
-            throw new ToolExecutionException("sq generates " + Credential.TYPE_PGP6 + " keys only, not "
-                    + credentialType + "; generate a " + Credential.TYPE_PGP4 + " key with bc");
-        }
+    String generateKey(String userId, String cipherSuite) {
         if (userId == null || userId.isEmpty()) {
             throw new IllegalArgumentException("userId cannot be null or empty");
         }

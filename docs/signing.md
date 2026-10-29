@@ -134,7 +134,6 @@ Generate a signing key using BC:
 
 ```bash
 sigmund keygen \
-  --tool bc \
   --userid "Your Name <you@example.com>" \
   --cipher-suite ed25519
 ```
@@ -171,16 +170,16 @@ BC private keys can be encrypted at rest using AES-256 AEAD (OCB mode) with Argo
 
 ```bash
 # Interactive — prompts for passphrase with confirmation
-sigmund keygen --tool bc \
+sigmund keygen \
   --userid "Alice <alice@example.com>" \
   --cipher-suite ed25519
 
 # Non-interactive — reads from SIGMUND_BC_PASSPHRASE by default
-SIGMUND_BC_PASSPHRASE=mysecret sigmund keygen --tool bc \
+SIGMUND_BC_PASSPHRASE=mysecret sigmund keygen \
   --userid "Alice <alice@example.com>"
 
 # Non-interactive — custom env var
-MY_PASSPHRASE=mysecret sigmund keygen --tool bc \
+MY_PASSPHRASE=mysecret sigmund keygen \
   --userid "Alice <alice@example.com>" \
   --passphrase-env MY_PASSPHRASE
 ```
@@ -223,7 +222,7 @@ For ephemeral CI runners (containers, VMs that are destroyed after each build), 
 **One-time setup:** Export your signing key in ASCII-armored format and store it as a CI secret:
 
 ```bash
-sigmund keygen --tool bc --userid "CI <ci@example.com>"
+sigmund keygen --userid "CI <ci@example.com>"
 # Copy the key file from ~/.local/share/sigmund/bc-private/<first 2 hex>/<rest of fingerprint>
 # Or export with GPG: gpg --export-secret-keys --armor <fingerprint>
 # Store the armored content as a CI secret named SIGMUND_BC_SIGNING_KEY

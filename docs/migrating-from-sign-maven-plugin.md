@@ -127,7 +127,6 @@ If you're starting fresh (not reusing an existing key), generate a new BC key:
 
 ```bash
 java -jar cli/target/sigmund.jar keygen \
-  --tool bc \
   --userid "Your Name <you@example.com>" \
   --cipher-suite ed25519
 ```
