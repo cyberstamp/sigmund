@@ -41,6 +41,79 @@ import org.junit.jupiter.api.io.TempDir;
 
 class BcRunnerTest {
 
+    /**
+     * bc generates v4 keys unless asked for v6: v4 is what keyservers serve and gpg signs with,
+     * so a key from a plain {@code keygen --tool bc} can be published and used anywhere.
+     */
+    @Nested
+    class KeyVersion {
+
+        private BcKeyStore store(Path dir) {
+            return new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc-private"));
+        }
+
+        private Set<String> typesOf(BcKeyStore store, String fingerprint) {
+            return new BcRunner(store, fingerprint, null).signingInfo().get(0).credentialTypes();
+        }
+
+        @Test
+        void withoutACredentialTypeTheKeyIsV4(@TempDir Path dir) {
+            BcKeyStore store = store(dir);
+
+            String fingerprint = new BcRunner(store, null, null).generateKey("A <a@example.com>", "ed25519", null);
+
+            assertThat(fingerprint).hasSize(40);
+            assertThat(typesOf(store, fingerprint)).containsExactly(Credential.TYPE_PGP4);
+        }
+
+        @Test
+        void aV4Ed25519KeyUsesTheLegacyEncodingGnuPgReads(@TempDir Path dir) {
+            BcKeyStore store = store(dir);
+            BcRunner runner = new BcRunner(store, null, null);
+
+            String fingerprint = runner.generateKey("A <a@example.com>", "ed25519", Credential.TYPE_PGP4);
+
+            PGPPublicKeyRing ring = store.findPublicKey(fingerprint).ring();
+            ring.getPublicKeys().forEachRemaining(key -> assertThat(key.getAlgorithm())
+                    .isEqualTo(PublicKeyAlgorithmTags.EDDSA_LEGACY));
+        }
+
+        @Test
+        void pgp6GivesAV6Key(@TempDir Path dir) {
+            BcKeyStore store = store(dir);
+
+            String fingerprint = new BcRunner(store, null, null)
+                    .generateKey("A <a@example.com>", "ed25519", Credential.TYPE_PGP6);
+
+            assertThat(fingerprint).hasSize(64);
+            assertThat(typesOf(store, fingerprint)).containsExactly(Credential.TYPE_PGP6);
+        }
+
+        @Test
+        void anEcdsaKeyCannotBeV6(@TempDir Path dir) {
+            assertThatThrownBy(() -> new BcRunner(store(dir), null, null)
+                    .generateKey("A <a@example.com>", "nistp256", Credential.TYPE_PGP6))
+                    .isInstanceOf(ToolExecutionException.class)
+                    .hasMessageContaining("nistp256 produces v4 keys only");
+        }
+
+        @Test
+        void anEd448KeyIsV6Only(@TempDir Path dir) {
+            assertThatThrownBy(() -> new BcRunner(store(dir), null, null)
+                    .generateKey("A <a@example.com>", "ed448", null))
+                    .isInstanceOf(ToolExecutionException.class)
+                    .hasMessageContaining("ed448 produces pgp6 keys only");
+        }
+
+        @Test
+        void anUnknownCredentialTypeIsRejected(@TempDir Path dir) {
+            assertThatThrownBy(() -> new BcRunner(store(dir), null, null)
+                    .generateKey("A <a@example.com>", "ed25519", "sigstore"))
+                    .isInstanceOf(ToolExecutionException.class)
+                    .hasMessageContaining("Unsupported credential type for bc keys: sigstore");
+        }
+    }
+
     @Nested
     class KeyExpiry {
 
@@ -50,7 +123,7 @@ class BcRunnerTest {
                     tempDir.resolve("bc-private"));
             String fingerprint;
             try (BcRunner bcRunner = new BcRunner(store, null, null)) {
-                fingerprint = bcRunner.generateKey("Test <test@example.com>", "nistp256");
+                fingerprint = bcRunner.generateKey("Test <test@example.com>", "nistp256", null);
             }
             Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
 
@@ -73,7 +146,7 @@ class BcRunnerTest {
                     tempDir.resolve("bc-private"));
             String fingerprint;
             try (BcRunner bcRunner = new BcRunner(store, null, null)) {
-                fingerprint = bcRunner.generateKey("Test <test@example.com>", "nistp256");
+                fingerprint = bcRunner.generateKey("Test <test@example.com>", "nistp256", null);
             }
             Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
 
@@ -260,7 +333,7 @@ class BcRunnerTest {
 
         private String generate(String name) {
             return new BcRunner(store(name), null, null)
-                    .generateKey("Test <" + name + "@example.com>", "ed25519");
+                    .generateKey("Test <" + name + "@example.com>", "ed25519", null);
         }
 
         private Path exportTsk(String name, String fp) throws IOException {
@@ -289,7 +362,7 @@ class BcRunnerTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"),
                 tempDir.resolve("bc-private"));
         String fingerprint = new BcRunner(store, null, null)
-                .generateKey("Test <test@example.com>", "ed25519");
+                .generateKey("Test <test@example.com>", "ed25519", null);
         return new BcRunner(store, fingerprint, null);
     }
 
@@ -367,7 +440,7 @@ class BcRunnerTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner runner = new BcRunner(store, null, null);
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519");
+        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
         BcRunner signer = new BcRunner(store, fingerprint, null);
 
         Path artifact = tempDir.resolve("artifact.txt");
@@ -393,7 +466,7 @@ class BcRunnerTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner runner = new BcRunner(store, null, null);
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "nistp256");
+        String fingerprint = runner.generateKey("Test <test@example.com>", "nistp256", null);
         BcRunner signer = new BcRunner(store, fingerprint, null);
 
         Path artifact = tempDir.resolve("artifact.txt");
@@ -431,7 +504,7 @@ class BcRunnerTest {
         BcKeyStore signerStore = new BcKeyStore(null, tempDir.resolve("signer-cert-d"),
                 tempDir.resolve("signer-bc-private"));
         BcRunner signerRunner = new BcRunner(signerStore, null, null);
-        String fp = signerRunner.generateKey("Signer <signer@example.com>", "nistp256");
+        String fp = signerRunner.generateKey("Signer <signer@example.com>", "nistp256", null);
         BcRunner signer = new BcRunner(signerStore, fp, null);
 
         Path artifact = tempDir.resolve("artifact.txt");
@@ -465,7 +538,7 @@ class BcRunnerTest {
         // Signer store: generate key and sign
         BcKeyStore signerStore = new BcKeyStore(null, tempDir.resolve("signer-cd"), tempDir.resolve("signer-bp"));
         BcRunner signerRunner = new BcRunner(signerStore, null, null);
-        String fp = signerRunner.generateKey("Eph <eph@example.com>", "nistp256");
+        String fp = signerRunner.generateKey("Eph <eph@example.com>", "nistp256", null);
         BcRunner signer = new BcRunner(signerStore, fp, null);
 
         Path artifact = tempDir.resolve("artifact.txt");
@@ -517,7 +590,7 @@ class BcRunnerTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner runner = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519");
+        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
         PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
         assertThat(ring).isNotNull();
 
@@ -534,7 +607,7 @@ class BcRunnerTest {
         PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
         BcRunner runner = new BcRunner(store, null, null, provider);
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519");
+        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
         BcRunner signer = new BcRunner(store, fingerprint, null, provider);
 
         Path artifact = tempDir.resolve("artifact.txt");
@@ -557,7 +630,7 @@ class BcRunnerTest {
     void signWithEncryptedKeyNoProviderThrows(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
-        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519");
+        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
 
         // signer has no passphrase provider
         BcRunner signer = new BcRunner(store, fingerprint, null);
@@ -575,7 +648,7 @@ class BcRunnerTest {
     void signWithWrongPassphraseThrows(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
-        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519");
+        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
 
         BcRunner signer = new BcRunner(store, fingerprint, null,
                 fixedPassphrase("wrong-passphrase".toCharArray()));
@@ -592,7 +665,7 @@ class BcRunnerTest {
     void signWithNullPassphraseFromProviderThrows(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
-        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519");
+        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
 
         BcRunner signer = new BcRunner(store, fingerprint, null, fp -> null);
 
@@ -610,7 +683,7 @@ class BcRunnerTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner runner = new BcRunner(store, null, null, fp -> null);
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519");
+        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
         PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
         assertThat(ring).isNotNull();
 
@@ -623,7 +696,7 @@ class BcRunnerTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner runner = new BcRunner(store, null, null, fp -> new char[0]);
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519");
+        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
         PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
 
         PGPSecretKey primary = ring.getSecretKey();
@@ -636,7 +709,7 @@ class BcRunnerTest {
         PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
         BcRunner runner = new BcRunner(store, null, null, provider);
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "rsa4096");
+        String fingerprint = runner.generateKey("Test <test@example.com>", "rsa4096", null);
         BcRunner signer = new BcRunner(store, fingerprint, null, provider);
 
         Path artifact = tempDir.resolve("artifact.txt");
@@ -658,7 +731,7 @@ class BcRunnerTest {
         PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
         BcRunner runner = new BcRunner(store, null, null, provider);
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "nistp256");
+        String fingerprint = runner.generateKey("Test <test@example.com>", "nistp256", null);
         BcRunner signer = new BcRunner(store, fingerprint, null, provider);
 
         Path artifact = tempDir.resolve("artifact.txt");
@@ -684,7 +757,7 @@ class BcRunnerTest {
         // Generate an encrypted key via direct BcRunner
         BcKeyStore store = new BcKeyStore(null, Path.of(certD), Path.of(bcPrivate));
         BcRunner generator = new BcRunner(store, null, null, provider);
-        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519");
+        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
 
         // Sign via Sigmund builder with bcPassphraseProvider — point to same key store
         try (Sigmund sigmund = Sigmund.builder()

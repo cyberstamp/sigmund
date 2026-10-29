@@ -19,10 +19,9 @@ import org.junit.jupiter.api.io.TempDir;
  * Cross-tool interoperability tests between BC and GPG.
  *
  * <p>
- * GPG only understands v4 keys (LibrePGP), so bc→gpg tests are only
- * possible when BC generates v4 keys (e.g. ECDSA/NIST P-curves, which
- * use the JCA fallback). BC-generated Ed25519/Ed448/RSA keys are v6 and
- * cannot be imported by GPG.
+ * GPG only understands v4 keys (LibrePGP). BC generates v4 keys unless asked for
+ * {@code pgp6} — Ed25519 in the legacy EdDSA form GPG reads — so each v4 suite signs with BC
+ * and verifies with GPG. Ed448 is v6 only.
  *
  * <p>
  * gpg→bc tests work because BC can verify v4 signatures.
@@ -94,6 +93,16 @@ class BcGpgCrossToolTest {
     }
 
     @Test
+    void bcSignGpgVerifyEd25519(@TempDir Path tempDir) throws Exception {
+        bcSignGpgVerify(tempDir, "ed25519", "BC Ed25519 <bc-ed25519@test.example>");
+    }
+
+    @Test
+    void bcSignGpgVerifyRsa4096(@TempDir Path tempDir) throws Exception {
+        bcSignGpgVerify(tempDir, "rsa4096", "BC RSA <bc-rsa@test.example>");
+    }
+
+    @Test
     void bcSignGpgVerifyNistp256(@TempDir Path tempDir) throws Exception {
         bcSignGpgVerify(tempDir, "nistp256", "BC ECDSA <bc-ecdsa@test.example>");
     }
@@ -104,13 +113,13 @@ class BcGpgCrossToolTest {
     }
 
     /**
-     * Signs with BC (v4 ECDSA key), verifies with GPG.
+     * Signs with a BC-generated v4 key, verifies with GPG.
      */
     private void bcSignGpgVerify(Path tempDir, String cipherSuite, String userId) throws Exception {
         BcKeyStore bcStore = createBcKeyStore(tempDir);
         BcRunner bcRunner = new BcRunner(bcStore, null, null);
 
-        String fingerprint = bcRunner.generateKey(userId, cipherSuite);
+        String fingerprint = bcRunner.generateKey(userId, cipherSuite, null);
         BcRunner bcSigner = new BcRunner(bcStore, fingerprint, null);
 
         String armoredCert = bcRunner.exportCert(fingerprint);

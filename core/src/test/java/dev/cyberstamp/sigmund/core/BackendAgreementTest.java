@@ -28,8 +28,8 @@ import org.junit.jupiter.api.io.TempDir;
  * accepted, which §5.3 forbids.
  *
  * <p>
- * A NIST P-curve key is used because Bouncy Castle emits v4 keys for those, and GnuPG cannot
- * import the v6 keys it emits for Ed25519.
+ * A v4 key is used because GnuPG reads only v4 keys; a NIST P-curve key keeps the ECDSA path,
+ * which Bouncy Castle generates through a separate fallback, under agreement.
  */
 @EnabledIf("bothCliToolsAvailable")
 class BackendAgreementTest {
@@ -126,7 +126,7 @@ class BackendAgreementTest {
             BcKeyStore signingStore = new BcKeyStore(null, dir.resolve("signing-cert-d"),
                     dir.resolve("signing-private"));
             String fingerprint = new BcRunner(signingStore, null, null)
-                    .generateKey("Agreement Test <agreement@test.example>", "nistp256");
+                    .generateKey("Agreement Test <agreement@test.example>", "nistp256", null);
 
             Path artifact = Files.writeString(dir.resolve("artifact.txt"), content);
             Path signature = dir.resolve("artifact.txt.asc");

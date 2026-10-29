@@ -4,16 +4,16 @@ import dev.cyberstamp.sigmund.core.KeyGenerator;
 import dev.cyberstamp.sigmund.core.PassphraseProvider;
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SigmundConfig;
-import dev.cyberstamp.sigmund.core.SqRunner;
 import dev.cyberstamp.sigmund.core.ToolConfig;
-import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 
-@CommandLine.Command(name = "keygen", description = "Generate a new signing key", mixinStandardHelpOptions = true)
+@CommandLine.Command(name = "keygen", description = {
+        "Generate a new Bouncy Castle signing key.",
+        "Keys for sq and gpg are generated with those tools: sq key generate, gpg --quick-gen-key." }, mixinStandardHelpOptions = true)
 public class KeygenCommand implements Callable<Integer> {
 
     @CommandLine.Option(names = {
@@ -21,19 +21,16 @@ public class KeygenCommand implements Callable<Integer> {
     private String userId;
 
     @CommandLine.Option(names = {
-            "--cipher-suite" }, description = "Cipher suite (default: mldsa87-ed448 for sq; for bc, tools.bc.cipher-suite, else ed25519)")
+            "--cipher-suite" }, description = "Cipher suite (default: tools.bc.cipher-suite, else ed25519)")
     private String cipherSuite;
 
     @CommandLine.Option(names = {
-            "--tool" }, required = true, description = "Key generation backend: sq or bc")
-    private String tool;
+            "--credential-type" }, description = "Key version: pgp4 or pgp6 (default: pgp4, which keyservers serve and gpg signs with)")
+    private String credentialType;
 
     @CommandLine.Option(names = {
-            "--passphrase-env" }, description = "Environment variable containing the passphrase (bc only, default: SIGMUND_BC_PASSPHRASE)")
+            "--passphrase-env" }, description = "Environment variable containing the passphrase (default: SIGMUND_BC_PASSPHRASE)")
     private String passphraseEnv;
-
-    @CommandLine.Mixin
-    private SqHomeMixin sqHomeMixin;
 
     @CommandLine.Mixin
     private ConfigMixin configMixin;
@@ -41,35 +38,11 @@ public class KeygenCommand implements Callable<Integer> {
     @Override
     public Integer call() {
         try {
-            return switch (tool.toLowerCase()) {
-                case "sq" -> generateSqKey();
-                case "bc" -> generateBcKey();
-                default -> {
-                    System.err.println("Unknown tool: " + tool + ". Use 'sq' or 'bc'.");
-                    yield 1;
-                }
-            };
+            return generateBcKey();
         } catch (Exception e) {
             printErrorMessage(e);
             return 1;
         }
-    }
-
-    private int generateSqKey() {
-        String suite = cipherSuite != null ? cipherSuite : SqRunner.DEFAULT_CIPHER_SUITE;
-        Path sqHomeDir = sqHomeMixin.resolveSequoiaHome();
-        SqRunner sq = new SqRunner(sqHomeDir);
-        String fingerprint = sq.generateKey(userId, suite);
-
-        System.out.println("Key generated successfully!");
-        System.out.println();
-        System.out.println("Fingerprint: " + fingerprint);
-        if (sqHomeDir != null) {
-            System.out.println("Stored in:   " + sqHomeDir.toAbsolutePath());
-        }
-        System.out.println();
-        System.out.println("Use this fingerprint with the 'sign' command.");
-        return 0;
     }
 
     private int generateBcKey() {
@@ -92,7 +65,7 @@ public class KeygenCommand implements Callable<Integer> {
         }
         try (Sigmund sigmund = builder.addSigningTool("bc", settings).build()) {
             KeyGenerator keygen = sigmund.findTool(KeyGenerator.class, "bc");
-            String fingerprint = keygen.generateKey(userId, cipherSuite);
+            String fingerprint = keygen.generateKey(userId, cipherSuite, credentialType);
 
             System.out.println("BC key generated successfully!");
             System.out.println();
@@ -180,10 +153,6 @@ public class KeygenCommand implements Callable<Integer> {
                 System.err.println("  Caused by: " + causeMsg);
             }
             cause = cause.getCause();
-        }
-        if ("sq".equalsIgnoreCase(tool)) {
-            System.err.println();
-            System.err.println("Make sure the 'sq' command is installed and available on your PATH.");
         }
     }
 }

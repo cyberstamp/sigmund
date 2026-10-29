@@ -71,7 +71,7 @@ class AssertedSignerSigningTest {
 
         private String generate() {
             return new BcRunner(store(), null, null).generateKey("Alice <alice@example.com>",
-                    "ed25519");
+                    "ed25519", null);
         }
 
         private BcKeyStore store() {

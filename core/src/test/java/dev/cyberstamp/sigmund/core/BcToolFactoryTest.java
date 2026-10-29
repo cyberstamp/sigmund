@@ -116,7 +116,7 @@ class BcToolFactoryTest {
                 tempDir.resolve("bc-private"));
         String fingerprint;
         try (BcRunner generator = new BcRunner(store, null, null)) {
-            fingerprint = generator.generateKey("CI <ci@example.com>", "ed25519");
+            fingerprint = generator.generateKey("CI <ci@example.com>", "ed25519", null);
         }
 
         PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
@@ -150,7 +150,7 @@ class BcToolFactoryTest {
                 tempDir.resolve("bc-private"));
         String fingerprint;
         try (BcRunner generator = new BcRunner(store, null, null)) {
-            fingerprint = generator.generateKey("CI <ci@example.com>", "ed25519");
+            fingerprint = generator.generateKey("CI <ci@example.com>", "ed25519", null);
         }
 
         PGPSecretKeyRing ring = store.findSecretKey(fingerprint);

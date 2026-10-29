@@ -67,7 +67,7 @@ All commands (except `export-cert`) read configuration from `sigmund.yaml` in th
 
 ### `sigmund keygen`
 
-Generate a new signing key using Sequoia (`sq`) or Bouncy Castle (`bc`).
+Generate a new Bouncy Castle (`bc`) signing key. bc has no command-line tool of its own; keys for `sq` and `gpg` are generated with those tools (`sq key generate`, `gpg --quick-gen-key`), which also cover passphrases, expiry and profiles — see [Generating a PQC Key](signing.md#generating-a-pqc-key).
 
 ```bash
 sigmund keygen --userid <USER_ID> [options]
@@ -78,34 +78,31 @@ sigmund keygen --userid <USER_ID> [options]
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--userid` | Yes | — | User ID in canonical form (e.g., `"Alice <alice@example.com>"`) |
-| `--tool` | Yes | — | Backend: `sq` (PQC/hybrid support) or `bc` (classic OpenPGP) |
-| `--cipher-suite` | No | `mldsa87-ed448` (sq)<br/>`ed25519` (bc) | Cipher suite for the key |
-| `--passphrase-env` | No | `SIGMUND_BC_PASSPHRASE` | Environment variable containing the BC key passphrase (bc keygen only) |
-| `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory (overrides `SEQUOIA_HOME`) (sq only) |
+| `--cipher-suite` | No | `tools.bc.cipher-suite`, else `ed25519` | Cipher suite for the key |
+| `--credential-type` | No | `pgp4` | Key version: `pgp4` or `pgp6`. v4 is the default — the version keyservers serve and GnuPG signs with; v6 is available for `ed25519`, `ed448` (v6 only) and `rsa4096`; ECDSA suites are v4 only |
+| `--passphrase-env` | No | `SIGMUND_BC_PASSPHRASE` | Environment variable containing the key passphrase |
 
 **Bouncy Castle cipher suites:** `ed25519`, `ed448`, `rsa4096`, `nistp256`, `nistp384`, `nistp521`
 
-**Note:** The user ID must be in canonical form (`Name <email>`). Bare email addresses are not accepted by `sq`.
-
 **Examples:**
 
-Generate a PQC key with the default ML-DSA-87 + Ed448 hybrid cipher suite:
+Generate a classic Ed25519 key using Bouncy Castle (v4, publishable on keys.openpgp.org and usable by GnuPG):
 
 ```bash
-sigmund keygen --tool sq --userid "Alice <alice@example.com>"
+sigmund keygen --userid "Alice <alice@example.com>" --cipher-suite ed25519
 ```
 
-Generate a classic Ed25519 key using Bouncy Castle:
+Generate a v6 Ed25519 key using Bouncy Castle:
 
 ```bash
-sigmund keygen --userid "Alice <alice@example.com>" --tool bc --cipher-suite ed25519
+sigmund keygen --userid "Alice <alice@example.com>" --credential-type pgp6
 ```
 
 Generate a passphrase-protected BC key:
 
 ```bash
 export SIGMUND_BC_PASSPHRASE="my-secure-passphrase"
-sigmund keygen --userid "Alice <alice@example.com>" --tool bc
+sigmund keygen --userid "Alice <alice@example.com>"
 ```
 
 The command outputs the fingerprint of the generated key. Save this fingerprint — it's required for signing operations.

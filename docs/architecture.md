@@ -45,7 +45,7 @@ Sigmund supports three OpenPGP backends, each with distinct capabilities:
 | **gpg** | Optional | Sign, verify | None | None | GnuPG CLI |
 | **sigstore** | Optional (pure Java) | N/A | N/A | N/A | None |
 
-**BC (Bouncy Castle)** is the default first-choice tool. It requires no external process dependencies and works on any JVM. BC generates v6 keys for Ed25519, Ed448, and RSA using Bouncy Castle 1.85's `BcOpenPGPApi`. ECDSA keys (P-256, P-384, P-521) use a JCA-based fallback and produce v4 keys.
+**BC (Bouncy Castle)** is the default first-choice tool. It requires no external process dependencies and works on any JVM. BC generates v4 keys by default, the version keyservers serve and GnuPG reads, and v6 keys on request (Ed25519, Ed448 and RSA, through Bouncy Castle 1.85's `BcOpenPGPApi`); ECDSA keys (P-256, P-384, P-521) use a JCA-based fallback and are v4 only. See [Known Limitations](limitations.md#not-every-bc-cipher-suite-has-both-key-versions).
 
 **sq (Sequoia)** is used for PQC hybrid signing when available. Version 1.4.0+ implements RFC 9980 and can generate and verify ML-DSA composite signatures.
 

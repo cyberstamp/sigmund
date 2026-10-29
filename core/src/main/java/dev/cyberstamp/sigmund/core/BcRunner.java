@@ -50,6 +50,7 @@ import org.bouncycastle.openpgp.api.OpenPGPPolicy;
 import org.bouncycastle.openpgp.api.OpenPGPSignature.OpenPGPDocumentSignature;
 import org.bouncycastle.openpgp.api.bc.BcOpenPGPApi;
 import org.bouncycastle.openpgp.bc.BcPGPObjectFactory;
+import org.bouncycastle.openpgp.operator.PGPKeyPairGenerator;
 import org.bouncycastle.openpgp.operator.bc.BcAEADSecretKeyEncryptorBuilder;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 import org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyDecryptorBuilder;
@@ -164,7 +165,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * @param passphraseProvider provides passphrases for encrypted keys, or {@code null}
      * @param fetcher fetches missing keys from keyservers, or {@code null} when keys are not
      *        fetched
-     * @param defaultCipherSuite the suite {@link #generateKey(String, String)} uses when given none
+     * @param defaultCipherSuite the suite {@link #generateKey(String, String, String)} uses when given none
      */
     BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile,
             byte[] tskBytes, PassphraseProvider passphraseProvider,
@@ -321,14 +322,17 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * {@inheritDoc}
      *
      * <p>
-     * Generates a v6 key using BC 1.85's high-level {@code BcOpenPGPApi}. Without a cipher suite,
+     * Generates a key using BC 1.85's high-level {@code BcOpenPGPApi}. Without a cipher suite,
      * the one {@code tools.bc.cipher-suite} configures is used, else {@value #DEFAULT_CIPHER_SUITE}.
+     * Without a credential type the key is v4 ({@code pgp4}), the version keyservers serve and
+     * GnuPG signs with; {@code pgp6} gives a v6 key, for {@code ed25519}, {@code ed448} and
+     * {@code rsa4096} only.
      */
     @Override
-    public String generateKey(String userId, String cipherSuite) {
+    public String generateKey(String userId, String cipherSuite, String credentialType) {
         try {
             OpenPGPKey key = generateKeyInternal(userId,
-                    cipherSuite != null ? cipherSuite : defaultCipherSuite);
+                    cipherSuite != null ? cipherSuite : defaultCipherSuite, keyVersion(credentialType));
             PGPSecretKeyRing secretKeyRing = key.getPGPSecretKeyRing();
             PGPPublicKeyRing publicKeyRing = key.toCertificate().getPGPPublicKeyRing();
             String fingerprint = BcKeyStore.bytesToHex(key.getFingerprint());
@@ -987,21 +991,70 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     // --- Key generation internals ---
 
     /**
-     * Generates a key using BC 1.85's high-level {@code BcOpenPGPApi}.
-     * Produces v6 keys for Ed25519, Ed448, and RSA.
-     * Falls back to JCA-based generation for ECDSA (NIST P-curves).
+     * Returns the key packet version for a credential type.
+     *
+     * @param credentialType {@code pgp4}, {@code pgp6}, or {@code null} for {@code pgp4}
+     * @return the version
+     * @throws ToolExecutionException for any other type
      */
-    private OpenPGPKey generateKeyInternal(String userId, String cipherSuite) throws Exception {
-        return switch (cipherSuite.toLowerCase()) {
-            case "ed25519" -> api.generateKey().ed25519x25519Key(userId).addSigningSubkey().build();
-            case "ed448" -> api.generateKey().ed448x448Key(userId).addSigningSubkey().build();
-            case "rsa4096" -> api.generateKey().singletonRSAKey(4096, userId).build();
-            case "nistp256" -> generateECDSAKeyFallback(userId, "secp256r1");
-            case "nistp384" -> generateECDSAKeyFallback(userId, "secp384r1");
-            case "nistp521" -> generateECDSAKeyFallback(userId, "secp521r1");
+    private static int keyVersion(String credentialType) {
+        if (credentialType == null || Credential.TYPE_PGP4.equals(credentialType)) {
+            return PublicKeyPacket.VERSION_4;
+        }
+        if (Credential.TYPE_PGP6.equals(credentialType)) {
+            return PublicKeyPacket.VERSION_6;
+        }
+        throw new ToolExecutionException("Unsupported credential type for bc keys: " + credentialType
+                + " (expected " + Credential.TYPE_PGP4 + " or " + Credential.TYPE_PGP6 + ")");
+    }
+
+    /**
+     * Generates a key of the given version using BC 1.85's high-level {@code BcOpenPGPApi}, for
+     * Ed25519, Ed448 and RSA. ECDSA (NIST P-curves) falls back to JCA-based generation, which
+     * produces v4 keys only.
+     *
+     * <p>
+     * A v4 Ed25519 key uses the legacy EdDSA encoding: GnuPG 2.4 reads Ed25519 in v4 keys only
+     * in that form, and rejects the RFC 9580 one as an invalid public key algorithm. Ed448 has
+     * no v4 form GnuPG reads, so it is generated as v6 only.
+     */
+    private OpenPGPKey generateKeyInternal(String userId, String cipherSuite, int version) throws Exception {
+        String suite = cipherSuite.toLowerCase();
+        boolean v4 = version == PublicKeyPacket.VERSION_4;
+        return switch (suite) {
+            case "ed25519" -> v4
+                    ? api.generateKey(version)
+                            .withPrimaryKey(PGPKeyPairGenerator::generateLegacyEd25519KeyPair)
+                            .addUserId(userId)
+                            .addSigningSubkey(PGPKeyPairGenerator::generateLegacyEd25519KeyPair)
+                            .build()
+                    : api.generateKey(version).ed25519x25519Key(userId).addSigningSubkey().build();
+            case "ed448" -> {
+                if (v4) {
+                    throw new ToolExecutionException("Cipher suite ed448 produces " + Credential.TYPE_PGP6
+                            + " keys only: GnuPG reads no v4 Ed448 key; use ed25519 for a "
+                            + Credential.TYPE_PGP4 + " key");
+                }
+                yield api.generateKey(version).ed448x448Key(userId).addSigningSubkey().build();
+            }
+            case "rsa4096" -> api.generateKey(version).singletonRSAKey(4096, userId).build();
+            case "nistp256", "nistp384", "nistp521" -> generateECDSAKey(userId, suite, version);
             default -> throw new ToolExecutionException(
                     "Unsupported cipher suite: " + cipherSuite);
         };
+    }
+
+    private OpenPGPKey generateECDSAKey(String userId, String suite, int version) throws Exception {
+        if (version != PublicKeyPacket.VERSION_4) {
+            throw new ToolExecutionException("Cipher suite " + suite + " produces v4 keys only; use "
+                    + Credential.TYPE_PGP4 + ", or ed25519, ed448 or rsa4096 for a v6 key");
+        }
+        String curve = switch (suite) {
+            case "nistp256" -> "secp256r1";
+            case "nistp384" -> "secp384r1";
+            default -> "secp521r1";
+        };
+        return generateECDSAKeyFallback(userId, curve);
     }
 
     /**

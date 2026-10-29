@@ -134,7 +134,6 @@ Generate a signing key using BC:
 
 ```bash
 sigmund keygen \
-  --tool bc \
   --userid "Your Name <you@example.com>" \
   --cipher-suite ed25519
 ```
@@ -144,7 +143,7 @@ Output:
 ```
 BC key generated successfully!
 
-Fingerprint: D62AAB339E45E5EA2FD036872B01D46A517A2991ABCDEF1234567890ABCDEF12
+Fingerprint: 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
 Key is passphrase-protected (from SIGMUND_BC_PASSPHRASE).
 
 Use this fingerprint with the 'sign' command.
@@ -155,13 +154,13 @@ Use this fingerprint with the 'sign' command.
 Classic algorithms:
 
 - `ed25519` — EdDSA with Ed25519 curve (default)
-- `ed448` — EdDSA with Ed448 curve
+- `ed448` — EdDSA with Ed448 curve (v6 only, with `--credential-type pgp6`)
 - `rsa4096` — RSA with 4096-bit modulus
 - `nistp256` — ECDSA with P-256 curve
 - `nistp384` — ECDSA with P-384 curve
 - `nistp521` — ECDSA with P-521 curve
 
-Note: BC generates v6 keys for Ed25519, Ed448, and RSA using Bouncy Castle 1.85's `BcOpenPGPApi`. ECDSA keys (P-256, P-384, P-521) use a JCA-based fallback and produce v4 keys.
+BC generates v4 keys by default: keys.openpgp.org serves only v4 keys, and GnuPG signs and verifies only v4. Pass `--credential-type pgp6` for a v6 key, for `ed25519`, `ed448` and `rsa4096`; the ECDSA suites (P-256, P-384, P-521) produce v4 keys only. A v4 Ed25519 key uses the legacy EdDSA encoding, the form GnuPG reads.
 
 ### Passphrase Protection
 
@@ -171,16 +170,16 @@ BC private keys can be encrypted at rest using AES-256 AEAD (OCB mode) with Argo
 
 ```bash
 # Interactive — prompts for passphrase with confirmation
-sigmund keygen --tool bc \
+sigmund keygen \
   --userid "Alice <alice@example.com>" \
   --cipher-suite ed25519
 
 # Non-interactive — reads from SIGMUND_BC_PASSPHRASE by default
-SIGMUND_BC_PASSPHRASE=mysecret sigmund keygen --tool bc \
+SIGMUND_BC_PASSPHRASE=mysecret sigmund keygen \
   --userid "Alice <alice@example.com>"
 
 # Non-interactive — custom env var
-MY_PASSPHRASE=mysecret sigmund keygen --tool bc \
+MY_PASSPHRASE=mysecret sigmund keygen \
   --userid "Alice <alice@example.com>" \
   --passphrase-env MY_PASSPHRASE
 ```
@@ -223,7 +222,7 @@ For ephemeral CI runners (containers, VMs that are destroyed after each build), 
 **One-time setup:** Export your signing key in ASCII-armored format and store it as a CI secret:
 
 ```bash
-sigmund keygen --tool bc --userid "CI <ci@example.com>"
+sigmund keygen --userid "CI <ci@example.com>"
 # Copy the key file from ~/.local/share/sigmund/bc-private/<first 2 hex>/<rest of fingerprint>
 # Or export with GPG: gpg --export-secret-keys --armor <fingerprint>
 # Store the armored content as a CI secret named SIGMUND_BC_SIGNING_KEY

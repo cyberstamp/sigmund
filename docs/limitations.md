@@ -5,7 +5,7 @@ This page documents known limitations, ecosystem maturity notes, and caveats for
 ## Contents
 
 - [BC v6 keys incompatible with GnuPG](#bc-v6-keys-incompatible-with-gnupg)
-- [BC ECDSA keys are v4, not v6](#bc-ecdsa-keys-are-v4-not-v6)
+- [Not every BC cipher suite has both key versions](#not-every-bc-cipher-suite-has-both-key-versions)
 - [PQC signature verification requires Sequoia](#pqc-signature-verification-requires-sequoia)
 - [GPG ephemeral key fetch not supported](#gpg-ephemeral-key-fetch-not-supported)
 - [GPG exit code 2 for hybrid .asc files](#gpg-exit-code-2-for-hybrid-asc-files)
@@ -13,24 +13,21 @@ This page documents known limitations, ecosystem maturity notes, and caveats for
 - [GnuPG does not honour revocation reasons](#gnupg-does-not-honour-revocation-reasons)
 - [Key passphrase protection caveats](#key-passphrase-protection-caveats)
   - [BC keys: decrypted material on the Java heap](#bc-keys-decrypted-material-on-the-java-heap)
-  - [Sequoia PQC keys: generated without passphrase](#sequoia-pqc-keys-generated-without-passphrase)
 - [PQC ecosystem maturity](#pqc-ecosystem-maturity)
 - [PQC algorithm ID range](#pqc-algorithm-id-range)
 - [PQC signature sizes](#pqc-signature-sizes)
 
 ## BC v6 keys incompatible with GnuPG
 
-Bouncy Castle (BC) generates v6 keys for Ed25519, Ed448, and RSA. These keys cannot be imported into GnuPG because GnuPG follows the LibrePGP specification and does not support OpenPGP v6.
+`sigmund keygen` generates v4 keys unless `--credential-type pgp6` is given. A v6 key cannot be imported into GnuPG, which follows the LibrePGP specification and does not support OpenPGP v6, and keys.openpgp.org does not serve v6 keys. Generate v6 with BC only for a tool that reads it — BC itself and `sq`.
 
-**Workaround:** If you need GnuPG interoperability, use BC with a NIST P-curve cipher suite (`nistp256`, `nistp384`, or `nistp521`), which produces v4 keys that GnuPG can import and verify.
+A v4 Ed25519 key is written in the legacy EdDSA encoding: GnuPG 2.4 reads Ed25519 in v4 keys only in that form, and rejects the RFC 9580 encoding as an invalid public key algorithm.
 
-## BC ECDSA keys are v4, not v6
+## Not every BC cipher suite has both key versions
 
-BC-generated ECDSA keys (NIST P-256, P-384, P-521) use the older v4 packet format. Ed25519, Ed448, and RSA keys generate v6 keys.
-
-This is a Bouncy Castle 1.85 limitation — its high-level API does not support ECDSA key generation for NIST P-curves, so Sigmund uses a JCA-based fallback that produces v4 keys.
-
-**In practice**, this is rarely a problem. v4 keys work with both GnuPG and Bouncy Castle, and most users choose Ed25519 (v6) as their cipher suite. This only matters if you specifically require v6 keys for all algorithms.
+- **ECDSA** (`nistp256`, `nistp384`, `nistp521`) keys are v4 only. Bouncy Castle 1.85's high-level API does not generate ECDSA keys, so Sigmund uses a JCA-based fallback that produces v4 keys; `--credential-type pgp6` with these suites is an error.
+- **Ed448** keys are v6 only: GnuPG reads no v4 Ed448 key, so a v4 one would serve no tool a v4 key is for. `--cipher-suite ed448` without `--credential-type pgp6` is an error.
+- **Ed25519** and **RSA** (`rsa4096`) come in both versions.
 
 ## PQC signature verification requires Sequoia
 
@@ -87,12 +84,6 @@ BC keys support passphrase encryption at rest (AES-256 AEAD with Argon2 key deri
 **In practice**, passphrase protection guards against filesystem-level exposure — stolen disks, backup leaks, compromised servers. For defense-in-depth against memory disclosure attacks, consider a hardware security module (HSM).
 
 See the [Signing Guide](signing.md#passphrase-protection) for passphrase configuration details.
-
-### Sequoia PQC keys: generated without passphrase
-
-Sequoia `sq` PQC keys are generated with `--without-password` by default to support non-interactive use in CI/CD and headless environments.
-
-**For production deployments**, keys should be passphrase-protected. Use `sq key generate` with `--new-password-file` to supply a passphrase non-interactively. See the [Sequoia documentation](https://sequoia-pgp.org/) for details.
 
 ## PQC ecosystem maturity
 

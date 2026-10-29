@@ -697,18 +697,20 @@ Configured in the top-level `tools.bc` section.
 | `tsk-file` | (none) | Path to an exported Transferable Secret Key (TSK) file for signing |
 | `signing-key-env` | `SIGMUND_BC_SIGNING_KEY` | Environment variable name containing the ASCII-armored private key. For ephemeral CI runners. |
 | `passphrase-env` | `SIGMUND_BC_PASSPHRASE` | Environment variable name containing the passphrase. If not set, falls back to interactive prompt. |
-| `cipher-suite` | `ed25519` | Algorithm `sigmund keygen --tool bc` generates when `--cipher-suite` is not given (see supported values below) |
+| `cipher-suite` | `ed25519` | Algorithm `sigmund keygen` generates when `--cipher-suite` is not given (see supported values below) |
 
 **Supported cipher suites (BC):**
 
 - `ed25519` — EdDSA with Curve25519 (default)
-- `ed448` — EdDSA with Curve448
+- `ed448` — EdDSA with Curve448 (v6 only)
 - `rsa4096` — RSA with 4096-bit modulus
-- `nistp256` — ECDSA with NIST P-256 curve
-- `nistp384` — ECDSA with NIST P-384 curve
-- `nistp521` — ECDSA with NIST P-521 curve
+- `nistp256` — ECDSA with NIST P-256 curve (v4 only)
+- `nistp384` — ECDSA with NIST P-384 curve (v4 only)
+- `nistp521` — ECDSA with NIST P-521 curve (v4 only)
 
-BC does not generate post-quantum keys; generate them with [SQ](#sq-sequoia).
+Keys are v4 unless `sigmund keygen --credential-type pgp6` asks for v6: keys.openpgp.org serves
+only v4 keys, and GnuPG signs and verifies only v4. BC does not generate post-quantum keys;
+generate them with [SQ](#sq-sequoia).
 
 **Passphrase resolution order:**
 
@@ -742,8 +744,8 @@ Configured in the top-level `tools.sq` section.
 Sigmund runs `sq` under its own crypto policy, which replaces the host's system policy for those
 runs; see [Accepted algorithms](verification.md#accepted-algorithms).
 
-**Cipher suites for `sigmund keygen --tool sq --cipher-suite`:** there is no `tools.sq`
-setting for this — keys for `sq` are usually generated with `sq key generate` itself.
+**Cipher suites:** keys for `sq` are generated with `sq key generate` itself, not through
+Sigmund; see [Generating a PQC Key](signing.md#generating-a-pqc-key).
 
 Sequoia supports the post-quantum hybrid cipher suites of RFC 9980, which extends OpenPGP v6 (RFC 9580):
 - `mldsa87-ed448` — ML-DSA-87 + Ed448 (default)

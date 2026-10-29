@@ -1500,7 +1500,7 @@ class SigmundTest {
         }
 
         @Override
-        public String generateKey(String userId, String cipherSuite) {
+        public String generateKey(String userId, String cipherSuite, String credentialType) {
             return "fingerprint";
         }
     }

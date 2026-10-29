@@ -85,7 +85,7 @@ class RoundTripIntegrationTest {
         sqHome = tempDir.resolve("sq-home");
         Files.createDirectories(sqHome);
         SqRunner sq = new SqRunner(sqHome);
-        pqcFingerprint = sq.generateKey("PQC Test <test@sigmund.example>");
+        pqcFingerprint = sq.generateKey("PQC Test <test@sigmund.example>", SqRunner.DEFAULT_CIPHER_SUITE);
     }
 
     /**

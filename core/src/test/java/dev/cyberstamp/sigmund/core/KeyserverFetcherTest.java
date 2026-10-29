@@ -64,7 +64,7 @@ class KeyserverFetcherTest {
             BcKeyStore store = createStore();
             BcRunner generator = new BcRunner(store, null, null);
 
-            String fp = generator.generateKey("Test User <test@example.com>", "ed25519");
+            String fp = generator.generateKey("Test User <test@example.com>", "ed25519", null);
             PGPPublicKeyRing fullKey = store.findPublicKey(fp).ring();
             assertThat(fullKey).isNotNull();
             assertThat(fullKey.getPublicKey().getUserIDs().hasNext()).isTrue();
@@ -92,7 +92,7 @@ class KeyserverFetcherTest {
             BcKeyStore store = createStore();
             BcRunner generator = new BcRunner(store, null, null);
 
-            String fp = generator.generateKey("Test <test@example.com>", "ed25519");
+            String fp = generator.generateKey("Test <test@example.com>", "ed25519", null);
             PGPPublicKeyRing fullKey = store.findPublicKey(fp).ring();
             PGPPublicKeyRing strippedKey = stripUserIds(fullKey);
 
@@ -111,7 +111,7 @@ class KeyserverFetcherTest {
         void continuesToAKeyserverWithUserIdsForDisplay() throws Exception {
             BcKeyStore genStore = createStore();
             BcRunner generator = new BcRunner(genStore, null, null);
-            String fp = generator.generateKey("Test User <test@example.com>", "ed25519");
+            String fp = generator.generateKey("Test User <test@example.com>", "ed25519", null);
             PGPPublicKeyRing fullKey = genStore.findPublicKey(fp).ring();
             PGPPublicKeyRing strippedKey = stripUserIds(fullKey);
 
@@ -133,7 +133,7 @@ class KeyserverFetcherTest {
         void stopsAtTheFirstKeyserverWithUserIds() throws Exception {
             BcKeyStore genStore = createStore();
             BcRunner generator = new BcRunner(genStore, null, null);
-            String fp = generator.generateKey("Test User <test@example.com>", "ed25519");
+            String fp = generator.generateKey("Test User <test@example.com>", "ed25519", null);
             PGPPublicKeyRing fullKey = genStore.findPublicKey(fp).ring();
 
             BcKeyStore fetchStore = new BcKeyStore(null,
@@ -150,7 +150,7 @@ class KeyserverFetcherTest {
         void aKeyWithoutUserIdsStillCountsAsFetched() throws Exception {
             BcKeyStore genStore = createStore();
             BcRunner generator = new BcRunner(genStore, null, null);
-            String fp = generator.generateKey("Test User <test@example.com>", "ed25519");
+            String fp = generator.generateKey("Test User <test@example.com>", "ed25519", null);
             PGPPublicKeyRing strippedKey = stripUserIds(genStore.findPublicKey(fp).ring());
 
             BcKeyStore fetchStore = new BcKeyStore(null,
@@ -166,7 +166,7 @@ class KeyserverFetcherTest {
         void recordsWhichKeyserverSuppliedTheKey() throws Exception {
             BcKeyStore genStore = createStore();
             BcRunner generator = new BcRunner(genStore, null, null);
-            String fp = generator.generateKey("Test User <test@example.com>", "ed25519");
+            String fp = generator.generateKey("Test User <test@example.com>", "ed25519", null);
             PGPPublicKeyRing fullKey = genStore.findPublicKey(fp).ring();
 
             BcKeyStore fetchStore = new BcKeyStore(null,
@@ -197,7 +197,7 @@ class KeyserverFetcherTest {
         void skipsKeyserversWhenTheKeyIsAlreadyHeldWithUserIds() throws Exception {
             BcKeyStore genStore = createStore();
             BcRunner generator = new BcRunner(genStore, null, null);
-            String fp = generator.generateKey("Test User <test@example.com>", "ed25519");
+            String fp = generator.generateKey("Test User <test@example.com>", "ed25519", null);
 
             BcKeyStore fetchStore = new BcKeyStore(null,
                     tempDir.resolve("fetch-cd"), tempDir.resolve("fetch-bp"));

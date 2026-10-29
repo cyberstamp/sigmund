@@ -135,7 +135,7 @@ class EphemeralSigningKeyTest {
         BcKeyStore store = new BcKeyStore(null,
                 tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner gen = new BcRunner(store, null, null);
-        String fp = gen.generateKey("CI Test <ci@example.com>", "ed25519");
+        String fp = gen.generateKey("CI Test <ci@example.com>", "ed25519", null);
 
         PGPSecretKeyRing ring = store.findSecretKey(fp);
         ByteArrayOutputStream out = new ByteArrayOutputStream();

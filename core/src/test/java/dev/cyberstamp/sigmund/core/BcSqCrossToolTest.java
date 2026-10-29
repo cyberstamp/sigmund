@@ -56,7 +56,7 @@ class BcSqCrossToolTest {
         BcKeyStore bcStore = createBcKeyStore(tempDir);
         BcRunner bcRunner = new BcRunner(bcStore, null, null);
 
-        String bcFp = bcRunner.generateKey("BC Test <bc@test.example>", "ed25519");
+        String bcFp = bcRunner.generateKey("BC Test <bc@test.example>", "ed25519", Credential.TYPE_PGP6);
         BcRunner bcSigner = new BcRunner(bcStore, bcFp, null);
 
         Path artifact = tempDir.resolve("artifact.txt");

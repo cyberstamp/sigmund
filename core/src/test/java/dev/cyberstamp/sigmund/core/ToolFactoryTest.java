@@ -198,7 +198,7 @@ class ToolFactoryTest {
         void keygenUsesTheConfiguredCipherSuiteWhenNoneIsGiven(@TempDir Path dir) {
             var tool = (KeyGenerator) factory.createSigning(storesIn(dir, "cipher-suite", "bogus"), null);
 
-            assertThatThrownBy(() -> tool.generateKey("Alice <alice@example.com>", null))
+            assertThatThrownBy(() -> tool.generateKey("Alice <alice@example.com>", null, null))
                     .isInstanceOf(ToolExecutionException.class)
                     .hasMessageContaining("Unsupported cipher suite: bogus");
         }
@@ -207,7 +207,7 @@ class ToolFactoryTest {
         void keygenFallsBackToEd25519WithoutAConfiguredCipherSuite(@TempDir Path dir) {
             var tool = (KeyGenerator) factory.createSigning(storesIn(dir), null);
 
-            assertThat(tool.generateKey("Alice <alice@example.com>", null)).hasSize(64);
+            assertThat(tool.generateKey("Alice <alice@example.com>", null, null)).hasSize(40);
         }
 
         private Map<String, String> storesIn(Path dir, String... extra) {

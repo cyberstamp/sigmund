@@ -6,7 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class BcInteropTest {
 
@@ -14,12 +14,12 @@ class BcInteropTest {
     Path tempDir;
 
     @ParameterizedTest
-    @ValueSource(strings = { "ed25519", "ed448", "rsa4096" })
-    void signAndVerifyRoundTrip(String cipherSuite) throws Exception {
+    @CsvSource({ "ed25519, pgp4", "ed25519, pgp6", "ed448, pgp6", "rsa4096, pgp4", "rsa4096, pgp6" })
+    void signAndVerifyRoundTrip(String cipherSuite, String credentialType) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner runner = new BcRunner(store, null, null);
 
-        String fp = runner.generateKey("Test <test@example.com>", cipherSuite);
+        String fp = runner.generateKey("Test <test@example.com>", cipherSuite, credentialType);
         BcRunner signer = new BcRunner(store, fp, null);
 
         Path artifact = tempDir.resolve("artifact.txt");
@@ -44,12 +44,12 @@ class BcInteropTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = { "ed25519", "ed448", "rsa4096" })
-    void tamperedArtifactFailsVerification(String cipherSuite) throws Exception {
+    @CsvSource({ "ed25519, pgp4", "ed25519, pgp6", "ed448, pgp6", "rsa4096, pgp4", "rsa4096, pgp6" })
+    void tamperedArtifactFailsVerification(String cipherSuite, String credentialType) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner runner = new BcRunner(store, null, null);
 
-        String fp = runner.generateKey("Test <test@example.com>", cipherSuite);
+        String fp = runner.generateKey("Test <test@example.com>", cipherSuite, credentialType);
         BcRunner signer = new BcRunner(store, fp, null);
 
         Path artifact = tempDir.resolve("artifact.txt");
@@ -70,12 +70,12 @@ class BcInteropTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = { "ed25519", "ed448", "rsa4096" })
-    void sigmundBuilderDiscoversBc(String cipherSuite) throws Exception {
+    @CsvSource({ "ed25519, pgp4", "ed25519, pgp6", "ed448, pgp6", "rsa4096, pgp4", "rsa4096, pgp6" })
+    void sigmundBuilderDiscoversBc(String cipherSuite, String credentialType) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         BcRunner bcRunner = new BcRunner(store, null, null);
 
-        String fp = bcRunner.generateKey("Test <test@example.com>", cipherSuite);
+        String fp = bcRunner.generateKey("Test <test@example.com>", cipherSuite, credentialType);
         BcRunner signer = new BcRunner(store, fp, null);
 
         try (Sigmund sigmund = Sigmund.builder()
