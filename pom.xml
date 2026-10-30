@@ -36,7 +36,7 @@
     <properties>
         <project.build.outputTimestamp>2026-08-21T15:31:12Z</project.build.outputTimestamp>
         <bouncycastle.version>1.86</bouncycastle.version>
-        <sigstore-java.version>2.3.0</sigstore-java.version>
+        <sigstore-java.version>2.4.0</sigstore-java.version>
         <!-- The Protobuf runtime sigstore-java's generated classes were built with; the CLI imports
              it ahead of the Quarkus BOM, which would otherwise pin an older one. Raise it with
              sigstore-java. -->
