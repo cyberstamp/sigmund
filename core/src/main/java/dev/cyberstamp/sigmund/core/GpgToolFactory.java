@@ -37,17 +37,33 @@ final class GpgToolFactory implements SignatureToolFactory {
     }
 
     @Override
+    public Set<String> listSettings() {
+        return ToolSetting.listKeysOf(Setting.values());
+    }
+
+    @Override
     public void checkSettingValues(Map<String, String> settings) {
-        SigningFingerprint.from(toolName(), Setting.SIGNING_FINGERPRINT, settings);
+        signingFingerprints(settings);
+    }
+
+    private static List<String> signingFingerprints(Map<String, String> settings) {
+        List<String> fingerprints = SigningFingerprint.allFrom(NAME, Setting.SIGNING_FINGERPRINT, settings);
+        for (String fingerprint : fingerprints) {
+            if (!Credential.TYPE_PGP4.equals(KeyCredential.openPgp(fingerprint).type())) {
+                throw new PolicyConfigException("tools." + NAME + "." + Setting.SIGNING_FINGERPRINT.key() + ": '"
+                        + fingerprint + "' is a v6 fingerprint; gpg signs with v4 keys only");
+            }
+        }
+        return fingerprints;
     }
 
     @Override
     public SignatureTool createSigning(Map<String, String> settings, SignerIdentity expected) {
         String executable = Setting.EXECUTABLE.from(settings, "gpg");
-        String fingerprint = SigningFingerprint.from(toolName(), Setting.SIGNING_FINGERPRINT, settings);
+        List<String> fingerprints = signingFingerprints(settings);
         String passphrase = resolvePassphrase(settings);
-        return new GpgRunner(executable, fingerprint, Setting.HOME.from(settings),
-                passphrase, false, false, List.of());
+        return new GpgRunner(executable, fingerprints,
+                Setting.HOME.from(settings), passphrase, false, false, List.of());
     }
 
     @Override
@@ -56,7 +72,7 @@ final class GpgToolFactory implements SignatureToolFactory {
         boolean resolveSigners = FetchSetting.RESOLVE_SIGNERS.isTrue(settings);
         boolean importToKeyring = FetchSetting.IMPORT_TO_KEYRING.isTrue(settings);
         List<String> keyservers = VerificationConfig.parseKeyserversSetting(FetchSetting.KEYSERVERS.from(settings));
-        return new GpgRunner(executable, null, Setting.HOME.from(settings),
+        return new GpgRunner(executable, List.of(), Setting.HOME.from(settings),
                 null, false, resolveSigners, importToKeyring, keyservers);
     }
 
@@ -78,8 +94,13 @@ final class GpgToolFactory implements SignatureToolFactory {
     private enum Setting implements ToolSetting {
         /** {@code executable}. */
         EXECUTABLE("executable"),
-        /** {@code signing-fingerprint}. */
-        SIGNING_FINGERPRINT("signing-fingerprint"),
+        /** {@code signing-fingerprint}, one full fingerprint or a list of them. */
+        SIGNING_FINGERPRINT("signing-fingerprint") {
+            @Override
+            public boolean takesList() {
+                return true;
+            }
+        },
         /** {@code home}. */
         HOME("home"),
         /** {@code passphrase-env}. */

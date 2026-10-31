@@ -1,6 +1,7 @@
 package dev.cyberstamp.sigmund.core;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -22,27 +23,39 @@ final class SqToolFactory implements SignatureToolFactory {
     }
 
     @Override
-    public void checkSettingValues(Map<String, String> settings) {
-        SigningFingerprint.from(toolName(), Setting.SIGNING_FINGERPRINT, settings);
+    public Set<String> listSettings() {
+        return ToolSetting.listKeysOf(Setting.values());
     }
 
+    @Override
+    public void checkSettingValues(Map<String, String> settings) {
+        SigningFingerprint.allFrom(toolName(), Setting.SIGNING_FINGERPRINT, settings);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Signs with the keys {@code signing-fingerprint} names, else with the key sq's own
+     * configuration names under {@code sign.signer-self}; without either the tool cannot sign.
+     */
     @Override
     public SignatureTool createSigning(Map<String, String> settings, SignerIdentity expected) {
         String executable = Setting.EXECUTABLE.from(settings, "sq");
         Path home = resolveHome(settings);
-        String fingerprint = SigningFingerprint.from(toolName(), Setting.SIGNING_FINGERPRINT, settings);
-        if (fingerprint != null) {
-            return new SqRunner(executable, home, fingerprint);
+        List<String> fingerprints = SigningFingerprint.allFrom(toolName(), Setting.SIGNING_FINGERPRINT, settings);
+        if (fingerprints.isEmpty()) {
+            String signerSelf = SqRunner.querySignerSelf(executable, SqRunner.envFor(home));
+            fingerprints = signerSelf == null ? List.of() : List.of(signerSelf);
         }
-        String defaultSigner = SqRunner.querySignerSelf(executable, SqRunner.envFor(home));
-        return new SqRunner(executable, home, null, defaultSigner);
+        return new SqRunner(executable, home, fingerprints);
     }
 
     @Override
     public SignatureTool createVerifyOnly(Map<String, String> settings) {
         String executable = Setting.EXECUTABLE.from(settings, "sq");
         Path home = resolveHome(settings);
-        return new SqRunner(executable, home, null);
+        return new SqRunner(executable, home, List.of());
     }
 
     private static Path resolveHome(Map<String, String> settings) {
@@ -56,8 +69,13 @@ final class SqToolFactory implements SignatureToolFactory {
         HOME("home"),
         /** {@code executable}. */
         EXECUTABLE("executable"),
-        /** {@code signing-fingerprint}. */
-        SIGNING_FINGERPRINT("signing-fingerprint");
+        /** {@code signing-fingerprint}, one full fingerprint or a list of them. */
+        SIGNING_FINGERPRINT("signing-fingerprint") {
+            @Override
+            public boolean takesList() {
+                return true;
+            }
+        };
 
         private final String key;
 

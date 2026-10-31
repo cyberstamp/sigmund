@@ -34,8 +34,13 @@ final class BcToolFactory implements SignatureToolFactory {
     }
 
     @Override
+    public Set<String> listSettings() {
+        return ToolSetting.listKeysOf(Setting.values());
+    }
+
+    @Override
     public void checkSettingValues(Map<String, String> settings) {
-        SigningFingerprint.from(toolName(), Setting.SIGNING_FINGERPRINT, settings);
+        SigningFingerprint.allFrom(toolName(), Setting.SIGNING_FINGERPRINT, settings);
     }
 
     private static final String DEFAULT_PASSPHRASE_ENV = "SIGMUND_BC_PASSPHRASE";
@@ -66,15 +71,16 @@ final class BcToolFactory implements SignatureToolFactory {
      */
     SignatureTool createSigning(Map<String, String> settings, SignerIdentity expected,
             PassphraseProvider explicitProvider) {
-        String configuredFingerprint = SigningFingerprint.from(toolName(), Setting.SIGNING_FINGERPRINT, settings);
+        List<String> configuredFingerprints = SigningFingerprint.allFrom(toolName(), Setting.SIGNING_FINGERPRINT,
+                settings);
         BcKeyStore keyStore = buildKeyStore(settings);
         byte[] tskBytes = resolveSigningKeyBytes(settings);
         Path tskFile = tskBytes == null ? resolveOptionalPath(settings, Setting.TSK_FILE) : null;
-        String fingerprint = tskBytes == null && tskFile == null ? configuredFingerprint : null;
+        List<String> fingerprints = tskBytes == null && tskFile == null ? configuredFingerprints : List.of();
         PassphraseProvider provider = explicitProvider != null
                 ? explicitProvider
                 : resolvePassphraseProvider(settings);
-        return new BcRunner(keyStore, fingerprint, tskFile, tskBytes, provider,
+        return new BcRunner(keyStore, fingerprints, tskFile, tskBytes, provider,
                 null, Setting.CIPHER_SUITE.from(settings, BcRunner.DEFAULT_CIPHER_SUITE));
     }
 
@@ -274,8 +280,13 @@ final class BcToolFactory implements SignatureToolFactory {
         CERT_D_HOME("cert-d-home"),
         /** {@code bc-private-home}. */
         BC_PRIVATE_HOME("bc-private-home"),
-        /** {@code signing-fingerprint}. */
-        SIGNING_FINGERPRINT("signing-fingerprint"),
+        /** {@code signing-fingerprint}, one full fingerprint or a list of them. */
+        SIGNING_FINGERPRINT("signing-fingerprint") {
+            @Override
+            public boolean takesList() {
+                return true;
+            }
+        },
         /** {@code tsk-file}. */
         TSK_FILE("tsk-file"),
         /** {@code signing-key-env}. */

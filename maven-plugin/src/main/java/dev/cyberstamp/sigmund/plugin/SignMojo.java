@@ -50,7 +50,7 @@ public class SignMojo extends AbstractSigningMojo {
         }
         try (Sigmund sigmund = buildSigningSigmund()) {
             Signer signer = sigmund.signer();
-            for (SigningInfo info : signer.signingInfo()) {
+            for (SigningInfo info : signer.plan().keys()) {
                 getLog().info(info.display());
             }
             List<FileToSign> filesToSign = collectFilesToSign(sigmund.signatureFileExtensions());

@@ -35,7 +35,8 @@ public class SqRunner implements SignatureTool, CertExporter {
 
     private static final Set<String> SUPPORTED_CREDENTIAL_TYPES = Set.of(Credential.TYPE_PGP4,
             Credential.TYPE_PGP6);
-    private static final Pattern FINGERPRINT_PATTERN = Pattern.compile("(?i)(?:fingerprint:?\\s*)?([0-9A-F]{64})");
+    private static final Pattern FINGERPRINT_PATTERN = Pattern
+            .compile("(?i)(?:fingerprint:?\\s*)?\\b([0-9A-F]{64}|[0-9A-F]{40})\\b");
     private static final Pattern SIGNER_SELF_PATTERN = Pattern.compile("(?i)[0-9A-F]{40,64}");
     private static final Pattern INSPECT_ALGO_PATTERN = Pattern.compile("Public-key algo:\\s+(.+)");
     private static final Pattern INSPECT_USERID_PATTERN = Pattern.compile("UserID:\\s+(.+)");
@@ -49,10 +50,8 @@ public class SqRunner implements SignatureTool, CertExporter {
     private final Map<String, String> sqEnv;
     private volatile Path certDDir;
     private volatile boolean certDDirResolved;
-    private final String signingFingerprint;
-    private final String defaultSignerFingerprint;
+    private final List<String> signingFingerprints;
     private final OpenPgpSignatureFormat format;
-    private volatile String detectedAlgorithm;
 
     /**
      * Constructs a verify-only SqRunner using the default "sq" executable.
@@ -61,7 +60,7 @@ public class SqRunner implements SignatureTool, CertExporter {
      *        use its own defaults
      */
     public SqRunner(Path sequoiaHome) {
-        this("sq", sequoiaHome, null);
+        this("sq", sequoiaHome, List.of());
     }
 
     /**
@@ -73,14 +72,14 @@ public class SqRunner implements SignatureTool, CertExporter {
      * @throws IllegalArgumentException if sqExecutable is null or empty
      */
     public SqRunner(String sqExecutable, Path sequoiaHome) {
-        this(sqExecutable, sequoiaHome, null);
+        this(sqExecutable, sequoiaHome, List.of());
     }
 
     /**
      * Constructs an SqRunner with a signing fingerprint.
      * <p>
      * When {@code signingFingerprint} is non-null, {@link #canSign()} returns {@code true}
-     * and the SPI {@link #sign(Path, Path)} method uses this fingerprint.
+     * and {@link #sign(Path, Path, SigningInfo)} signs with this key.
      *
      * @param sqExecutable the path to the sq executable
      * @param sequoiaHome the directory to use as SEQUOIA_HOME, or {@code null} to let sq
@@ -89,34 +88,31 @@ public class SqRunner implements SignatureTool, CertExporter {
      * @throws IllegalArgumentException if sqExecutable is null or empty
      */
     public SqRunner(String sqExecutable, Path sequoiaHome, String signingFingerprint) {
-        this(sqExecutable, sequoiaHome, signingFingerprint, null);
+        this(sqExecutable, sequoiaHome, signingFingerprint == null ? List.of() : List.of(signingFingerprint));
     }
 
     /**
-     * Constructs an SqRunner with an explicit signing fingerprint or a default signer.
+     * Constructs an SqRunner that signs with the given keys.
      * <p>
-     * When {@code signingFingerprint} is non-null, signing uses {@code --signer <fingerprint>}.
-     * When {@code signingFingerprint} is null but {@code defaultSignerFingerprint} is non-null,
-     * signing uses {@code --signer-self} (sq's configured default signer) and
-     * {@code defaultSignerFingerprint} is used for {@link #signingInfo()} display.
+     * Every key signs with {@code sq sign --signer <fingerprint>}. sq's own default signer
+     * ({@code sign.signer-self}) is resolved to its fingerprint by the caller and passed here
+     * like any other key, so the key that signs is always the one {@link #signingInfo()}
+     * reports.
      *
      * @param sqExecutable the path to the sq executable
      * @param sequoiaHome the directory to use as SEQUOIA_HOME, or {@code null} to let sq
      *        use its own defaults (or the existing SEQUOIA_HOME from the environment)
-     * @param signingFingerprint the explicit fingerprint to sign with, or {@code null}
-     * @param defaultSignerFingerprint the fingerprint resolved from sq's {@code sign.signer-self}
-     *        config, or {@code null}
+     * @param signingFingerprints the fingerprints of the keys to sign with, in order; empty for
+     *        a verify-only runner
      * @throws IllegalArgumentException if sqExecutable is null or empty
      */
-    SqRunner(String sqExecutable, Path sequoiaHome, String signingFingerprint,
-            String defaultSignerFingerprint) {
+    SqRunner(String sqExecutable, Path sequoiaHome, List<String> signingFingerprints) {
         if (sqExecutable == null || sqExecutable.isEmpty()) {
             throw new IllegalArgumentException("sqExecutable cannot be null or empty");
         }
         this.sqExecutable = sqExecutable;
         this.sqEnv = envFor(sequoiaHome);
-        this.signingFingerprint = signingFingerprint;
-        this.defaultSignerFingerprint = signingFingerprint == null ? defaultSignerFingerprint : null;
+        this.signingFingerprints = List.copyOf(signingFingerprints);
         this.format = new OpenPgpSignatureFormat();
     }
 
@@ -125,30 +121,35 @@ public class SqRunner implements SignatureTool, CertExporter {
      * <p>
      * Sigmund does not generate keys for sq: sq's own {@code sq key generate} covers
      * passphrases, expiry and profiles. This runs
-     * {@code sq key generate --userid <userId> --cipher-suite <cipherSuite> --profile rfc9580
-     * --own-key --without-password}, so the key is v6 and unprotected.
+     * {@code sq key generate --userid <userId> --cipher-suite <cipherSuite> --profile <profile>
+     * --own-key --without-password}, so the key is unprotected, and v4 under {@code rfc4880} or
+     * v6 under {@code rfc9580}.
      *
      * @param userId the user ID for the key (e.g., "Alice &lt;alice@example.com&gt;")
      * @param cipherSuite the Sequoia cipher suite identifier
      *        (e.g., {@value #DEFAULT_CIPHER_SUITE})
-     * @return the 64-character hexadecimal fingerprint of the generated key
-     * @throws IllegalArgumentException if userId or cipherSuite is null or empty
+     * @param profile the OpenPGP profile, {@code rfc4880} (v4) or {@code rfc9580} (v6)
+     * @return the 40- or 64-character hexadecimal fingerprint of the generated key
+     * @throws IllegalArgumentException if userId, cipherSuite or profile is null or empty
      * @throws RuntimeException if the sq command fails
      * @throws IllegalStateException if the fingerprint cannot be parsed from the output
      */
-    String generateKey(String userId, String cipherSuite) {
+    String generateKey(String userId, String cipherSuite, String profile) {
         if (userId == null || userId.isEmpty()) {
             throw new IllegalArgumentException("userId cannot be null or empty");
         }
         if (cipherSuite == null || cipherSuite.isEmpty()) {
             throw new IllegalArgumentException("cipherSuite cannot be null or empty");
         }
+        if (profile == null || profile.isEmpty()) {
+            throw new IllegalArgumentException("profile cannot be null or empty");
+        }
 
         String[] args = {
                 "key", "generate",
                 "--userid", userId,
                 "--cipher-suite", cipherSuite,
-                "--profile", "rfc9580",
+                "--profile", profile,
                 "--own-key",
                 "--without-password"
         };
@@ -525,8 +526,7 @@ public class SqRunner implements SignatureTool, CertExporter {
 
     @Override
     public boolean canSign() {
-        return (signingFingerprint != null && !signingFingerprint.isEmpty())
-                || (defaultSignerFingerprint != null && !defaultSignerFingerprint.isEmpty());
+        return !signingFingerprints.isEmpty();
     }
 
     /**
@@ -573,24 +573,31 @@ public class SqRunner implements SignatureTool, CertExporter {
         return value.toUpperCase();
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Gives one entry per key, in order, typed from the fingerprint's length; the algorithm and
+     * user ID come from the key's certificate when sq can inspect it.
+     */
     @Override
     public List<SigningInfo> signingInfo() {
-        if (!canSign()) {
-            return List.of();
-        }
-        String effectiveFingerprint = signingFingerprint != null ? signingFingerprint : defaultSignerFingerprint;
+        return signingFingerprints.stream().map(this::describe).toList();
+    }
+
+    private SigningInfo describe(String fingerprint) {
+        String type = KeyCredential.openPgp(fingerprint).type();
+        CertInfo info = inspectCertOrNull(fingerprint);
+        return info == null
+                ? new SigningInfo("sq", fingerprint, null, null, type)
+                : new SigningInfo("sq", fingerprint, info.algorithm(), info.userId(), type);
+    }
+
+    private CertInfo inspectCertOrNull(String fingerprint) {
         try {
-            CertInfo info = inspectCert(effectiveFingerprint);
-            if (info == null) {
-                return List.of(new SigningInfo("sq", effectiveFingerprint,
-                        null, null, Set.copyOf(SUPPORTED_CREDENTIAL_TYPES)));
-            }
-            return List.of(new SigningInfo("sq", effectiveFingerprint,
-                    info.algorithm(), info.userId(),
-                    Set.copyOf(SUPPORTED_CREDENTIAL_TYPES)));
+            return inspectCert(fingerprint);
         } catch (RuntimeException e) {
-            return List.of(new SigningInfo("sq", effectiveFingerprint,
-                    null, null, Set.copyOf(SUPPORTED_CREDENTIAL_TYPES)));
+            return null;
         }
     }
 
@@ -621,47 +628,25 @@ public class SqRunner implements SignatureTool, CertExporter {
     /**
      * {@inheritDoc}
      * <p>
-     * Signs using the stored fingerprint (provided at construction time).
+     * Signs with {@code sq sign --signer <fingerprint>}, where the fingerprint is the one
+     * {@code key} names, and reads the algorithm from the signature written.
      *
      * @throws IllegalStateException if no signing fingerprint was configured
+     * @throws IllegalArgumentException if {@code key} is not one of this runner's keys
      */
     @Override
-    public SignResult sign(Path artifactFile, Path outputSig) {
+    public SignResult sign(Path artifactFile, Path outputSig, SigningInfo key) {
         if (!canSign()) {
             throw new IllegalStateException("No signing fingerprint configured");
         }
-        if (signingFingerprint != null) {
-            sign(artifactFile, outputSig, signingFingerprint);
-        } else {
-            signWithSignerSelf(artifactFile, outputSig);
-        }
-        if (detectedAlgorithm == null) {
-            try {
-                String armored = java.nio.file.Files.readString(outputSig);
-                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-                String name = Algorithms.algorithmName(info.algorithmId());
-                detectedAlgorithm = name != null ? name : "unknown";
-            } catch (java.io.IOException e) {
-                detectedAlgorithm = "unknown";
-            }
-        }
-        return new SignResult(detectedAlgorithm);
+        String fingerprint = SigningKeys.requireListed(name(), signingFingerprints, key);
+        return new SignResult(algorithmOf(sign(artifactFile, outputSig, fingerprint)));
     }
 
-    private void signWithSignerSelf(Path artifactFile, Path outputSig) {
-        String[] args = {
-                "sign",
-                "--signer-self",
-                "--signature-file", outputSig.toString(),
-                artifactFile.toString()
-        };
-
-        CliTool.Result result = runSq(args);
-        if (result.exitCode() != 0) {
-            throw new RuntimeException("'" + formatCommand(args)
-                    + "' failed with exit code " + result.exitCode()
-                    + (result.stderr().isEmpty() ? "" : ": " + result.stderr().trim()));
-        }
+    private static String algorithmOf(String armoredSignature) {
+        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armoredSignature);
+        String name = Algorithms.algorithmName(info.algorithmId());
+        return name != null ? name : "unknown";
     }
 
     /**

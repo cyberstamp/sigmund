@@ -26,7 +26,7 @@ class BcInteropTest {
         Files.writeString(artifact, "hello world");
         Path sigFile = tempDir.resolve("artifact.txt.asc");
 
-        SignResult signResult = signer.sign(artifact, sigFile);
+        SignResult signResult = SigningTests.signWithOnlyKey(signer, artifact, sigFile);
         assertThat(signResult.algorithm()).isNotNull();
         assertThat(Files.exists(sigFile)).isTrue();
 
@@ -55,7 +55,7 @@ class BcInteropTest {
         Path artifact = tempDir.resolve("artifact.txt");
         Files.writeString(artifact, "original content");
         Path sigFile = tempDir.resolve("artifact.txt.asc");
-        signer.sign(artifact, sigFile);
+        SigningTests.signWithOnlyKey(signer, artifact, sigFile);
 
         // tamper with artifact
         Files.writeString(artifact, "tampered content");

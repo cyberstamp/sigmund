@@ -125,8 +125,16 @@ mvn sigmund:signer-info -Dsigmund.profile=hybrid
 **Output:**
 
 ```
-gpg: RSA 41A2197725BD63EB00D071D46A7F5DB1C68BDB81 (Alice <alice@example.com>)
-sq: ML-DSA-87+Ed448 D62AAB339E45E5EA2FD036872B01D46A517A2991... (Alice <alice@example.com>)
+gpg: pgp4 RSA 41A2197725BD63EB00D071D46A7F5DB1C68BDB81 (Alice <alice@example.com>)
+sq: pgp6 ML-DSA-87+Ed448 D62AAB339E45E5EA2FD036872B01D46A517A2991... (Alice <alice@example.com>)
+```
+
+When the signing plan has problems, such as a profile requesting a credential type no key covers, the goal logs the keys and then fails with the problems joined in the failure message:
+
+```
+[INFO] Signing profile: hybrid
+[INFO] sq: pgp4 A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2
+[ERROR] Failed to execute goal ...:signer-info: no signing key for requested credential type pgp6; keys in the run: sq pgp4
 ```
 
 ### sigmund:verify

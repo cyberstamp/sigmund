@@ -2,7 +2,9 @@ package dev.cyberstamp.sigmund.plugin;
 
 import dev.cyberstamp.sigmund.core.Signer;
 import dev.cyberstamp.sigmund.core.SigningInfo;
+import dev.cyberstamp.sigmund.core.SigningPlan;
 import org.apache.maven.plugin.MojoExecutionException;
+import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 
@@ -20,7 +22,7 @@ public class SignerInfoMojo extends AbstractSigningMojo {
     private String profile;
 
     @Override
-    public void execute() throws MojoExecutionException {
+    public void execute() throws MojoExecutionException, MojoFailureException {
         if (skip) {
             getLog().info("Skipping signer-info");
             return;
@@ -30,21 +32,19 @@ public class SignerInfoMojo extends AbstractSigningMojo {
                     ? sigmund.signer(profile)
                     : sigmund.signer();
 
-            var infos = signer.signingInfo();
-            if (infos.isEmpty()) {
-                getLog().warn("No signing identity information available");
-                return;
-            }
-
+            SigningPlan plan = signer.plan();
             if (profile != null) {
                 getLog().info("Signing profile: " + profile);
             }
-            for (SigningInfo info : infos) {
+            for (SigningInfo info : plan.keys()) {
                 getLog().info(info.display());
             }
+            if (!plan.problems().isEmpty()) {
+                throw new MojoFailureException(String.join("; ", plan.problems()));
+            }
         } catch (Exception e) {
-            if (e instanceof MojoExecutionException mee) {
-                throw mee;
+            if (e instanceof MojoExecutionException || e instanceof MojoFailureException) {
+                throw e;
             }
             throw new MojoExecutionException("Failed to retrieve signer info", e);
         }

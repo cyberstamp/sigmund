@@ -246,12 +246,11 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
     }
 
     private final String gpgExecutable;
-    private final String signingFingerprint;
+    private final List<String> signingFingerprints;
     private final String passphrase;
     private final Map<String, String> env;
     private final Path gpgHome;
     private final OpenPgpSignatureFormat format;
-    private volatile String detectedAlgorithm;
     private final boolean signingCapable;
     private final boolean resolveSigners;
     private final boolean importToKeyring;
@@ -297,14 +296,16 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
      * @throws IllegalArgumentException if gpgExecutable is null or empty
      */
     GpgRunner(String gpgExecutable, String signingFingerprint, String home) {
-        this(gpgExecutable, signingFingerprint, home, null, false, false, List.of());
+        this(gpgExecutable, signingFingerprint == null ? List.of() : List.of(signingFingerprint), home, null,
+                false, false, List.of());
     }
 
     /**
      * Constructs a GpgRunner with full configuration.
      *
      * @param gpgExecutable the path to the gpg executable
-     * @param signingFingerprint the full fingerprint of the key to sign with, or null
+     * @param signingFingerprints the full fingerprints of the keys to sign with, each passed to
+     *        {@code --local-user}, in order; empty to sign with GPG's default key
      * @param home the GPG home directory, or null to use the default
      * @param passphrase the GPG passphrase, or null to rely on gpg-agent
      * @param resolveSigners whether to fetch missing keys from keyservers
@@ -313,20 +314,20 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
      * @param keyservers keyserver URLs to fetch from
      * @throws IllegalArgumentException if gpgExecutable is null or empty
      */
-    GpgRunner(String gpgExecutable, String signingFingerprint, String home,
+    GpgRunner(String gpgExecutable, List<String> signingFingerprints, String home,
             String passphrase,
             boolean resolveSigners, boolean importToKeyring, List<String> keyservers) {
-        this(gpgExecutable, signingFingerprint, home, passphrase, true, resolveSigners, importToKeyring, keyservers);
+        this(gpgExecutable, signingFingerprints, home, passphrase, true, resolveSigners, importToKeyring, keyservers);
     }
 
-    GpgRunner(String gpgExecutable, String signingFingerprint, String home,
+    GpgRunner(String gpgExecutable, List<String> signingFingerprints, String home,
             String passphrase, boolean signingCapable,
             boolean resolveSigners, boolean importToKeyring, List<String> keyservers) {
         if (gpgExecutable == null || gpgExecutable.isEmpty()) {
             throw new IllegalArgumentException("gpgExecutable cannot be null or empty");
         }
         this.gpgExecutable = gpgExecutable;
-        this.signingFingerprint = signingFingerprint;
+        this.signingFingerprints = List.copyOf(signingFingerprints);
         this.passphrase = passphrase;
         this.signingCapable = signingCapable;
         this.env = home != null ? Map.of("GNUPGHOME", home) : null;
@@ -342,16 +343,20 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
      * {@inheritDoc}
      * <p>
      * Creates a detached ASCII-armored signature using GPG with options:
-     * {@code --batch --yes --armor --detach-sign [--local-user signingFingerprint] --output outputSig artifactFile}.
+     * {@code --batch --yes --armor --detach-sign [--local-user <fingerprint>] --output outputSig artifactFile}.
+     * With named keys, {@code key} must be one of them and is passed to {@code --local-user};
+     * without, GPG signs with its default key whatever {@code key} names.
      *
      * @param artifactFile the file to sign
      * @param outputSig the path where the signature file will be written
+     * @param key the key to sign with
      * @return a {@link SignResult} with the algorithm used
-     * @throws IllegalArgumentException if artifactFile or outputSig is null
+     * @throws IllegalArgumentException if artifactFile or outputSig is null, or {@code key} is
+     *         not one of the named keys
      * @throws ToolExecutionException if the GPG command fails
      */
     @Override
-    public SignResult sign(Path artifactFile, Path outputSig) {
+    public SignResult sign(Path artifactFile, Path outputSig, SigningInfo key) {
         if (artifactFile == null) {
             throw new IllegalArgumentException("artifactFile cannot be null");
         }
@@ -359,7 +364,7 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
             throw new IllegalArgumentException("outputSig cannot be null");
         }
 
-        String[] command = buildSignCommand(artifactFile, outputSig);
+        String[] command = buildSignCommand(artifactFile, outputSig, localUser(key));
         CliTool.Result result = passphrase != null
                 ? CliTool.runWithStdin(env, passphrase + "\n", command)
                 : CliTool.run(env, command);
@@ -368,18 +373,28 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
                     + "' failed with exit code " + result.exitCode()
                     + (result.stderr().isEmpty() ? "" : ": " + result.stderr().trim()));
         }
+        return new SignResult(algorithmOf(outputSig));
+    }
 
-        if (detectedAlgorithm == null) {
-            try {
-                String armored = Files.readString(outputSig);
-                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-                String name = Algorithms.algorithmName(info.algorithmId());
-                detectedAlgorithm = name != null ? name : "unknown";
-            } catch (IOException e) {
-                detectedAlgorithm = "unknown";
-            }
+    /**
+     * Returns the fingerprint to pass to {@code --local-user}: the named key {@code key}
+     * selects, or {@code null} for GPG's default key when no key is named.
+     */
+    private String localUser(SigningInfo key) {
+        if (signingFingerprints.isEmpty()) {
+            return null;
         }
-        return new SignResult(detectedAlgorithm);
+        return SigningKeys.requireListed("gpg", signingFingerprints, key);
+    }
+
+    private static String algorithmOf(Path signature) {
+        try {
+            OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(Files.readString(signature));
+            String name = Algorithms.algorithmName(info.algorithmId());
+            return name != null ? name : "unknown";
+        } catch (IOException e) {
+            return "unknown";
+        }
     }
 
     /**
@@ -511,27 +526,103 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
     }
 
     /**
-     * Returns the fingerprint of the key this runner signs with.
+     * Returns the fingerprints of the keys this runner signs with.
      *
-     * @return the fingerprint passed to {@code --local-user}, or {@code null} when gpg's default key is used
+     * @return the fingerprints passed to {@code --local-user}, in order; empty when gpg's
+     *         default key is used
      */
-    String signingFingerprint() {
-        return signingFingerprint;
+    List<String> signingFingerprints() {
+        return signingFingerprints;
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Gives one entry per named key, in order, typed from its fingerprint's length when
+     * {@code --list-secret-keys} cannot describe it. Without named keys, gives one entry for
+     * GPG's default key — the {@code default-key} of {@code gpg.conf}, else the first secret
+     * key — of unknown type when it cannot be listed.
+     */
     @Override
     public List<SigningInfo> signingInfo() {
-        String effectiveKey = signingFingerprint;
-        if (effectiveKey == null) {
-            effectiveKey = parseDefaultKey(gpgConfPath());
+        if (signingFingerprints.isEmpty()) {
+            return List.of(describeDefaultKey());
         }
-        CliTool.Result result = effectiveKey != null
-                ? CliTool.run(env, gpgExecutable, "--list-secret-keys", "--with-colons", effectiveKey)
+        return signingFingerprints.stream().map(this::describeNamedKey).toList();
+    }
+
+    private SigningInfo describeNamedKey(String fingerprint) {
+        CliTool.Result result = CliTool.run(env, gpgExecutable, "--list-secret-keys", "--with-colons", fingerprint);
+        if (result.exitCode() != 0) {
+            return new SigningInfo("gpg", fingerprint, null, null, KeyCredential.openPgp(fingerprint).type());
+        }
+        return namedSigningInfo(fingerprint, result.stdout());
+    }
+
+    /**
+     * Describes a key the user named: the named fingerprint is kept, because the listing of a
+     * subkey starts with its primary key's {@code fpr:} record. The algorithm is that of the
+     * key record whose {@code fpr:} is the named fingerprint — a subkey's own, not its
+     * primary's — falling back to the primary's when no record matches; the user ID is the
+     * primary's.
+     *
+     * @param fingerprint the configured fingerprint
+     * @param colonsOutput the output of {@code gpg --list-secret-keys --with-colons}
+     * @return signing info carrying {@code fingerprint}
+     */
+    static SigningInfo namedSigningInfo(String fingerprint, String colonsOutput) {
+        SigningInfo listed = parseColonsSigningInfo(colonsOutput);
+        String algorithm = algorithmOfKeyRecord(fingerprint, colonsOutput);
+        return new SigningInfo("gpg", fingerprint, algorithm != null ? algorithm : listed.algorithm(),
+                listed.userId(), KeyCredential.openPgp(fingerprint).type());
+    }
+
+    /**
+     * Finds the algorithm of the key record ({@code pub}, {@code sec}, {@code sub} or
+     * {@code ssb}) that the {@code fpr:} record carrying {@code fingerprint} follows.
+     *
+     * @param fingerprint the fingerprint to find, in any case
+     * @param colonsOutput the output of {@code gpg --with-colons}
+     * @return the algorithm name, or {@code null} if no record carries the fingerprint
+     */
+    private static String algorithmOfKeyRecord(String fingerprint, String colonsOutput) {
+        String recordAlgorithm = null;
+        for (String line : colonsOutput.split("\\R")) {
+            String[] fields = line.split(":", -1);
+            if (isKeyRecord(fields[0])) {
+                recordAlgorithm = fields.length > 4 ? algorithmName(fields[3]) : null;
+            } else if ("fpr".equals(fields[0]) && fields.length > GPG_COLONS_FIELD_9
+                    && fingerprint.equalsIgnoreCase(fields[GPG_COLONS_FIELD_9])) {
+                return recordAlgorithm;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isKeyRecord(String recordType) {
+        return switch (recordType) {
+            case "pub", "sec", "sub", "ssb" -> true;
+            default -> false;
+        };
+    }
+
+    private static String algorithmName(String algorithmId) {
+        try {
+            return Algorithms.algorithmName(Integer.parseInt(algorithmId));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private SigningInfo describeDefaultKey() {
+        String defaultKey = parseDefaultKey(gpgConfPath());
+        CliTool.Result result = defaultKey != null
+                ? CliTool.run(env, gpgExecutable, "--list-secret-keys", "--with-colons", defaultKey)
                 : CliTool.run(env, gpgExecutable, "--list-secret-keys", "--with-colons");
         if (result.exitCode() != 0) {
-            return List.of();
+            return new SigningInfo("gpg", defaultKey, null, null, null);
         }
-        return List.of(parseColonsSigningInfo(result.stdout()));
+        return parseColonsSigningInfo(result.stdout());
     }
 
     /**
@@ -642,8 +733,7 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
                 break;
             }
         }
-        return new SigningInfo("gpg", fingerprint, algorithm, userId,
-                Set.copyOf(SUPPORTED_CREDENTIAL_TYPES));
+        return new SigningInfo("gpg", fingerprint, algorithm, userId, Credential.TYPE_PGP4);
     }
 
     @Override
@@ -826,7 +916,7 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
      * adds {@code --pinentry-mode loopback --passphrase-fd 0} so the passphrase
      * can be piped via stdin.
      */
-    private String[] buildSignCommand(Path artifactFile, Path outputSig) {
+    private String[] buildSignCommand(Path artifactFile, Path outputSig, String localUser) {
         List<String> command = new ArrayList<>();
         command.add(gpgExecutable);
         command.add("--batch");
@@ -841,9 +931,9 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
             command.add("0");
         }
 
-        if (signingFingerprint != null && !signingFingerprint.isEmpty()) {
+        if (localUser != null) {
             command.add("--local-user");
-            command.add(signingFingerprint);
+            command.add(localUser);
         }
 
         command.add("--output");

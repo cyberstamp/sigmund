@@ -6,7 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -14,13 +14,8 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>
  * This test class validates the complete end-to-end flow of signing artifacts
  * with hybrid (classical + post-quantum) signatures and verifying them. These
- * tests require both GnuPG (gpg) and Sequoia (sq) to be installed and available
- * on the system PATH.
- *
- * <p>
- * The test suite is automatically disabled via {@link EnabledIf} if either
- * tool is unavailable, making it safe to run in environments where these
- * tools may not be installed.
+ * tests require GnuPG (gpg) and a Sequoia (sq) build with post-quantum cipher
+ * suites on the system PATH, and fail without them.
  *
  * <p>
  * Test flow:
@@ -37,36 +32,12 @@ import org.junit.jupiter.api.io.TempDir;
  * @see Signer
  * @see SignatureVerificationReport
  */
-@EnabledIf("toolsAvailable")
+@DisabledIfSystemProperty(named = "sigmund.test.skip-gpg", matches = "true")
+@DisabledIfSystemProperty(named = "sigmund.test.skip-sq", matches = "true")
 class RoundTripIntegrationTest {
 
     private static Path sqHome;
     private static String pqcFingerprint;
-
-    /**
-     * Checks if both GPG and PQC-enabled Sequoia are available on the system.
-     * <p>
-     * This method is used by JUnit's {@link EnabledIf} annotation to conditionally
-     * enable the test class. It verifies not just that {@code sq} is installed, but
-     * that it supports the default PQC cipher suite ({@code mldsa87-ed448}).
-     * Sequoia 1.4.0+ is required for PQC support.
-     *
-     *
-     * @return true if both {@code gpg} and PQC-enabled {@code sq} are available
-     */
-    static boolean toolsAvailable() {
-        if (!GpgRunner.isToolAvailable() || !SqRunner.isToolAvailable()) {
-            return false;
-        }
-        // Check that sq actually supports PQC cipher suites
-        try {
-            CliTool.Result result = CliTool.run("sq", "key", "generate", "--help");
-            return result.stdout().contains("mldsa87-ed448")
-                    || result.stderr().contains("mldsa87-ed448");
-        } catch (Exception e) {
-            return false;
-        }
-    }
 
     /**
      * Sets up the test environment by creating a temporary Sequoia home directory
@@ -85,7 +56,7 @@ class RoundTripIntegrationTest {
         sqHome = tempDir.resolve("sq-home");
         Files.createDirectories(sqHome);
         SqRunner sq = new SqRunner(sqHome);
-        pqcFingerprint = sq.generateKey("PQC Test <test@sigmund.example>", SqRunner.DEFAULT_CIPHER_SUITE);
+        pqcFingerprint = sq.generateKey("PQC Test <test@sigmund.example>", SqRunner.DEFAULT_CIPHER_SUITE, "rfc9580");
     }
 
     /**

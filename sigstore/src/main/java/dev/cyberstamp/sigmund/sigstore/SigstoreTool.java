@@ -45,7 +45,7 @@ import org.bouncycastle.asn1.x509.GeneralName;
  * <p>
  * The tool is fully configured at construction time. The {@link KeylessSigner}
  * is optional (nullable for verify-only mode). When present, it is reused
- * across multiple {@link #sign(Path, Path)} calls — sigstore-java internally
+ * across multiple {@link #sign(Path, Path, SigningInfo)} calls — sigstore-java internally
  * caches the Fulcio certificate until it has less than 5 minutes of remaining
  * validity.
  * <p>
@@ -193,7 +193,7 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
         if (!canSign()) {
             return List.of();
         }
-        return List.of(new SigningInfo(TOOL_NAME, null, null, sigstoreSubject, Set.of(Credential.TYPE_SIGSTORE)));
+        return List.of(new SigningInfo(TOOL_NAME, null, null, sigstoreSubject, Credential.TYPE_SIGSTORE));
     }
 
     @Override
@@ -216,15 +216,17 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
      * <p>
      * Delegates to {@link KeylessSigner#signFile(Path)} which internally
      * handles OIDC authentication, Fulcio certificate issuance, signing,
-     * and Rekor transparency log submission.
+     * and Rekor transparency log submission. The tool has a single identity, so {@code key}
+     * selects nothing.
      *
      * @param artifactFile the file to sign
      * @param outputSig the path to write the Sigstore bundle JSON
+     * @param key the key {@link #signingInfo()} reported; ignored
      * @return the signing result with the certificate's public key algorithm
      * @throws ToolExecutionException if signing fails
      */
     @Override
-    public SignResult sign(Path artifactFile, Path outputSig) {
+    public SignResult sign(Path artifactFile, Path outputSig, SigningInfo key) {
         if (signer == null) {
             throw new IllegalStateException("Signing not configured");
         }

@@ -58,7 +58,7 @@ class ToolFactoryTest {
                     Map.of("signing-fingerprint", "4aee18f83afdeb23468b2e5a2d7baf3c1e9f5a12"), null);
 
             assertThat(tool.canSign()).isTrue();
-            assertThat(tool.signingFingerprint()).isEqualTo("4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12");
+            assertThat(tool.signingFingerprints()).containsExactly("4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12");
         }
 
         @Test
@@ -71,14 +71,14 @@ class ToolFactoryTest {
             var tool = (GpgRunner) factory.createSigning(Map.of(), null);
 
             assertThat(tool.canSign()).isTrue();
-            assertThat(tool.signingFingerprint()).isNull();
+            assertThat(tool.signingFingerprints()).isEmpty();
         }
 
         @Test
         void aSigningKeyComesOnlyFromSettings() {
             var tool = (GpgRunner) factory.createSigning(Map.of(), signerPinning(PINNED));
 
-            assertThat(tool.signingFingerprint()).isNull();
+            assertThat(tool.signingFingerprints()).isEmpty();
         }
     }
 
@@ -289,10 +289,128 @@ class ToolFactoryTest {
 
         @ParameterizedTest
         @MethodSource("openPgpFactories")
-        void aV4OrV6FingerprintInEitherCaseIsAccepted(SignatureToolFactory factory) {
-            factory.checkSettingValues(Map.of("signing-fingerprint", "4aee18f83afdeb23468b2e5a2d7baf3c1e9f5a12"));
-            factory.checkSettingValues(Map.of("signing-fingerprint", PINNED));
+        void anUnsetFingerprintIsAccepted(SignatureToolFactory factory) {
             factory.checkSettingValues(Map.of());
+        }
+
+        @ParameterizedTest
+        @MethodSource("openPgpFactories")
+        void aV4FingerprintInEitherCaseIsAccepted(SignatureToolFactory factory) {
+            factory.checkSettingValues(Map.of("signing-fingerprint", "4aee18f83afdeb23468b2e5a2d7baf3c1e9f5a12"));
+        }
+
+        @Test
+        void bcAndSqAcceptAV6Fingerprint() {
+            new BcToolFactory().checkSettingValues(Map.of("signing-fingerprint", PINNED));
+            new SqToolFactory().checkSettingValues(Map.of("signing-fingerprint", PINNED));
+        }
+
+        @Test
+        void gpgRejectsAV6Fingerprint() {
+            assertThatThrownBy(() -> new GpgToolFactory().checkSettingValues(Map.of("signing-fingerprint", PINNED)))
+                    .isInstanceOf(PolicyConfigException.class)
+                    .hasMessageContaining("gpg signs with v4 keys only");
+        }
+    }
+
+    /**
+     * {@code signing-fingerprint} is written as one fingerprint or a list; a list reaches the
+     * factory joined with the list separator.
+     */
+    @Nested
+    class SigningFingerprintList {
+
+        private static final String V4 = "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12";
+        private static final String V4_OTHER = "1111111111111111111111111111111111111111";
+
+        private Map<String, String> sq(String fingerprints) {
+            return Map.of("executable", "/nonexistent/sq", "signing-fingerprint", fingerprints);
+        }
+
+        private Map<String, String> gpg(String fingerprints) {
+            return Map.of("executable", "false", "signing-fingerprint", fingerprints);
+        }
+
+        @Test
+        void sqSignsWithEachKeyInWrittenOrder() {
+            SignatureToolFactory factory = new SqToolFactory();
+            String joined = V4 + "," + PINNED;
+            factory.checkSettingValues(sq(joined));
+
+            List<SigningInfo> keys = factory.createSigning(sq(joined), null).signingInfo();
+
+            assertThat(keys).extracting(SigningInfo::fingerprint).containsExactly(V4, PINNED);
+        }
+
+        @Test
+        void bcWithAScalarHasOneKey(@TempDir Path dir) {
+            Map<String, String> settings = Map.of("signing-fingerprint", V4,
+                    "gnupg-home", dir.resolve("gnupg").toString(),
+                    "cert-d-home", dir.resolve("cert-d").toString(),
+                    "bc-private-home", dir.resolve("bc-private").toString());
+            new BcToolFactory().checkSettingValues(settings);
+
+            List<SigningInfo> keys = new BcToolFactory().createSigning(settings, null).signingInfo();
+
+            assertThat(keys).extracting(SigningInfo::fingerprint).containsExactly(V4);
+        }
+
+        @Test
+        void gpgSignsWithEachV4Key() {
+            SignatureToolFactory factory = new GpgToolFactory();
+            String joined = V4 + "," + V4_OTHER;
+            factory.checkSettingValues(gpg(joined));
+
+            List<SigningInfo> keys = factory.createSigning(gpg(joined), null).signingInfo();
+
+            assertThat(keys).extracting(SigningInfo::fingerprint).containsExactly(V4, V4_OTHER);
+        }
+
+        @Test
+        void anEmptyListIsRejected() {
+            assertThatThrownBy(() -> new SqToolFactory().checkSettingValues(Map.of("signing-fingerprint", "")))
+                    .isInstanceOf(PolicyConfigException.class)
+                    .hasMessageContaining("tools.sq.signing-fingerprint: the list is empty");
+        }
+
+        @Test
+        void aFingerprintListedTwiceIsRejectedWhateverTheCase() {
+            Map<String, String> settings = Map.of("signing-fingerprint", V4 + "," + V4.toLowerCase());
+
+            assertThatThrownBy(() -> new SqToolFactory().checkSettingValues(settings))
+                    .isInstanceOf(PolicyConfigException.class)
+                    .hasMessageContaining("is listed twice");
+            assertThatThrownBy(() -> new SqToolFactory().createSigning(settings, null))
+                    .isInstanceOf(PolicyConfigException.class)
+                    .hasMessageContaining("is listed twice");
+        }
+
+        @Test
+        void aKeyIdItemIsNamed() {
+            Map<String, String> settings = Map.of("signing-fingerprint", V4 + ",DEADBEEF");
+
+            assertThatThrownBy(() -> new BcToolFactory().checkSettingValues(settings))
+                    .isInstanceOf(PolicyConfigException.class)
+                    .hasMessageContaining("tools.bc.signing-fingerprint: 'DEADBEEF' is not a full fingerprint");
+        }
+
+        @Test
+        void gpgRejectsAV6Fingerprint() {
+            assertThatThrownBy(() -> new GpgToolFactory().checkSettingValues(gpg(PINNED)))
+                    .isInstanceOf(PolicyConfigException.class)
+                    .hasMessageContaining("tools.gpg.signing-fingerprint")
+                    .hasMessageContaining("gpg signs with v4 keys only");
+            assertThatThrownBy(() -> new GpgToolFactory().createSigning(gpg(V4 + "," + PINNED), null))
+                    .isInstanceOf(PolicyConfigException.class)
+                    .hasMessageContaining("tools.gpg.signing-fingerprint")
+                    .hasMessageContaining("gpg signs with v4 keys only");
+        }
+
+        @Test
+        void theFactoriesDeclareTheirListSettings() {
+            assertThat(new BcToolFactory().listSettings()).containsExactly("signing-fingerprint");
+            assertThat(new SqToolFactory().listSettings()).containsExactly("signing-fingerprint");
+            assertThat(new GpgToolFactory().listSettings()).containsExactly("signing-fingerprint");
         }
     }
 }

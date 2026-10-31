@@ -116,8 +116,9 @@ public class Sigmund implements AutoCloseable {
     }
 
     /**
-     * Creates a signer using the default {@code credential-types} filter (if configured),
-     * or all available signing tools when no filter is set.
+     * Creates a signer for the default {@code credential-types} (if configured): its
+     * {@link SigningPlan} signs with the keys of those types, or with every key of every signing
+     * tool when none are configured.
      *
      * @return a new signer
      */
@@ -129,14 +130,14 @@ public class Sigmund implements AutoCloseable {
     /**
      * Creates a signer using a named profile from the signing configuration.
      * <p>
-     * The profile maps to a list of credential types; only tools whose
-     * {@link SignatureTool#supportedCredentialTypes()} intersects with the
-     * profile's credential types are included. Takes precedence over the
-     * default {@code credential-types} setting.
+     * The profile maps to a list of credential types; the signer's {@link SigningPlan} signs only
+     * with keys of those types. Takes precedence over the default {@code credential-types}
+     * setting.
      *
      * @param profileName the profile name (e.g., {@code "classic"}, {@code "hybrid"})
-     * @return a new signer filtered to the profile's credential types
-     * @throws SigmundException if the profile name is not found in the signing config
+     * @return a new signer for the profile's credential types
+     * @throws SigmundException if the profile name is not found in the signing config, or a tool
+     *         {@code signing.toolchain} names is not available or cannot sign
      */
     public Signer signer(String profileName) {
         if (signingConfig == null || signingConfig.profiles().isEmpty()) {
@@ -150,15 +151,14 @@ public class Sigmund implements AutoCloseable {
         return signerForCredentialTypes(credentialTypes);
     }
 
+    /**
+     * Creates a signer over the signing-capable tools, narrowed and ordered by
+     * {@code signing.toolchain} when it is set, for the given requested types. Which keys sign is
+     * left to the signer's {@link SigningPlan}.
+     */
     private Signer signerForCredentialTypes(List<String> credentialTypes) {
         List<SignatureTool> candidates = tools.stream().filter(SignatureTool::canSign).toList();
-        if (!credentialTypes.isEmpty()) {
-            candidates = candidates.stream()
-                    .filter(t -> t.supportedCredentialTypes().stream()
-                            .anyMatch(credentialTypes::contains))
-                    .toList();
-        }
-        return new Signer(configuredSigningTools(candidates), signerBindingCheck());
+        return new Signer(configuredSigningTools(candidates), credentialTypes, signerBindingCheck());
     }
 
     /**
@@ -182,12 +182,13 @@ public class Sigmund implements AutoCloseable {
      * When the signing toolchain is empty, returns the candidates unchanged.
      * When tools are configured, each must be present in the candidates list; if a
      * configured tool is missing, an exception is thrown with a diagnostic message
-     * (not available, not signing-capable, or credential type mismatch).
+     * (not available or not signing-capable). A configured tool with no key of a requested type
+     * does not sign; the {@link SigningPlan} decides which keys sign.
      * <p>
      * The result preserves the iteration order of {@link SigningConfig#toolchain()}, so
      * the signing order matches the user's YAML configuration.
      *
-     * @param candidates signing-capable tools, possibly pre-filtered by profile credential types
+     * @param candidates signing-capable tools
      * @return the configured subset of candidates
      * @throws SigmundException if a configured tool is not in the candidates list
      */
@@ -215,18 +216,10 @@ public class Sigmund implements AutoCloseable {
 
     /**
      * Returns a human-readable reason why a configured signing tool is absent
-     * from the candidate list: not registered, not signing-capable, or filtered
-     * out by profile credential types.
+     * from the candidate list: not registered, or not signing-capable.
      */
     private String diagnoseSigningFailure(String toolName) {
-        SignatureTool registered = tool(toolName);
-        if (registered == null) {
-            return "not available";
-        }
-        if (!registered.canSign()) {
-            return "not signing-capable";
-        }
-        return "does not match the requested credential types";
+        return tool(toolName) == null ? "not available" : "not signing-capable";
     }
 
     /**
@@ -715,8 +708,10 @@ public class Sigmund implements AutoCloseable {
         void checkToolConfiguration() {
             for (String toolName : toolsConfig.toolNames()) {
                 SignatureToolFactory factory = factoryFor("tools", toolName);
-                Map<String, String> settings = toolsConfig.get(toolName).settings();
+                ToolConfig config = toolsConfig.get(toolName);
+                Map<String, String> settings = config.settings();
                 checkSettings(toolName, settings.keySet(), factory.acceptedSettings());
+                checkListSettings(toolName, config, factory.listSettings());
                 factory.checkSettingValues(settings);
             }
             if (verificationConfig.toolchain() != null) {
@@ -724,6 +719,22 @@ public class Sigmund implements AutoCloseable {
             }
             if (signingConfig != null) {
                 checkToolchain("signing.toolchain", signingConfig.toolchain());
+            }
+        }
+
+        private static void checkListSettings(String toolName, ToolConfig config, Set<String> takingLists) {
+            for (String key : config.lists()) {
+                if (!takingLists.contains(key)) {
+                    throw new PolicyConfigException(
+                            "tools." + toolName + "." + key + " must be a single value, not a list");
+                }
+            }
+            for (String key : takingLists) {
+                String value = config.settings().get(key);
+                if (value != null && !config.lists().contains(key) && value.contains(ToolSetting.LIST_SEPARATOR)) {
+                    throw new PolicyConfigException("tools." + toolName + "." + key + ": '" + value
+                            + "' holds more than one value; write them as a list");
+                }
             }
         }
 

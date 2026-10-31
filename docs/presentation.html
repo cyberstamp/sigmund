@@ -1277,11 +1277,11 @@
 <hr class="divider">
 
 <!-- ============================================================ -->
-<!-- 5. SIGNING ROUTING                                            -->
+<!-- 5. SIGNING                                                    -->
 <!-- ============================================================ -->
 <section>
   <span class="section-label"><span class="slide-number">5</span> Signing</span>
-  <h2>Signing Pipeline &amp; Task Routing</h2>
+  <h2>Signing Pipeline &amp; Key Selection</h2>
 
   <div class="flow-container">
     <h3 style="color:var(--green)">Signing Flow</h3>
@@ -1328,9 +1328,9 @@
     </div>
   </div>
 
-  <!-- Credential-to-tool routing -->
-  <h3 style="margin-top:2.5rem">Credential-to-Tool Routing</h3>
-  <p>The builder routes signer credentials to tools in three steps:</p>
+  <!-- Signing key selection -->
+  <h3 style="margin-top:2.5rem">Choosing the Signing Keys</h3>
+  <p>Each run plans its keys once, before anything is signed:</p>
 
   <div class="trust-flow" style="position:relative;padding-left:20px">
     <div class="step-connector"></div>
@@ -1338,24 +1338,24 @@
     <div class="trust-step">
       <div class="step-num">1</div>
       <div class="step-content">
-        <h4>Capability Match</h4>
-        <p>Find tools whose <code>supportedCredentialTypes()</code> contains the credential type.</p>
+        <h4>Every Tool Lists Its Keys</h4>
+        <p><code>tools.&lt;bc|sq|gpg&gt;.signing-fingerprint</code> names one key or a list; without it a tool uses its default key. Each key's credential type comes from the key itself.</p>
       </div>
     </div>
 
     <div class="trust-step">
       <div class="step-num">2</div>
       <div class="step-content">
-        <h4>Availability Check</h4>
-        <p><code>canSign()</code> filters tools that don't have the key material in their keyring.</p>
+        <h4>Requested Types Select Keys</h4>
+        <p><code>credential-types</code> or a profile picks the keys of those types; with none requested, every key signs. Each key's signature is combined by format into one <code>.asc</code>.</p>
       </div>
     </div>
 
     <div class="trust-step">
       <div class="step-num">3</div>
       <div class="step-content">
-        <h4>Ambiguity Resolution</h4>
-        <p>Single survivor wins. Multiple survivors &rarr; config error. Explicit <code>tools.*.credentials</code> overrides bypass all of this.</p>
+        <h4>Missing Types Fail Early</h4>
+        <p>When types are requested, a type with no key in the run, or a key whose type cannot be read, fails the run before signing &mdash; naming the keys that are there.</p>
       </div>
     </div>
   </div>

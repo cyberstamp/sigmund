@@ -14,8 +14,8 @@ import java.util.Map;
  * <p>
  * {@code credentialTypes} is the direct way to restrict which signature types are produced.
  * For example, {@code [pgp4, pgp6]} produces both OpenPGP v4 and v6 signatures.
- * When set, it serves as the default filter — only tools whose
- * {@link SignatureTool#supportedCredentialTypes()} intersects with this list are used.
+ * When set, it serves as the default selection — the signing plan keeps the keys, across
+ * all signing tools, whose credential type is in this list.
  * <p>
  * Named {@code profiles} are an opt-in overlay for scenarios that require switching
  * between different credential type sets at invocation time (e.g., {@code --profile classic}

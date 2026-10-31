@@ -31,6 +31,9 @@ mvn test -pl core -Dtest="SigmundConfigParserTest"
 
 # Maven plugin tests (install core first when it changed: mvn install -pl core -DskipTests)
 mvn test -pl maven-plugin
+
+# Skip the tests that need gpg or sq (both run by default and fail without the tool)
+mvn verify -Dsigmund.test.skip-gpg=true -Dsigmund.test.skip-sq=true
 ```
 
 Java 17 target. No JPMS module-info. The build formats sources; expect import order and line
@@ -112,15 +115,23 @@ Rules the code relies on; breaking one is a defect even if tests pass.
   `ToolSetting` enum, and `acceptedSettings()` is derived from the enum's values, so reading and
   accepting cannot drift; an unused constant is a setting accepted and ignored. Each setting is
   also listed under `tools.<name>` in the schema, which `SchemaAgreementTest` holds to the
-  factory, and in its table in `docs/configuration.md`. The key-fetching settings Sigmund
-  injects are `FetchSetting`, not accepted under `tools`.
+  factory, and in its table in `docs/configuration.md`. A setting that takes a list says so on its
+  constant (`takesList()`), and `listSettings()` is derived from it with `ToolSetting.listKeysOf`.
+  The key-fetching settings Sigmund injects are `FetchSetting`, not accepted under `tools`.
 
 ## Testing
 
 - Write tests for every change. TDD where practical.
 - JUnit with nested test classes organized by concern.
 - Use `@TempDir` for file-system tests.
-- Mock tools for unit tests; integration tests use real tools when available.
+- Mock tools for unit tests; integration tests use the real tools and fail when one is missing.
+  `gpg` and a post-quantum `sq` (1.4.0+) are required to build, as CI installs them. A test that
+  needs a tool carries `@DisabledIfSystemProperty(named = "sigmund.test.skip-<gpg|sq>",
+  matches = "true")`, so `-Dsigmund.test.skip-gpg=true` or `-Dsigmund.test.skip-sq=true` skips
+  it on request; both are off by default. Never skip on what the environment happens to hold —
+  an absent tool, a set variable. A variable that changes Sigmund's behaviour, such as
+  `SIGMUND_BC_SIGNING_KEY`, is excluded from the test JVM in the root `pom.xml`
+  (`excludedEnvironmentVariables`); a test that needs it sets it on a process it forks.
 - Parser tests use inline YAML strings via `SigmundConfigParser.parse(source, reader)`.
 - When a test pins a CLI tool's output, use the tool's real output — including invisible
   characters such as `sq`'s no-break spaces — captured from the installed version.

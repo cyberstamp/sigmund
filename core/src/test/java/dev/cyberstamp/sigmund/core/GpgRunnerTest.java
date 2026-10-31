@@ -1,6 +1,7 @@
 package dev.cyberstamp.sigmund.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -8,6 +9,7 @@ import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
 class GpgRunnerTest {
@@ -148,6 +150,7 @@ class GpgRunnerTest {
         assertThat(info.fingerprint()).isEqualTo("41A2197725BD63EB00D071D46A7F5DB1C68BDB81");
         assertThat(info.algorithm()).isEqualTo("RSA");
         assertThat(info.userId()).isEqualTo("Alice <alice@example.com>");
+        assertThat(info.credentialType()).isEqualTo("pgp4");
     }
 
     @Test
@@ -197,18 +200,147 @@ class GpgRunnerTest {
         assertThat(info.userId()).isNull();
     }
 
+    @Test
+    void aNamedSubkeyKeepsItsFingerprintWhenTheListingStartsWithThePrimary() {
+        String subkey = "AABBCCDD11223344AABBCCDD11223344AABBCCDD";
+        String output = """
+                sec:u:255:22:1111111111111111:1700000000:::u:::scESC::::::23::0:
+                fpr:::::::::41A2197725BD63EB00D071D46A7F5DB1C68BDB81:
+                uid:u::::1700000000::HASH::Ed User <ed@example.com>::::::::::0:
+                ssb:u:255:22:AABBCCDD11223344:1700000000::::::s::::::23:
+                fpr:::::::::AABBCCDD11223344AABBCCDD11223344AABBCCDD:
+                """;
+        SigningInfo info = GpgRunner.namedSigningInfo(subkey, output);
+        assertThat(info.fingerprint()).isEqualTo(subkey);
+        assertThat(info.userId()).isEqualTo("Ed User <ed@example.com>");
+        assertThat(info.credentialType()).isEqualTo("pgp4");
+    }
+
+    @Test
+    void aNamedSubkeyReportsItsOwnAlgorithmRatherThanThePrimarys() {
+        String subkey = "AABBCCDD11223344AABBCCDD11223344AABBCCDD";
+        String output = """
+                sec:u:4096:1:6A7F5DB1C68BDB81:1700000000:::u:::scESC::::::23::0:
+                fpr:::::::::41A2197725BD63EB00D071D46A7F5DB1C68BDB81:
+                uid:u::::1700000000::HASH::Ed User <ed@example.com>::::::::::0:
+                ssb:u:255:22:AABBCCDD11223344:1700000000::::::s::::::23:
+                fpr:::::::::aabbccdd11223344aabbccdd11223344aabbccdd:
+                """;
+        SigningInfo info = GpgRunner.namedSigningInfo(subkey, output);
+        assertThat(info.algorithm()).isEqualTo("EdDSA");
+    }
+
+    @Test
+    void aNamedPrimaryKeyReportsItsOwnAlgorithmRatherThanItsSubkeys() {
+        String primary = "41A2197725BD63EB00D071D46A7F5DB1C68BDB81";
+        String output = """
+                sec:u:4096:1:6A7F5DB1C68BDB81:1700000000:::u:::scESC::::::23::0:
+                fpr:::::::::41A2197725BD63EB00D071D46A7F5DB1C68BDB81:
+                ssb:u:255:22:AABBCCDD11223344:1700000000::::::s::::::23:
+                fpr:::::::::AABBCCDD11223344AABBCCDD11223344AABBCCDD:
+                """;
+        SigningInfo info = GpgRunner.namedSigningInfo(primary, output);
+        assertThat(info.algorithm()).isEqualTo("RSA");
+    }
+
+    @Test
+    void aNamedKeyIsTypedFromItsFingerprintWhenListingFails() {
+        GpgRunner gpg = new GpgRunner("false", "41A2197725BD63EB00D071D46A7F5DB1C68BDB81");
+
+        List<SigningInfo> infos = gpg.signingInfo();
+
+        assertThat(infos).hasSize(1);
+        assertThat(infos.get(0).fingerprint()).isEqualTo("41A2197725BD63EB00D071D46A7F5DB1C68BDB81");
+        assertThat(infos.get(0).credentialType()).isEqualTo("pgp4");
+    }
+
+    @Test
+    void eachNamedKeyGetsAnEntryWhenListingFails() {
+        GpgRunner gpg = new GpgRunner("false", List.of("41A2197725BD63EB00D071D46A7F5DB1C68BDB81",
+                "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"), null, null, false, false, List.of());
+
+        assertThat(gpg.signingInfo()).extracting(SigningInfo::fingerprint).containsExactly(
+                "41A2197725BD63EB00D071D46A7F5DB1C68BDB81", "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12");
+    }
+
+    @Test
+    void theDefaultKeyIsOfUnknownTypeWhenListingFails(@TempDir Path home) {
+        GpgRunner gpg = new GpgRunner("false", null, home.toString());
+
+        List<SigningInfo> infos = gpg.signingInfo();
+
+        assertThat(infos).hasSize(1);
+        assertThat(infos.get(0).credentialType()).isNull();
+    }
+
+    @Test
+    void aKeyOutsideTheNamedOnesIsRejected(@TempDir Path dir) {
+        GpgRunner gpg = new GpgRunner("false", "41A2197725BD63EB00D071D46A7F5DB1C68BDB81");
+        String outside = "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12";
+
+        assertThatThrownBy(() -> gpg.sign(dir.resolve("a.jar"), dir.resolve("a.jar.asc"),
+                new SigningInfo("gpg", outside, null, null, "pgp4")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("gpg")
+                .hasMessageContaining(outside);
+    }
+
+    /**
+     * A runner naming two keys signs with whichever key it is given.
+     */
+    @Nested
+    @DisabledIfSystemProperty(named = "sigmund.test.skip-gpg", matches = "true")
+    class MultipleKeys {
+
+        @TempDir
+        Path dir;
+
+        @Test
+        void eachKeySignsWithItself() throws IOException {
+            String fp1 = generate("One <one@example.com>");
+            String fp2 = generate("Two <two@example.com>");
+            GpgRunner runner = new GpgRunner("gpg", List.of(fp1, fp2), home().toString(), null,
+                    false, false, List.of());
+
+            List<SigningInfo> keys = runner.signingInfo();
+
+            assertThat(keys).extracting(SigningInfo::fingerprint).containsExactly(fp1, fp2);
+            for (SigningInfo key : keys) {
+                assertThat(provenBy(runner, key)).contains(KeyCredential.openPgp(key.fingerprint()));
+            }
+        }
+
+        private List<Credential> provenBy(GpgRunner runner, SigningInfo key) throws IOException {
+            Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+            Path signature = dir.resolve("artifact-" + key.fingerprint() + ".asc");
+            runner.sign(artifact, signature, key);
+            Claim claim = new OpenPgpSignatureFormat()
+                    .parse(Evidence.read(signature, Evidence.SOURCE_SIDECAR)).get(0);
+            return runner.extractCredentials(runner.verify(artifact, claim));
+        }
+
+        private Path home() {
+            return dir.resolve("gpg-home");
+        }
+
+        private String generate(String userId) throws IOException {
+            return GpgTestKeys.generate(home(), userId, "ed25519");
+        }
+
+    }
+
     // --- canSign ---
 
     @Test
     void signingCapableRunnerCanSign() {
-        var runner = new GpgRunner("gpg", null, null,
+        var runner = new GpgRunner("gpg", List.of(), null,
                 null, true, false, false, List.of());
         assertThat(runner.canSign()).isTrue();
     }
 
     @Test
     void verifyOnlyRunnerCannotSign() {
-        var runner = new GpgRunner("gpg", null, null,
+        var runner = new GpgRunner("gpg", List.of(), null,
                 null, false, false, false, List.of());
         assertThat(runner.canSign()).isFalse();
     }

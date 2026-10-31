@@ -12,12 +12,17 @@ import java.util.Map;
 /**
  * Producer use case — signing artifacts.
  * <p>
- * Signs an artifact with all configured tools, groups results by
+ * Signs an artifact with the keys its {@link SigningPlan} selects, groups results by
  * {@link SignatureFormat}, and combines compatible formats into single files.
+ * <p>
+ * The plan is worked out when the signer is created, so each tool is asked for its keys once
+ * however many artifacts are signed. A signer may be used to sign from several threads.
  *
  * <h2>Sign flow</h2>
  * <ol>
- * <li>Call {@code sign()} on each tool → {@link SignResult} with algorithm metadata</li>
+ * <li>Refuse to sign when the plan has a problem, before any tool signs</li>
+ * <li>Call {@code sign()} on each tool once per planned key → {@link SignResult} with
+ * algorithm metadata</li>
  * <li>When {@code signing.signer} asserts a signer, check that every signature proves it</li>
  * <li>Group results by {@link SignatureFormat}</li>
  * <li>For combinable formats → merge into one output file</li>
@@ -29,39 +34,54 @@ import java.util.Map;
  */
 public class Signer {
 
-    private final List<SignatureTool> tools;
+    private final Map<String, SignatureTool> toolsByName;
+    private final SigningPlan plan;
     private final SignerBindingCheck check;
 
     /**
-     * Creates a new signer with the given tools.
+     * Creates a new signer with the given tools, asking each for its keys to work out the plan.
      *
-     * @param tools the signing tools (must all have {@code canSign() → true})
+     * @param tools the signing tools in signing order (must all have {@code canSign() → true}),
+     *        with distinct names
+     * @param requestedTypes the credential types the run requests, empty when none are
      * @param check the check every fresh signature must pass before anything is written, or
      *        {@code null} when {@code signing.signer} asserts no signer
+     * @throws SigmundException if there is no tool, two tools share a name, or a tool reports a
+     *         key carrying another tool's name
      */
-    Signer(List<SignatureTool> tools, SignerBindingCheck check) {
+    Signer(List<SignatureTool> tools, List<String> requestedTypes, SignerBindingCheck check) {
         if (tools.isEmpty()) {
             throw new SigmundException("No signing tools available");
         }
-        this.tools = List.copyOf(tools);
+        this.toolsByName = byName(tools);
+        this.plan = SigningPlan.of(tools, List.copyOf(requestedTypes));
         this.check = check;
     }
 
-    /**
-     * Returns signing identity information from all configured tools.
-     *
-     * @return aggregated signing info, one entry per signing key
-     */
-    public List<SigningInfo> signingInfo() {
-        List<SigningInfo> result = new ArrayList<>();
+    private static Map<String, SignatureTool> byName(List<SignatureTool> tools) {
+        Map<String, SignatureTool> result = new LinkedHashMap<>();
         for (SignatureTool tool : tools) {
-            result.addAll(tool.signingInfo());
+            if (result.putIfAbsent(tool.name(), tool) != null) {
+                throw new SigmundException("Two signing tools are named '" + tool.name() + "'");
+            }
         }
         return result;
     }
 
     /**
+     * Returns the signing plan: which tool signs with which key, and any problem that stops the
+     * run from signing. Every {@link #sign(Path, Path)} call follows it.
+     *
+     * @return the signing plan
+     */
+    public SigningPlan plan() {
+        return plan;
+    }
+
+    /**
      * Signs an artifact file and writes signature files to the output directory.
+     * <p>
+     * When the {@linkplain #plan() plan} has a problem, nothing is signed or written.
      * <p>
      * When {@code signing.signer} asserts a signer, every fresh signature must prove it before
      * anything is combined or written: if one does not, no signature file is written, a
@@ -72,10 +92,12 @@ public class Signer {
      * @param outputDir the directory to write signature files to
      * @return the signing output with metadata per produced file
      * @throws ToolExecutionException if signing fails
-     * @throws SigmundException if a signature does not prove the asserted signer
+     * @throws SigmundException if the plan has a problem, or a signature does not prove the
+     *         asserted signer
      */
     public SigningOutput sign(Path artifactFile, Path outputDir) {
-        List<ToolSignResult> toolResults = signWithTools(artifactFile, outputDir);
+        plan.requireSignable();
+        List<ToolSignResult> toolResults = signWithPlannedKeys(artifactFile, outputDir);
         try {
             checkSigner(artifactFile, toolResults);
             Map<String, List<ToolSignResult>> grouped = groupByFormatName(toolResults);
@@ -87,19 +109,21 @@ public class Signer {
     }
 
     /**
-     * Signs the artifact with each configured tool, writing temporary signature files.
+     * Signs the artifact once with each planned key, writing one temporary signature file per
+     * key, in plan order.
      *
      * @param artifactFile the file to sign
      * @param outputDir the directory for temporary signature files
-     * @return one result per tool
+     * @return one result per planned key
      */
-    private List<ToolSignResult> signWithTools(Path artifactFile, Path outputDir) {
-        List<ToolSignResult> results = new ArrayList<>(tools.size());
+    private List<ToolSignResult> signWithPlannedKeys(Path artifactFile, Path outputDir) {
+        List<ToolSignResult> results = new ArrayList<>(plan.keys().size());
         try {
-            for (SignatureTool tool : tools) {
+            for (SigningInfo key : plan.keys()) {
+                SignatureTool tool = toolsByName.get(key.toolName());
                 Path tempSig = createTempSigFile(outputDir, tool);
                 results.add(new ToolSignResult(tool, tempSig, null));
-                SignResult result = tool.sign(artifactFile, tempSig);
+                SignResult result = tool.sign(artifactFile, tempSig, key);
                 results.set(results.size() - 1, new ToolSignResult(tool, tempSig, result));
             }
         } catch (RuntimeException e) {
@@ -113,7 +137,7 @@ public class Signer {
      * Checks that each fresh signature proves the asserted signer, when one is asserted.
      *
      * @param artifactFile the signed artifact
-     * @param results the per-tool signing results
+     * @param results the per-key signing results
      * @throws SigmundException if a signature does not prove the signer
      */
     private void checkSigner(Path artifactFile, List<ToolSignResult> results) {

@@ -11,7 +11,7 @@ import java.util.Map;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 import org.bouncycastle.openpgp.PGPSecretKeyRing;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -61,7 +61,7 @@ class EphemeralSigningKeyTest {
 
         Signer signer = sigmund.signer();
 
-        List<SigningInfo> infos = signer.signingInfo();
+        List<SigningInfo> infos = signer.plan().keys();
         StringBuilder toolNames = new StringBuilder();
         for (SigningInfo info : infos) {
             if (!toolNames.isEmpty()) {
@@ -103,8 +103,8 @@ class EphemeralSigningKeyTest {
         assertThat(Files.readString(workDir.resolve("fingerprint-bc"))).isEqualTo(expectedFp);
     }
 
-    @EnabledIf("gpgAvailable")
     @Test
+    @DisabledIfSystemProperty(named = "sigmund.test.skip-gpg", matches = "true")
     void keyProviderAlongsideGpg(@TempDir Path tempDir) throws Exception {
         String armoredKey = generateArmoredKey(tempDir);
         String expectedFp = Files.readString(tempDir.resolve("fingerprint"));
@@ -125,10 +125,6 @@ class EphemeralSigningKeyTest {
         String signedTools = Files.readString(workDir.resolve("signed-tools"));
         assertThat(signedTools.contains("bc")).as("BC should have signed").isTrue();
         assertThat(signedTools.contains("gpg")).as("GPG should have signed").isTrue();
-    }
-
-    static boolean gpgAvailable() {
-        return GpgRunner.isToolAvailable();
     }
 
     private String generateArmoredKey(Path tempDir) throws Exception {

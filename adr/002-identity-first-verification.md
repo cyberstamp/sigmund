@@ -306,30 +306,20 @@ public record ToolConfig(
 // remaining keys become entries in `settings`.
 ```
 
-The signing identity's credentials determine which tools are used. The builder routes credential types to tools via `SignatureTool.supportedCredentialTypes()` — each tool declares what credential types it can handle (see [Credential-to-tool routing](#credential-to-tool-routing) under SignatureTool). When multiple tools support the same credential type, the builder uses `canSign()` availability to resolve ambiguity (see [Credential-to-tool routing](#credential-to-tool-routing) under SignatureTool). Profiles reference credential types (not tool names) to select subsets for different signing scenarios. No key material lives in the config file — only references to keys in keyrings and cert stores.
+Each tool's own settings name the keys it signs with (`tools.<name>.signing-fingerprint` takes a list), and the signing plan selects among those keys by the requested credential types. Profiles reference credential types (not tool names) to select subsets of keys for different signing scenarios. No key material lives in the config file — only references to keys in keyrings and cert stores.
 
-The `tools` section provides tool-specific overrides, namespaced by tool name to avoid collisions. Each tool entry can include a `credentials` list to override the default credential-to-tool routing, plus any tool-specific settings:
+The `tools` section provides tool-specific settings, namespaced by tool name to avoid collisions. A tool's keys come from its own settings (`signing-fingerprint` takes a list); profiles and `credential-types` select among the keys of all tools:
 
 ```yaml
 signing:
   signer: alice
   profiles:
-    hybrid: [openpgp-v4, openpgp-v6]
-    v6-only: [openpgp-v6]
-    classical: [openpgp-v4]
+    hybrid: [pgp4, pgp6]
+    classical: [pgp4]
   default-profile: hybrid
   tools:
     sq:
-      credentials: [openpgp-v6]       # explicit: SQ handles v6 (this is also the default)
-      cipher-suite: "mldsa87-ed448"
-```
-
-When `credentials` is omitted for a tool, the builder uses the tool's `supportedCredentialTypes()` defaults. When present, it overrides which credential types that tool handles. To route all OpenPGP signing through SQ (bypassing GPG entirely):
-
-```yaml
-  tools:
-    sq:
-      credentials: [openpgp-v4, openpgp-v6]  # SQ handles both v4 and v6
+      signing-fingerprint: [<v4 fingerprint>, <v6 fingerprint>]
 ```
 
 The YAML file uses namespaced sections. A `version` field is reserved at the top for future schema evolution — the parser records it but does not enforce it in the initial implementation:
@@ -632,9 +622,9 @@ public record SignResult(
 
 **Concurrency.** `SignatureTool` instances may be called from concurrent threads or processes (e.g., parallel Maven module builds signing artifacts simultaneously). Implementations must be safe for concurrent use. Since tools are configured at construction and carry no mutable state after that, the Java side is naturally thread-safe. However, implementations wrapping CLI tools must account for underlying tool constraints — e.g., GPG may lock the keyring during concurrent operations, and SQ may contend on the cert store. Implementations should handle or document these limitations.
 
-**Tools are fully configured at construction time.** Credentials (key IDs, fingerprints, OIDC provider references) are provided when the tool is created. `sign()` takes no credential argument — the tool embodies its context. `canSign()` returns true only if signing credentials were provided.
+**Tools are fully configured at construction time.** Credentials (key IDs, fingerprints, OIDC provider references) are provided when the tool is created. `sign()` is called once per key the tool reports in `signingInfo()`, with that entry: the entry selects one of the keys configured at construction and supplies no credential. `canSign()` returns true only if signing credentials were provided.
 
-**Online and interactive signing.** The `sign()` contract is synchronous and blocking — it accommodates tools that require network access or user interaction during signing. Sigstore, for example, performs OIDC authentication (interactive browser flow or CI token), requests an ephemeral certificate from Fulcio, and logs the signature in Rekor — all within a single `sign()` call. This complexity is internal to the tool implementation; the caller sees the same `sign(Path, Path) → SignResult` interface regardless of whether the tool is a local CLI wrapper or an online service. Whether signing is interactive or automated is determined by the tool's construction-time configuration (e.g., OIDC token source), not by the `sign()` method. Network or authentication failures are infrastructure errors and surface as `ToolExecutionException`.
+**Online and interactive signing.** The `sign()` contract is synchronous and blocking — it accommodates tools that require network access or user interaction during signing. Sigstore, for example, performs OIDC authentication (interactive browser flow or CI token), requests an ephemeral certificate from Fulcio, and logs the signature in Rekor — all within a single `sign()` call. This complexity is internal to the tool implementation; the caller sees the same `sign(Path, Path, SigningInfo) → SignResult` interface regardless of whether the tool is a local CLI wrapper or an online service. Whether signing is interactive or automated is determined by the tool's construction-time configuration (e.g., OIDC token source), not by the `sign()` method. Network or authentication failures are infrastructure errors and surface as `ToolExecutionException`.
 
 **`supportedCredentialTypes()`** declares which credential types a tool can sign with. This is a **capability** declaration — it says what the tool *can* do, not what it *will* do in a given configuration. Built-in tools declare:
 
@@ -646,28 +636,9 @@ public record SignResult(
 
 Note that SQ supports both v4 (classical) and v6 (classical or PQC) OpenPGP signatures — the credential type reflects the key version, not the algorithm. The algorithm is a property of the key itself.
 
-**Credential-to-tool routing** — the builder uses `supportedCredentialTypes()` and `canSign()` to decide which tool handles each credential from the signing identity. The routing has three steps:
+**Signing plan** — signing does not route credentials to tools. Each tool reports the keys it signs with through `signingInfo()` (one entry per key, typed from the key), and the `SigningPlan` keeps the keys whose type is among the requested credential types (all keys when none are requested). `sign()` is called once per planned key; a requested type no key provides is a plan problem that refuses signing.
 
-1. **Capability match** — for each credential in the signer's identity, find tools whose `supportedCredentialTypes()` contains that credential type. This is a static check.
-2. **Availability check** — construct each candidate tool with the credential and check `canSign()`. A tool returns `canSign() → false` if the key isn't actually in its keyring or cert store. This filters out tools that theoretically support the credential type but don't have the key material.
-3. **Ambiguity resolution** — if a single tool survives for a credential type, use it. If multiple tools survive (e.g., both GPG and SQ have signing keys available for the `openpgp-v4` credential type), fail with a configuration error directing the user to disambiguate via `tools.*.credentials`.
-
-In the common case, ambiguity resolves naturally because only one tool has a signing key available for a given credential type. For example, if Alice's `openpgp-v4` fingerprint is in GPG's keyring but SQ has no v4 key available, GPG is the only viable candidate — no config needed. A credential type with no matching tool is silently skipped (the signer may have credentials that are only relevant for verification, such as `email`).
-
-The `tools` section in the config explicitly assigns credential types to tools, bypassing the automatic routing above:
-
-```yaml
-signing:
-  signer: alice
-  tools:
-    sq:
-      credentials: [openpgp-v4, openpgp-v6]   # override: SQ handles both v4 and v6
-      cipher-suite: "mldsa87-ed448"
-```
-
-In this example, GPG is not used for signing even though it supports `openpgp-v4` — the explicit assignment takes precedence. When `credentials` is present for any tool, only those explicit assignments are used for the listed credential types — automatic routing applies only to credential types not covered by any explicit assignment.
-
-**Signing vs verification routing** — `supportedCredentialTypes()` is only used for signing (mapping credentials to tools). Verification routing uses `canVerify(VerificationUnit)` instead, which examines the parsed signature content (e.g., OpenPGP packet version) to find the right tool. These are separate mechanisms because signing starts from identity ("sign as Alice with her v6 key") while verification starts from evidence ("this signature block is v6, who can verify it?").
+**Signing vs verification routing** — signing selects keys from `signingInfo()` through the signing plan, not through `supportedCredentialTypes()`, which is only a capability declaration. Verification routing uses `canVerify(VerificationUnit)` instead, which examines the parsed signature content (e.g., OpenPGP packet version) to find the right tool. These are separate mechanisms because signing starts from identity ("sign as Alice with her v6 key") while verification starts from evidence ("this signature block is v6, who can verify it?").
 
 **`canVerify(VerificationUnit)`** lets each tool declare what it can handle within its format. For OpenPGP, GPG handles `packetVersion() < 6` and SQ handles `packetVersion() >= 6` (v5 is LibrePGP-only and currently experimental; the boundary is v6 per RFC 9580, matching the current `SignatureBlockVerifier` implementation). For Sigstore, the tool always handles its own unit type. This keeps all routing decisions out of the facade.
 
@@ -936,7 +907,7 @@ When `config(SigmundConfig)` is called, the builder constructs live `SignatureTo
 interface SignatureToolFactory {
 
     String toolName();                      // "gpg", "sq", "bc", "sigstore"
-    Set<String> supportedCredentialTypes(); // filters tools for signing.credential-types and profiles
+    Set<String> supportedCredentialTypes(); // capability declaration; signing selects keys through signingInfo() and the signing plan
     Set<String> acceptedSettings();         // the keys tools.<name> may hold
 
     // Create a signing-capable tool from its own settings. The tool chooses its key from
@@ -978,8 +949,8 @@ This is an internal implementation detail, not a public SPI — the builder regi
 
 ### `sign()` flow (Signer)
 
-1. **Resolve tools** — use all tools where `canSign()` is true, in `signing.toolchain` order when it is set (a listed tool that cannot sign is an error). If a profile was specified at `signer()` creation (or `signing.credential-types` is set), keep only tools whose `supportedCredentialTypes()` intersects its credential types. The asserted signer plays no part in choosing tools; each tool signs with the key or identity its own settings name.
-2. Call `sign()` on each resolved tool, collecting `SignResult` (includes algorithm used)
+1. **Resolve tools** — use all tools where `canSign()` is true, in `signing.toolchain` order when it is set (a listed tool that cannot sign is an error). The asserted signer plays no part in choosing tools; each tool signs with the keys or identity its own settings name.
+2. **Plan keys** — the `SigningPlan`, built once per `Signer`, takes every key each tool reports through `signingInfo()` and, when a profile was specified at `signer()` creation (or `signing.credential-types` is set), keeps the keys whose credential type is in the requested types. A plan with problems (a requested type no key provides, a key of unknown type under requested types) refuses signing. Call `sign()` once per planned key, collecting `SignResult` (includes algorithm used)
 3. **Check the signer** — when `signing.signer` is set, verify every fresh signature and match the credential it proves against the asserted signer (`SignerBindingCheck`); one that does not prove it fails signing, naming the expected and the proven credential, and nothing is written
 4. Group results by `signatureFormat()`
 5. For each group:

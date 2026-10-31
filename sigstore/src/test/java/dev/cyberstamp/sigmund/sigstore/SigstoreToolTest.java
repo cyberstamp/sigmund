@@ -66,6 +66,18 @@ class SigstoreToolTest {
     }
 
     @Nested
+    class SigningInfoType {
+
+        @Test
+        void aSigningToolReportsTheSigstoreType() {
+            try (var tool = (SigstoreTool) new SigstoreToolFactory().createSigning(Map.of("staging", "true"), null)) {
+                assertThat(tool.signingInfo()).hasSize(1);
+                assertThat(tool.signingInfo().get(0).credentialType()).isEqualTo("sigstore");
+            }
+        }
+    }
+
+    @Nested
     class CanVerify {
         @Test
         void acceptsSigstoreClaim() {
@@ -171,7 +183,7 @@ class SigstoreToolTest {
 
         @Test
         void signThrowsWithoutSigner() {
-            assertThatThrownBy(() -> metadataOnlyTool().sign(null, null))
+            assertThatThrownBy(() -> metadataOnlyTool().sign(null, null, null))
                     .isInstanceOf(IllegalStateException.class);
         }
 

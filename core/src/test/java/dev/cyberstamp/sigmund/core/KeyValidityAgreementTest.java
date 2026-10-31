@@ -6,7 +6,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
 import java.time.Duration;
@@ -37,7 +36,7 @@ import org.bouncycastle.openpgp.operator.jcajce.JcaPGPDigestCalculatorProviderBu
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyPair;
 import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyEncryptorBuilder;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -59,14 +58,11 @@ import org.junit.jupiter.params.provider.ValueSource;
  * Keys are RSA, the shape of the SHA-1-bound keys found in practice; GnuPG rejects a SHA-1
  * self-signature on a NIST P-256 key for its hash size alone.
  */
-@EnabledIf("bothCliToolsAvailable")
+@DisabledIfSystemProperty(named = "sigmund.test.skip-gpg", matches = "true")
+@DisabledIfSystemProperty(named = "sigmund.test.skip-sq", matches = "true")
 class KeyValidityAgreementTest {
 
     private static final Duration DAY = Duration.ofDays(1);
-
-    static boolean bothCliToolsAvailable() {
-        return GpgRunner.isToolAvailable() && SqRunner.isToolAvailable();
-    }
 
     @TempDir
     Path dir;
@@ -146,8 +142,7 @@ class KeyValidityAgreementTest {
 
         BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc"));
         store.addFetched(cert, "hkps://keys.example.org");
-        Path gpgHome = Files.createDirectories(dir.resolve("gpg-home"));
-        Files.setPosixFilePermissions(gpgHome, PosixFilePermissions.fromString("rwx------"));
+        Path gpgHome = GpgTestKeys.home(dir.resolve("gpg-home"));
         CliTool.run(Map.of("GNUPGHOME", gpgHome.toString()),
                 "gpg", "--batch", "--import", certFile.toString());
         Path sqHome = Files.createDirectories(dir.resolve("sq-home"));

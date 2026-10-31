@@ -18,7 +18,9 @@ import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 import org.bouncycastle.bcpg.AEADAlgorithmTags;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
@@ -99,7 +101,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
 
     private final BcOpenPGPApi api;
     private final BcKeyStore keyStore;
-    private final String signingFingerprint;
+    private final List<String> signingFingerprints;
     private final Path tskFile;
     private final byte[] tskBytes;
     private final PassphraseProvider passphraseProvider;
@@ -107,11 +109,12 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     private final KeyserverFetcher fetcher;
     private final String defaultCipherSuite;
     /**
-     * The certificate of the key this runner last signed with, {@code null} until it has signed.
-     * Consulted by {@link #certificateFor(String)} only when no store holds the key a signature
-     * names; a signature verified against it is still checked cryptographically.
+     * The certificates of the keys this runner has signed with, by primary fingerprint, empty
+     * until it has signed. Consulted by {@link #certificateFor(String)} only when no store holds
+     * the key a signature names; a signature verified against one is still checked
+     * cryptographically.
      */
-    private volatile PGPPublicKeyRing signingCertificate;
+    private final Map<String, PGPPublicKeyRing> signingCertificates = new ConcurrentHashMap<>();
 
     /**
      * Creates a new BC runner without passphrase support or key fetching.
@@ -151,15 +154,20 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile,
             byte[] tskBytes, PassphraseProvider passphraseProvider,
             KeyserverFetcher fetcher) {
-        this(keyStore, signingFingerprint, tskFile, tskBytes, passphraseProvider, fetcher,
-                DEFAULT_CIPHER_SUITE);
+        this(keyStore, signingFingerprint == null ? List.of() : List.of(signingFingerprint), tskFile,
+                tskBytes, passphraseProvider, fetcher, DEFAULT_CIPHER_SUITE);
     }
 
     /**
-     * Creates a new BC runner that generates keys with the given cipher suite by default.
+     * Creates a new BC runner that signs with the named keys and generates keys with the given
+     * cipher suite by default.
+     * <p>
+     * A TSK file or key material takes the place of the named keys: the runner then signs with
+     * that one key.
      *
      * @param keyStore the key store for key lookup and storage
-     * @param signingFingerprint the fingerprint of the key to sign with, or {@code null}
+     * @param signingFingerprints the fingerprints of the keys to sign with, in order; empty when
+     *        no key is named
      * @param tskFile the path to a TSK file for signing, or {@code null}
      * @param tskBytes raw TSK key material (e.g. from an env var), or {@code null}
      * @param passphraseProvider provides passphrases for encrypted keys, or {@code null}
@@ -167,13 +175,13 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      *        fetched
      * @param defaultCipherSuite the suite {@link #generateKey(String, String, String)} uses when given none
      */
-    BcRunner(BcKeyStore keyStore, String signingFingerprint, Path tskFile,
+    BcRunner(BcKeyStore keyStore, List<String> signingFingerprints, Path tskFile,
             byte[] tskBytes, PassphraseProvider passphraseProvider,
             KeyserverFetcher fetcher, String defaultCipherSuite) {
         this.defaultCipherSuite = defaultCipherSuite;
         this.api = new BcOpenPGPApi();
         this.keyStore = keyStore;
-        this.signingFingerprint = signingFingerprint;
+        this.signingFingerprints = List.copyOf(signingFingerprints);
         this.tskFile = tskFile;
         this.tskBytes = tskBytes != null ? tskBytes.clone() : null;
         this.passphraseProvider = passphraseProvider;
@@ -211,35 +219,58 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * {@inheritDoc}
      *
      * <p>
-     * Returns {@code true} if a signing fingerprint or TSK file was provided.
+     * Returns {@code true} if a signing fingerprint, a TSK file or key material was provided.
      */
     @Override
     public boolean canSign() {
-        return signingFingerprint != null || tskFile != null || tskBytes != null;
+        return !signingFingerprints.isEmpty() || tskFile != null || tskBytes != null;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Gives one entry for a TSK file or key material, otherwise one per named key, in order. A
+     * named key is typed from its fingerprint's length when the store does not hold it; a TSK
+     * that cannot be read gets an entry with a {@code null} credential type, named by the TSK
+     * file's name or {@code "(env var key)"}.
+     */
     @Override
     public List<SigningInfo> signingInfo() {
         if (!canSign()) {
             return List.of();
         }
-        try {
-            PGPSecretKeyRing ring = loadSigningKey();
-            PGPPublicKey pub = ring.getPublicKey();
-            String fp = BcKeyStore.bytesToHex(pub.getFingerprint());
-            String algo = Algorithms.algorithmName(pub.getAlgorithm());
-            String userId = keyStore.findPrimaryUserId(fp);
-            int version = pub.getVersion();
-            Set<String> types = version >= 6
-                    ? Set.of(Credential.TYPE_PGP6)
-                    : Set.of(Credential.TYPE_PGP4);
-            return List.of(new SigningInfo(NAME, fp, algo, userId, types));
-        } catch (IOException | PGPException e) {
-            String fp = signingFingerprint != null ? signingFingerprint
-                    : (tskFile != null ? tskFile.getFileName().toString()
-                            : (tskBytes != null ? "(env var key)" : null));
-            return List.of(new SigningInfo(NAME, fp, null, null, SUPPORTED_CREDENTIAL_TYPES));
+        if (tskBytes != null) {
+            return List.of(describeOwnKey("(env var key)"));
         }
+        if (tskFile != null) {
+            return List.of(describeOwnKey(tskFile.getFileName().toString()));
+        }
+        return signingFingerprints.stream().map(this::describeNamedKey).toList();
+    }
+
+    private SigningInfo describeOwnKey(String label) {
+        try {
+            return describe(loadOwnKey());
+        } catch (IOException | PGPException e) {
+            return new SigningInfo(NAME, label, null, null, null);
+        }
+    }
+
+    private SigningInfo describeNamedKey(String fingerprint) {
+        try {
+            return describe(loadNamedKey(fingerprint));
+        } catch (ToolExecutionException e) {
+            return new SigningInfo(NAME, fingerprint, null, null, KeyCredential.openPgp(fingerprint).type());
+        }
+    }
+
+    private SigningInfo describe(PGPSecretKeyRing ring) {
+        PGPPublicKey pub = ring.getPublicKey();
+        String fp = BcKeyStore.bytesToHex(pub.getFingerprint());
+        String type = pub.getVersion() >= 6 ? Credential.TYPE_PGP6 : Credential.TYPE_PGP4;
+        return new SigningInfo(NAME, fp, Algorithms.algorithmName(pub.getAlgorithm()),
+                keyStore.findPrimaryUserId(fp), type);
     }
 
     @Override
@@ -293,18 +324,24 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * {@inheritDoc}
      *
      * <p>
-     * Creates a detached ASCII-armored signature.
+     * Creates a detached ASCII-armored signature. A TSK file or key material signs whatever
+     * {@code key} names; otherwise {@code key} must be one of the named keys, and is loaded from
+     * the key store.
      *
      * @throws IllegalStateException if {@link #canSign()} is {@code false}
+     * @throws IllegalArgumentException if no TSK is configured and {@code key} is not one of
+     *         the named keys
      */
     @Override
-    public SignResult sign(Path artifactFile, Path outputSig) {
+    public SignResult sign(Path artifactFile, Path outputSig, SigningInfo key) {
         if (!canSign()) {
             throw new IllegalStateException("No signing key configured");
         }
         try {
-            PGPSecretKeyRing secretKeyRing = loadSigningKey();
-            signingCertificate = certificateOf(secretKeyRing);
+            PGPSecretKeyRing secretKeyRing = loadSigningKey(key);
+            PGPPublicKeyRing certificate = certificateOf(secretKeyRing);
+            signingCertificates.put(BcKeyStore.bytesToHex(certificate.getPublicKey().getFingerprint()),
+                    certificate);
             return signWithKey(artifactFile, outputSig, secretKeyRing);
         } catch (IOException e) {
             throw new ToolExecutionException("Signing failed", e);
@@ -800,9 +837,10 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         if (found != null) {
             return found;
         }
-        PGPPublicKeyRing own = signingCertificate;
-        if (own != null && BcKeyStore.matchesFingerprint(own, fingerprint)) {
-            return new BcKeyStore.KeyLookup(TrustRootRef.unknown(), own);
+        for (PGPPublicKeyRing own : signingCertificates.values()) {
+            if (BcKeyStore.matchesFingerprint(own, fingerprint)) {
+                return new BcKeyStore.KeyLookup(TrustRootRef.unknown(), own);
+            }
         }
         return null;
     }
@@ -819,18 +857,31 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     // --- Signing internals ---
 
     /**
-     * Loads the secret key ring for signing.
+     * Loads the secret key ring to sign with: the TSK when one is configured, else the named
+     * key {@code key} selects.
      */
-    private PGPSecretKeyRing loadSigningKey() throws IOException, PGPException {
-        if (tskBytes != null) {
-            return loadTskBytes(tskBytes);
+    private PGPSecretKeyRing loadSigningKey(SigningInfo key) throws IOException, PGPException {
+        if (tskBytes != null || tskFile != null) {
+            return loadOwnKey();
         }
-        if (tskFile != null) {
-            return loadTskFile(tskFile);
-        }
-        PGPSecretKeyRing ring = keyStore.findSecretKey(signingFingerprint);
+        String fingerprint = SigningKeys.requireListed(NAME, signingFingerprints, key);
+        return loadNamedKey(fingerprint);
+    }
+
+    /**
+     * Loads the configured TSK, from key material when given, else from the TSK file.
+     */
+    private PGPSecretKeyRing loadOwnKey() throws IOException, PGPException {
+        return tskBytes != null ? loadTskBytes(tskBytes) : loadTskFile(tskFile);
+    }
+
+    /**
+     * Loads a named key from the key store.
+     */
+    private PGPSecretKeyRing loadNamedKey(String fingerprint) {
+        PGPSecretKeyRing ring = keyStore.findSecretKey(fingerprint);
         if (ring == null) {
-            throw new ToolExecutionException("Signing key not found: " + signingFingerprint);
+            throw new ToolExecutionException("Signing key not found: " + fingerprint);
         }
         return ring;
     }
