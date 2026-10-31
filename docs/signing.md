@@ -17,6 +17,8 @@ This guide covers artifact signing with Sigmund's backends: GPG (simplest, exist
   - [Installing Sequoia sq](#installing-sequoia-sq)
   - [Generating a PQC Key](#generating-a-pqc-key)
   - [Signing with PQC](#signing-with-pqc)
+  - [sq with both keys](#sq-with-both-keys)
+  - [Rotating a signing key](#rotating-a-signing-key)
   - [PQC Signature Sizes](#pqc-signature-sizes)
 - [Signing with Sigstore](#signing-with-sigstore)
   - [OIDC Authentication](#oidc-authentication)
@@ -78,11 +80,13 @@ mvn sigmund:signer-info
 Example output:
 
 ```
-bc: Ed25519 D62AAB339E45E5EA2FD036872B01D46A517A2991... (Alice <alice@example.com>)
-sq: ML-DSA-87+Ed448 A1B2C3D4E5F6... (Alice <alice@example.com>)
+bc: pgp4 Ed25519 D62AAB339E45E5EA2FD036872B01D46A517A2991... (Alice <alice@example.com>)
+sq: pgp6 ML-DSA-87+Ed448 A1B2C3D4E5F6... (Alice <alice@example.com>)
 ```
 
-Each line shows the tool name, algorithm, key fingerprint, and user ID.
+Each line shows the tool name, the credential type (`pgp4`, `pgp6`, or `type unknown`), the algorithm, the key fingerprint, and the user ID. A tool with several keys prints one line per key that will sign.
+
+If the plan has problems, such as a requested credential type no key covers, the CLI prints `Problem: <message>` after the keys and exits 1, and the Maven goal fails with the same message. `sign` refuses the same plan.
 
 **Options:**
 
@@ -91,7 +95,7 @@ Each line shows the tool name, algorithm, key fingerprint, and user ID.
 | Select profile | `--profile hybrid` | `-Dsigmund.profile=hybrid` |
 | Explicit config | `--config path/to/sigmund.yaml` | `-Dsigmund.trustConfig=path/to/sigmund.yaml` |
 
-When `--profile` is specified, only the tools matching that profile are shown. Without it, the default profile is used (or all configured tools if no default profile is set).
+When `--profile` is specified, only the keys whose credential type the profile lists are shown. Without it, the default profile is used (or all keys of all configured tools if no default profile is set).
 
 This is useful for verifying your setup before a release, debugging CI signing configuration, or confirming that a config file is being loaded correctly.
 
@@ -113,6 +117,8 @@ sigmund sign --file artifact.jar
 2. `default-key` in `gpg.conf` (`$GNUPGHOME/gpg.conf` or `~/.gnupg/gpg.conf`)
 3. First secret key in the GPG keyring
 
+A tool without `signing-fingerprint` signs with its one default key; when `gpg.conf` holds several `default-key` lines the last one signs, and without one the first secret key does.
+
 To override the default, set `signing-fingerprint` in `sigmund.yaml` to the key's full
 fingerprint (`gpg --list-secret-keys --with-colons`, the `fpr` line). A key ID or an email is
 not accepted: it can match more than one key in the keyring. A primary key's fingerprint signs
@@ -122,6 +128,16 @@ with its signing subkey.
 tools:
   gpg:
     signing-fingerprint: "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"
+```
+
+`signing-fingerprint` also takes a list, and the tool signs once with each key. Under `gpg` every fingerprint must be a v4 key (40 hex characters), since GnuPG signs only with v4 keys.
+
+```yaml
+tools:
+  gpg:
+    signing-fingerprint:
+      - "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"
+      - "9C1B7E2D4F6A8B0C3D5E7F9A1B2C4D6E8F0A1B3C"
 ```
 
 ## Signing with Bouncy Castle
@@ -358,11 +374,14 @@ sigmund sign --file artifact.jar
 1. `signing-fingerprint` in `sigmund.yaml` (explicit override)
 2. `sign.signer-self` in sq's config (`~/.config/sequoia/sq/config.toml`)
 
-To set sq's default signer:
+sq has no command to set a value in its configuration file. Edit the file, or write a commented template with `sq config template` and uncomment the setting:
 
-```bash
-sq config set sign.signer-self "YOUR_FINGERPRINT"
+```toml
+[sign]
+signer-self = ["YOUR_FINGERPRINT"]
 ```
+
+`sq config get sign.signer-self` shows the effective value. When `sign.signer-self` lists several keys and `signing-fingerprint` is not set, Sigmund signs with the first only.
 
 To override the default, set `signing-fingerprint` in `sigmund.yaml`:
 
@@ -373,6 +392,56 @@ tools:
 ```
 
 This produces a hybrid `.asc` file containing both a classic signature (from GPG or BC) and a PQC signature (from sq).
+
+### sq with both keys
+
+One tool can sign with a v4 and a v6 key in one run. Generate both keys with `sq`:
+
+```bash
+sq key generate --own-key --without-password \
+  --userid "Your Name <you@example.com>" \
+  --profile rfc4880
+
+sq key generate --own-key --without-password \
+  --userid "Your Name <you@example.com>" \
+  --cipher-suite mldsa87-ed448 --profile rfc9580
+```
+
+`--profile` is `rfc4880` (v4, the default) or `rfc9580` (v6). The `--cipher-suite` values are `rsa2k`, `rsa3k`, `rsa4k`, `cv25519` (the default), `mldsa65-ed25519` and `mldsa87-ed448`. List both fingerprints under `tools.sq.signing-fingerprint`; each key's type comes from its length, 40 hex characters for v4 and 64 for v6:
+
+```yaml
+tools:
+  sq:
+    signing-fingerprint:
+      - "41A2197725BD63EB00D071D46A7F5DB1C68BDB81"
+      - "D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F"
+
+signing:
+  toolchain: [sq]
+  profiles:
+    hybrid: [pgp4, pgp6]
+```
+
+`signer-info --profile hybrid` shows one line per key:
+
+```
+sq: pgp4 Ed25519 41A2197725BD63EB00D071D46A7F5DB1C68BDB81 (Your Name <you@example.com>)
+sq: pgp6 ML-DSA-87+Ed448 D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F (Your Name <you@example.com>)
+```
+
+Both signatures go into the one `.asc`.
+
+### Rotating a signing key
+
+To move to a new key without a gap, list the old and the new fingerprint under the tool's `signing-fingerprint`; every artifact is then signed with both. When `signing.signer` is set, pin both keys under the signer, so each signature matches a credential the signer holds. Once consumers trust the new key, drop the old fingerprint from the list to end the overlap.
+
+```yaml
+tools:
+  gpg:
+    signing-fingerprint:
+      - "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"   # old
+      - "9C1B7E2D4F6A8B0C3D5E7F9A1B2C4D6E8F0A1B3C"   # new
+```
 
 ### PQC Signature Sizes
 
@@ -521,6 +590,22 @@ signing:
   profiles:
     classic:
       - pgp4
+```
+
+`credential-types` and profiles select keys, not tools. A tool signs with each of its keys whose type is requested, and a tool left with no such key does not sign. With `[pgp6]` requested, a tool holding a v4 and a v6 key signs with the v6 key alone.
+
+A requested type that no key in the run covers fails before anything is signed, naming the keys that are in the run:
+
+```
+no signing key for requested credential type pgp6; keys in the run: bc pgp4, gpg pgp4
+```
+
+`signing.toolchain` names the tools that may sign, not ones that must: under a profile, a listed tool with no key of the profile's types simply does not sign. One toolchain can therefore serve several profiles — with `toolchain: [bc, sq]`, a v4 key in bc and a v6 key in sq, a `classic: [pgp4]` profile signs with bc and a `pqc: [pgp6]` profile with sq.
+
+While types are requested, a key whose type cannot be read — an unparseable `tsk-file`, say — also fails before anything is signed, since Sigmund cannot tell whether it was meant to sign:
+
+```
+tool 'bc': the credential type of signing key key.tsk cannot be read, and the run requests credential types [pgp4]
 ```
 
 Use `sigmund:signer-info` (Maven) or `sigmund signer-info` (CLI) to see which tools and keys are active:

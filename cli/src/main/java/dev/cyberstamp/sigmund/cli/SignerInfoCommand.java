@@ -4,7 +4,7 @@ import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.Signer;
 import dev.cyberstamp.sigmund.core.SigningInfo;
-import java.util.List;
+import dev.cyberstamp.sigmund.core.SigningPlan;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 
@@ -29,19 +29,17 @@ public class SignerInfoCommand implements Callable<Integer> {
                         ? sigmund.signer(profile)
                         : sigmund.signer();
 
-                List<SigningInfo> infos = signer.signingInfo();
-                if (infos.isEmpty()) {
-                    System.out.println("No signing identity information available");
-                    return 0;
-                }
-
+                SigningPlan plan = signer.plan();
                 if (profile != null) {
                     System.out.println("Profile: " + profile);
                 }
-                for (SigningInfo info : infos) {
+                for (SigningInfo info : plan.keys()) {
                     System.out.println(info.display());
                 }
-                return 0;
+                for (String problem : plan.problems()) {
+                    System.out.println("Problem: " + problem);
+                }
+                return plan.problems().isEmpty() ? 0 : 1;
             }
         } catch (Exception e) {
             System.err.println("Error: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));

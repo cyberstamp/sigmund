@@ -6,13 +6,12 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Map;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.bouncycastle.openpgp.PGPUtil;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -26,31 +25,20 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>
  * gpg→bc tests work because BC can verify v4 signatures.
  */
-@EnabledIf("gpgAvailable")
+@DisabledIfSystemProperty(named = "sigmund.test.skip-gpg", matches = "true")
 class BcGpgCrossToolTest {
-
-    static boolean gpgAvailable() {
-        return GpgRunner.isToolAvailable();
-    }
 
     @Test
     void gpgSignBcVerifyEd25519(@TempDir Path tempDir) throws Exception {
-        Path gpgHome = createGpgHome(tempDir);
-
-        CliTool.Result genResult = CliTool.run(
-                Map.of("GNUPGHOME", gpgHome.toString()),
-                "gpg", "--batch", "--passphrase", "", "--pinentry-mode", "loopback",
-                "--quick-gen-key", "--yes",
-                "GPG Test <gpg@test.example>", "ed25519", "sign", "0");
-        assertThat(genResult.exitCode())
-                .as("GPG key generation failed: " + genResult.stderr()).isEqualTo(0);
+        Path gpgHome = GpgTestKeys.home(tempDir.resolve("gpg-home"));
+        GpgTestKeys.generate(gpgHome, "GPG Test <gpg@test.example>", "ed25519");
 
         Path artifact = tempDir.resolve("artifact.txt");
         Files.writeString(artifact, "cross-tool test GPG→BC ed25519");
         Path sigFile = tempDir.resolve("artifact.txt.asc");
 
         GpgRunner gpgRunner = new GpgRunner("gpg", null, gpgHome.toString());
-        gpgRunner.sign(artifact, sigFile);
+        SigningTests.signWithOnlyKey(gpgRunner, artifact, sigFile);
         assertThat(Files.exists(sigFile)).isTrue();
 
         String armoredPubKey = exportGpgKey(gpgHome, "gpg@test.example");
@@ -65,22 +53,15 @@ class BcGpgCrossToolTest {
 
     @Test
     void gpgSignBcVerifyRsa(@TempDir Path tempDir) throws Exception {
-        Path gpgHome = createGpgHome(tempDir);
-
-        CliTool.Result genResult = CliTool.run(
-                Map.of("GNUPGHOME", gpgHome.toString()),
-                "gpg", "--batch", "--passphrase", "", "--pinentry-mode", "loopback",
-                "--quick-gen-key", "--yes",
-                "GPG RSA <gpg-rsa@test.example>", "rsa4096", "sign", "0");
-        assertThat(genResult.exitCode())
-                .as("GPG key generation failed: " + genResult.stderr()).isEqualTo(0);
+        Path gpgHome = GpgTestKeys.home(tempDir.resolve("gpg-home"));
+        GpgTestKeys.generate(gpgHome, "GPG RSA <gpg-rsa@test.example>", "rsa4096");
 
         Path artifact = tempDir.resolve("artifact.txt");
         Files.writeString(artifact, "cross-tool test GPG→BC rsa");
         Path sigFile = tempDir.resolve("artifact.txt.asc");
 
         GpgRunner gpgRunner = new GpgRunner("gpg", null, gpgHome.toString());
-        gpgRunner.sign(artifact, sigFile);
+        SigningTests.signWithOnlyKey(gpgRunner, artifact, sigFile);
 
         String armoredPubKey = exportGpgKey(gpgHome, "gpg-rsa@test.example");
         BcKeyStore bcStore = createBcKeyStore(tempDir);
@@ -124,7 +105,7 @@ class BcGpgCrossToolTest {
 
         String armoredCert = bcRunner.exportCert(fingerprint);
 
-        Path gpgHome = createGpgHome(tempDir);
+        Path gpgHome = GpgTestKeys.home(tempDir.resolve("gpg-home"));
         Path certFile = tempDir.resolve("bc-cert.asc");
         Files.writeString(certFile, armoredCert);
         CliTool.Result importResult = CliTool.run(
@@ -136,23 +117,13 @@ class BcGpgCrossToolTest {
         Path artifact = tempDir.resolve("artifact.txt");
         Files.writeString(artifact, "cross-tool test BC→GPG " + cipherSuite);
         Path sigFile = tempDir.resolve("artifact.txt.asc");
-        bcSigner.sign(artifact, sigFile);
+        SigningTests.signWithOnlyKey(bcSigner, artifact, sigFile);
 
         CliTool.Result verifyResult = CliTool.run(
                 Map.of("GNUPGHOME", gpgHome.toString()),
                 "gpg", "--verify", sigFile.toString(), artifact.toString());
         assertThat(verifyResult.exitCode() == 0 || verifyResult.stderr().contains("Good signature"))
                 .as("GPG verification of BC " + cipherSuite + " signature failed: " + verifyResult.stderr()).isTrue();
-    }
-
-    /**
-     * Creates a temp GPG home directory with proper permissions.
-     */
-    private Path createGpgHome(Path tempDir) throws Exception {
-        Path gpgHome = tempDir.resolve("gpg-home");
-        Files.createDirectories(gpgHome);
-        Files.setPosixFilePermissions(gpgHome, PosixFilePermissions.fromString("rwx------"));
-        return gpgHome;
     }
 
     /**

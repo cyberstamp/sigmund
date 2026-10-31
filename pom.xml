@@ -147,6 +147,16 @@
                 <plugin>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <!--
+                          A bc key in SIGMUND_BC_SIGNING_KEY replaces the configured signing
+                          keys, so a value in the shell or CI would change what the tests sign
+                          with. Tests that need it set it on a forked process.
+                        -->
+                        <excludedEnvironmentVariables>
+                            <excludedEnvironmentVariable>SIGMUND_BC_SIGNING_KEY</excludedEnvironmentVariable>
+                        </excludedEnvironmentVariables>
+                    </configuration>
                 </plugin>
                 <plugin>
                     <artifactId>maven-javadoc-plugin</artifactId>

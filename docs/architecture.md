@@ -186,13 +186,19 @@ gpg --batch --yes --armor --detach-sign [--local-user <keyId>] --output <sig> <a
 The signature version (v4 or v6) is determined by the key version. BC generates v6 signatures for v6 keys and v4 signatures for v4 keys. GPG always produces v4 signatures.
 
 The `Signer` class orchestrates the signing flow:
-1. Call `sign()` on each configured tool → `SignResult` with algorithm metadata
-2. When `signing.signer` asserts a signer, `SignerBindingCheck` verifies each fresh signature and
+1. Work out the `SigningPlan` when the `Signer` is created: each tool's keys (`signingInfo()`;
+   a tool reporting no key signs once), narrowed to the requested credential types when there
+   are any; a tool left with no key does not sign. A plan with a problem (a key whose type
+   cannot be read while types are requested, a requested type no key has) fails before any tool
+   signs
+2. Call `sign()` once per planned key, in tool order and then key order, each into its own
+   temporary file → `SignResult` with algorithm metadata
+3. When `signing.signer` asserts a signer, `SignerBindingCheck` verifies each fresh signature and
    requires it to prove that signer; one that does not fails signing, and nothing is written
-3. Group results by `SignatureFormat`
-4. For combinable formats → merge into one output file
-5. For non-combinable → write each as a separate file
-6. Return `SigningOutput` with metadata per file
+4. Group results by `SignatureFormat`
+5. For combinable formats → merge into one output file
+6. For non-combinable → write each as a separate file
+7. Return `SigningOutput` with metadata per file
 
 ### Stage 2: PQC Signature (Optional)
 

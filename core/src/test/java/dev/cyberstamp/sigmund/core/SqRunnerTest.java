@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqRunnerTest {
@@ -197,33 +198,77 @@ class SqRunnerTest {
     }
 
     @Nested
-    class SignerSelfCanSignTests {
+    class CanSign {
 
         @TempDir
         Path tempDir;
 
         @Test
-        void canSignWithDefaultSignerFingerprint() {
+        void aListedKeyCanSign() {
             String fp = "ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890";
-            SqRunner sq = new SqRunner("sq", tempDir, null, fp);
+            SqRunner sq = new SqRunner("sq", tempDir, List.of(fp));
             assertThat(sq.canSign()).isTrue();
         }
 
         @Test
-        void cannotSignWithNullDefaultSigner() {
-            SqRunner sq = new SqRunner("sq", tempDir, null, null);
+        void noListedKeyIsVerifyOnly() {
+            SqRunner sq = new SqRunner("sq", tempDir, List.of());
             assertThat(sq.canSign()).isFalse();
+            assertThat(sq.signingInfo()).isEmpty();
+        }
+    }
+
+    /**
+     * Without {@code signing-fingerprint}, sq signs with the key its own configuration names
+     * under {@code sign.signer-self}.
+     */
+    @Nested
+    @DisabledIfSystemProperty(named = "sigmund.test.skip-sq", matches = "true")
+    class SignerSelf {
+
+        @TempDir
+        Path tempDir;
+
+        @Test
+        void aFactoryBuiltToolWithoutAFingerprintSignsWithTheSignerSelfKey() throws IOException {
+            Path home = tempDir.resolve("sq-home");
+            String fp = new SqRunner(home).generateKey("Alice <alice@example.com>", "cv25519", "rfc9580");
+            Path config = Files.createDirectories(home.resolve("config/sq")).resolve("config.toml");
+            Files.writeString(config, "[sign]\nsigner-self = [\"" + fp + "\"]\n");
+
+            SignatureTool tool = new SqToolFactory().createSigning(Map.of("home", home.toString()), null);
+            Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
+            Path signature = tempDir.resolve("artifact.txt.asc");
+            SigningTests.signWithOnlyKey(tool, artifact, signature);
+
+            assertThat(tool.signingInfo()).extracting(SigningInfo::fingerprint).containsExactly(fp);
+            Claim claim = new OpenPgpSignatureFormat()
+                    .parse(Evidence.read(signature, Evidence.SOURCE_SIDECAR)).get(0);
+            assertThat(tool.extractCredentials(tool.verify(artifact, claim)))
+                    .contains(KeyCredential.openPgp(fp));
+        }
+    }
+
+    @Nested
+    class SigningInfoType {
+
+        private static final String V4_FP = "A".repeat(40);
+        private static final String V6_FP = "B".repeat(64);
+
+        @Test
+        void aV4FingerprintGivesPgp4WhenTheCertCannotBeInspected() {
+            List<SigningInfo> infos = new SqRunner("/nonexistent/sq", null, V4_FP).signingInfo();
+
+            assertThat(infos).hasSize(1);
+            assertThat(infos.get(0).credentialType()).isEqualTo("pgp4");
         }
 
         @Test
-        void explicitFingerprintTakesPrecedence() {
-            String explicit = "1111111111111111111111111111111111111111111111111111111111111111";
-            String defaultFp = "2222222222222222222222222222222222222222222222222222222222222222";
-            SqRunner sq = new SqRunner("sq", tempDir, explicit, defaultFp);
-            assertThat(sq.canSign()).isTrue();
-            List<SigningInfo> info = sq.signingInfo();
-            assertThat(info.size()).isEqualTo(1);
-            assertThat(info.get(0).fingerprint()).isEqualTo(explicit);
+        void aV6FingerprintGivesPgp6WhenTheCertCannotBeInspected() {
+            List<SigningInfo> infos = new SqRunner("/nonexistent/sq", null, V6_FP).signingInfo();
+
+            assertThat(infos).hasSize(1);
+            assertThat(infos.get(0).credentialType()).isEqualTo("pgp6");
         }
     }
 

@@ -546,9 +546,9 @@ only prove a pinned `pgp6`, since directories do not vouch for v6 keys.
 #### Fields
 
 - **`signer`** (string, optional) — References a signer ID from the `signers` section. Asserts who signs: every signature a run produces must prove this signer, or signing fails naming the expected and the proven credential. It does not choose the key; each tool's own settings do. A name not defined under `signers` is a load error, and so is an identity entry of that signer no issuer can satisfy — an `email` with no listed `issuers`, a misspelled attribute, or an attribute its issuer cannot attest — checked at load for this signer only, as verification checks every signer. For OpenPGP, the signing key must be pinned by the signer's `pgp4`/`pgp6` fingerprints or confirmed by a directory for one of the signer's addresses, as in verification; with `verification.resolve-signers: false` no directory is asked, so only pinned keys pass. With `verification.resolve-signers: true` (the default), signing may also reach the network for keys: a fresh signature the tool that produced it cannot verify itself is verified by another tool of the same format, which may fetch the signing key from a keyserver.
-- **`toolchain`** (array of strings, optional) — Lists which tools to use for signing and in what order. Only the listed tools are initialized. Tool names: `bc`, `sq`, `gpg`, `sigstore`; any other name is an error when tools are built. Per-tool settings are configured in the top-level `tools` section.
-- **`credential-types`** (array of strings, optional) — The default set of credential types to produce. Only tools whose supported credential types intersect this list are used. When omitted, all available signing tools are used. Values: `pgp4`, `pgp6`, `sigstore` — the names signer entries use; any other value is an error.
-- **`profiles`** (map, optional) — Named profiles for explicit switching (e.g., `--profile classic`). Each profile maps a name to a list of credential types, the same values as `credential-types`; any other value is an error. When a profile is requested by name, it takes precedence over `credential-types`.
+- **`toolchain`** (array of strings, optional) — Lists which tools to use for signing and in what order: the tools that may sign, each of which must be available. Which of their keys sign is decided by `credential-types` or a profile. Only the listed tools are initialized. Tool names: `bc`, `sq`, `gpg`, `sigstore`; any other name is an error when tools are built. Per-tool settings are configured in the top-level `tools` section.
+- **`credential-types`** (array of strings, optional) — The default set of credential types to produce. The types select keys, not tools: each tool signs with its keys of a listed type, and a tool left with none does not sign. A listed type no key in the run covers fails before anything is signed (`no signing key for requested credential type <type>; keys in the run: ...`), as does a key whose type cannot be read. A `toolchain` tool with no key of a listed type does not sign, which is not an error. When omitted, every key of every available signing tool signs. Values: `pgp4`, `pgp6`, `sigstore` — the names signer entries use; any other value is an error.
+- **`profiles`** (map, optional) — Named profiles for explicit switching (e.g., `--profile classic`). Each profile maps a name to a list of credential types, the same values as `credential-types`; any other value is an error. Profiles select keys the same way. When a profile is requested by name, it takes precedence over `credential-types`.
 
 ### `verification`
 
@@ -636,13 +636,24 @@ tools:
     executable: gpg
 ```
 
-Keys are tool names (`bc`, `sq`, `gpg`, `sigstore`). Values are tool-specific settings, each a single value, documented in the [Tool Settings Tables](#tool-settings-tables) below. For example, `tools.bc.signing-fingerprint` is used by signing, while `tools.bc.gnupg-home` is used by verification.
+Keys are tool names (`bc`, `sq`, `gpg`, `sigstore`). Values are tool-specific settings, each a single value except `signing-fingerprint`, which may also be a list, documented in the [Tool Settings Tables](#tool-settings-tables) below. For example, `tools.bc.signing-fingerprint` is used by signing, while `tools.bc.gnupg-home` is used by verification.
 
 `bc`, `sq` and `gpg` all select their signing key with `signing-fingerprint`, a full fingerprint. A
 key ID, an address or a user ID can name more than one key, so any other value is an error when
 tools are built — also for a tool no toolchain names. Without the setting, each tool falls back
 to its own default key, listed in its table; [`signing.signer`](#signing) then checks that the
 key used is the signer's.
+
+`signing-fingerprint` may also be a list, which makes the tool sign with each key; the list must be
+non-empty and name no fingerprint twice, and `gpg` accepts v4 fingerprints only:
+
+```yaml
+tools:
+  sq:
+    signing-fingerprint:
+      - "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"
+      - "1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF"
+```
 
 Tool names and settings are checked when tools are built, by the tools themselves: an unknown
 tool, or a setting its tool does not accept, is an error naming the nearest one — a misspelled
@@ -693,7 +704,7 @@ Configured in the top-level `tools.bc` section.
 | `gnupg-home` | `tools.gpg.home` when set, else `~/.gnupg` | GnuPG home directory for reading `pubring.kbx` (or legacy `pubring.gpg`) |
 | `cert-d-home` | `~/.local/share/pgp.cert.d` | Shared OpenPGP cert-d directory for public certificates — the store `sq` uses by default, so each tool sees the certificates the other stores |
 | `bc-private-home` | `~/.local/share/sigmund/bc-private` | BC private key store directory, kept outside the shared cert-d |
-| `signing-fingerprint` | (none) | Full fingerprint of the key to sign with: 40 hex characters for a v4 key, 64 for v6. Ignored when a key comes from `signing-key-env` or `tsk-file` |
+| `signing-fingerprint` | (none) | Full fingerprint of the key to sign with, or a list of them to sign with each: 40 hex characters for a v4 key, 64 for v6, the key's type coming from the length. Ignored when a key comes from `signing-key-env` or `tsk-file`, which sign with the first key they hold only |
 | `tsk-file` | (none) | Path to an exported Transferable Secret Key (TSK) file for signing |
 | `signing-key-env` | `SIGMUND_BC_SIGNING_KEY` | Environment variable name containing the ASCII-armored private key. For ephemeral CI runners. |
 | `passphrase-env` | `SIGMUND_BC_PASSPHRASE` | Environment variable name containing the passphrase. If not set, falls back to interactive prompt. |
@@ -739,7 +750,7 @@ Configured in the top-level `tools.sq` section.
 |---------|---------|-------------|
 | `home` | `~/.local/share/sequoia` | Sequoia home directory for keys and certificates |
 | `executable` | `sq` | Path to the `sq` executable (if not on `PATH`) |
-| `signing-fingerprint` | `sign.signer-self` in sq's config | Full fingerprint of the key to sign with: 40 hex characters for a v4 key, 64 for v6 |
+| `signing-fingerprint` | `sign.signer-self` in sq's config | Full fingerprint of the key to sign with, or a list of them to sign with each: 40 hex characters for a v4 key, 64 for v6, the key's type coming from the length. `sign.signer-self` holding several keys signs with the first only |
 
 Sigmund runs `sq` under its own crypto policy, which replaces the host's system policy for those
 runs; see [Accepted algorithms](verification.md#accepted-algorithms).
@@ -769,7 +780,7 @@ Configured in the top-level `tools.gpg` section.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `executable` | `gpg` | Path to the `gpg` executable (if not on `PATH`) |
-| `signing-fingerprint` | `default-key` in `gpg.conf`, else the first secret key | Full fingerprint of the key to sign with: 40 hex characters. Passed to `--local-user`; a primary key's fingerprint signs with its signing subkey |
+| `signing-fingerprint` | `default-key` in `gpg.conf`, else the first secret key | Full fingerprint of the key to sign with, or a list of them to sign with each: 40 hex characters, since gpg signs with v4 keys only (a 64-hex fingerprint is an error). Each is passed to `--local-user`; a primary key's fingerprint signs with its signing subkey |
 | `home` | (system default) | GnuPG home directory (`--homedir` option). Also the default `gnupg-home` of [BC](#bc-bouncycastle), so both tools read the same keyring |
 | `passphrase-env` | `SIGMUND_GPG_PASSPHRASE` | Environment variable name containing the passphrase. If not set, falls back to `gpg-agent`. |
 

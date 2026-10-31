@@ -45,6 +45,21 @@ public interface SignatureToolFactory {
     Set<String> acceptedSettings();
 
     /**
+     * Returns the accepted settings that may be written as a YAML list.
+     * <p>
+     * A list given to any other setting is a configuration error when tools are built. A factory
+     * derives this from its settings enum with {@link ToolSetting#listKeysOf}, so what takes a
+     * list is declared once, on the constant.
+     * <p>
+     * The default implementation returns an empty set.
+     *
+     * @return the names of the settings that take a list
+     */
+    default Set<String> listSettings() {
+        return Set.of();
+    }
+
+    /**
      * Rejects a setting whose value this tool cannot use, when tools are built.
      * <p>
      * Runs for every tool configured under {@code tools}, whether or not a toolchain names it,

@@ -1049,10 +1049,19 @@ class SigmundConfigParserTest {
         }
 
         @Test
-        void aSettingThatIsNotAScalarIsErrorRatherThanDropped() {
-            assertThatThrownBy(() -> parse("tools: { bc: { gnupg-home: [/a, /b] } }"))
+        void aSettingWrittenAsAListIsJoinedAndRecorded() {
+            ToolConfig sq = parse("tools: { sq: { signing-fingerprint: [A, B] } }").toolsConfig().get("sq");
+
+            assertThat(sq.settings()).containsEntry("signing-fingerprint", "A,B");
+            assertThat(sq.lists()).containsExactly("signing-fingerprint");
+        }
+
+        @Test
+        void aListItemThatIsAMappingIsError() {
+            assertThatThrownBy(() -> parse("tools: { sq: { signing-fingerprint: [{ a: b }] } }"))
                     .isInstanceOf(PolicyConfigException.class)
-                    .hasMessageContaining("tools.bc.gnupg-home must be a single value, not a list");
+                    .hasMessageContaining(
+                            "tools.sq.signing-fingerprint: list items must be single values, not a mapping");
         }
 
         /**

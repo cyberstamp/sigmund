@@ -5,7 +5,7 @@ package dev.cyberstamp.sigmund.core;
  * <p>
  * Configuration errors are detected at parse time or during builder construction,
  * not deferred to verification time. Examples include malformed YAML, references to
- * undefined signers, or ambiguous credential-to-tool routing.
+ * undefined signers, and tool settings a tool does not accept.
  *
  * @see SigmundException
  */

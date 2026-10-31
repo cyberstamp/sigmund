@@ -8,8 +8,9 @@ import java.util.Set;
  * The SPI that signing/verification backends implement.
  * <p>
  * A tool is fully configured at construction time — credentials (key IDs, fingerprints,
- * OIDC provider references) are provided when the tool is created. {@link #sign(Path, Path)}
- * takes no credential argument; the tool embodies its context.
+ * OIDC provider references) are provided when the tool is created. The keys it signs with are
+ * the ones {@link #signingInfo()} reports, and {@link #sign(Path, Path, SigningInfo)} is called
+ * once per key with one of those entries.
  *
  * <h2>Construction-time configuration</h2>
  * <p>
@@ -65,12 +66,19 @@ public interface SignatureTool {
     boolean canSign();
 
     /**
-     * Returns information about the signing identities this tool will use.
+     * Returns information about the signing keys this tool will use.
      * <p>
      * Returns an empty list if no signing credentials are configured
-     * ({@link #canSign()} is {@code false}).
+     * ({@link #canSign()} is {@code false}). A tool whose {@link #canSign()} is {@code true}
+     * returns one entry per key it signs with and never an empty list: a key that cannot be
+     * read still gets an entry, with a {@code null} credential type. Each entry's
+     * {@linkplain SigningInfo#toolName() tool name} is this tool's {@link #name()}: signing gives
+     * the key back to the tool of that name.
+     * <p>
+     * The default returns an empty list. A signing tool that does not override it is planned as
+     * one key of unknown type, which fails any run that requests credential types.
      *
-     * @return signing identity information, one entry per signing key
+     * @return signing key information, one entry per signing key
      */
     default List<SigningInfo> signingInfo() {
         return List.of();
@@ -87,8 +95,9 @@ public interface SignatureTool {
      * Returns the credential types this tool can sign with.
      * <p>
      * This is a <strong>capability</strong> declaration — it says what the tool <em>can</em> do,
-     * not what it <em>will</em> do in a given configuration. Used by the builder to route
-     * signer credentials to tools for signing. Not used for verification —
+     * not what it <em>will</em> do in a given configuration. Signing does not select tools
+     * or keys through this method: the requested credential types select keys from the types
+     * reported by {@link #signingInfo()}, in the signing plan. Not used for verification —
      * {@link #canVerify(Claim)} handles that based on claim content.
      *
      * @return the supported credential type strings
@@ -123,19 +132,27 @@ public interface SignatureTool {
     }
 
     /**
-     * Signs an artifact file and writes the signature to the output path.
+     * Signs an artifact file with one key and writes the signature to the output path.
      * <p>
-     * The signing credential is embedded in the tool at construction time.
+     * The key is one of the entries {@link #signingInfo()} returned; a tool reporting no
+     * entry is given one carrying only its name. The signing credential behind the key is
+     * embedded in the tool at construction time: the entry selects it, it does not supply it. A
+     * tool with a single credential, such as a TSK file, a key from the environment or a
+     * Sigstore identity, signs with that credential whatever the entry names.
+     * <p>
      * This method may perform network access or require user interaction
      * (e.g., Sigstore OIDC authentication).
      *
      * @param artifactFile the file to sign
      * @param outputSig the path to write the signature file
+     * @param key the key to sign with, one of this tool's {@link #signingInfo()} entries
      * @return the signing result with algorithm metadata
      * @throws ToolExecutionException if signing fails due to infrastructure error
      * @throws IllegalStateException if {@link #canSign()} is {@code false}
+     * @throws IllegalArgumentException if the tool cannot sign with the given key; the message
+     *         names the tool and the key's fingerprint
      */
-    SignResult sign(Path artifactFile, Path outputSig);
+    SignResult sign(Path artifactFile, Path outputSig, SigningInfo key);
 
     /**
      * Verifies a single claim against an artifact file.

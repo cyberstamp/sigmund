@@ -46,6 +46,10 @@ class SchemaAgreementTest {
                 "",
                 "rules: []",
                 "tools: { gpg: { passphrase-env: 0x12345678, executable: 0123 } }",
+                "tools: { bc: { signing-fingerprint: [\"4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12\", \"BBE7232D7991050B54C8EA0ADC08637CA615D22C\"] } }",
+                "tools: { sq: { signing-fingerprint: [\"4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12\", \"1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF\"] } }",
+                "tools: { sq: { signing-fingerprint: \"1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF\" } }",
+                "tools: { gpg: { signing-fingerprint: [\"4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12\", \"BBE7232D7991050B54C8EA0ADC08637CA615D22C\"] } }",
                 """
                         issuers: [keys.openpgp.org, "https://token.actions.githubusercontent.com"]
                         signers:
@@ -160,6 +164,12 @@ class SchemaAgreementTest {
                 "tools: [bc]",
                 "tools: { bc: [gnupg-home] }",
                 "tools: { bc: { gnupg-home: [/a, /b] } }",
+                "tools: { sq: { signing-fingerprint: [] } }",
+                "tools: { sq: { signing-fingerprint: \"4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12,BBE7232D7991050B54C8EA0ADC08637CA615D22C\" } }",
+                "tools: { bc: { signing-fingerprint: [\"4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12\", DEADBEEF] } }",
+                "tools: { sq: { signing-fingerprint: [\"4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12\", \"4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12\"] } }",
+                "tools: { gpg: { signing-fingerprint: \"1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF\" } }",
+                "tools: { gpg: { signing-fingerprint: [\"4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12\", \"1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF\"] } }",
                 "tools: { sqq: { home: /tmp/sq } }",
                 "tools: { bc: { gnupg-hom: /tmp/gnupg } }",
                 "tools: { bc: { credentials: pgp4 } }",

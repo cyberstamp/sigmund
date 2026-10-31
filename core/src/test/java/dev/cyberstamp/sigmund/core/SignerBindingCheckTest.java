@@ -312,7 +312,7 @@ class SignerBindingCheckTest {
         }
 
         @Override
-        public SignResult sign(Path artifactFile, Path outputSig) {
+        public SignResult sign(Path artifactFile, Path outputSig, SigningInfo key) {
             throw new UnsupportedOperationException();
         }
 

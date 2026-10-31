@@ -130,7 +130,7 @@ class BcToolFactoryTest {
             Files.writeString(artifact, "test artifact content");
             Path sigFile = tempDir.resolve("artifact.jar.asc");
 
-            SignResult signResult = signer.sign(artifact, sigFile);
+            SignResult signResult = SigningTests.signWithOnlyKey(signer, artifact, sigFile);
             assertThat(signResult.algorithm()).isNotNull();
             assertThat(Files.exists(sigFile)).isTrue();
 
@@ -159,7 +159,7 @@ class BcToolFactoryTest {
         BcRunner bcSigner = new BcRunner(store, null, null,
                 armoredKey, null, null);
 
-        Signer signer = new Signer(List.of(bcSigner), null);
+        Signer signer = new Signer(List.of(bcSigner), List.of(), null);
 
         Path artifact = tempDir.resolve("artifact.jar");
         Files.writeString(artifact, "signer test");

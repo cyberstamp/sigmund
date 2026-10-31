@@ -475,7 +475,7 @@ Which tools sign never depends on the asserted signer's credentials:
 
 **Without `signing.toolchain`:** the default OpenPGP tools (BC, SQ, GPG) are tried in order and those that cannot sign are skipped; a factory claiming default exclusive signing (an injected CI key) becomes the sole signer. Sigstore signs only when the toolchain lists it.
 
-`signing.credential-types` and profiles then narrow the signing tools to those whose `supportedCredentialTypes()` intersects the listed types. With or without a signer, `signing.signer` only adds the check after signing (and Sigstore's early refusal).
+`signing.credential-types` and profiles then select the keys to sign with: the signing plan keeps the keys, across all signing tools, whose credential type (from `signingInfo()`) is in the listed types, and `sign()` is called once per planned key. With or without a signer, `signing.signer` only adds the check after signing (and Sigstore's early refusal).
 
 #### Signing with Sigstore
 
@@ -543,7 +543,7 @@ signing:
 
 With the `full` profile, `Signer.sign()` produces both `artifact.jar.asc` (combined classical + PQC OpenPGP signatures) and `artifact.jar.sigstore.json` (Sigstore bundle) — three signatures across two files.
 
-Profiles are lists of credential types. Each profile entry is matched against tools via `supportedCredentialTypes()`. The `oidc` credential type is intentionally named after the identity protocol, not the signing system — OIDC is a reusable identity format (issuer + subject) that future signing backends could also support. Which tools sign is decided by `signing.toolchain`; the profile only narrows them.
+Profiles are lists of credential types. Each profile entry is matched against the credential types of the keys the tools report through `signingInfo()`. The `oidc` credential type is intentionally named after the identity protocol, not the signing system — OIDC is a reusable identity format (issuer + subject) that future signing backends could also support. Which tools sign is decided by `signing.toolchain`; the profile only selects among their keys.
 
 **Choosing tools** — `signing.toolchain` decides which tools sign; each signs with the key its own settings name:
 

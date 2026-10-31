@@ -396,7 +396,7 @@ class SignatureEvidenceAdapterTest {
             }
 
             @Override
-            public SignResult sign(Path a, Path o) {
+            public SignResult sign(Path a, Path o, SigningInfo key) {
                 throw new UnsupportedOperationException();
             }
 
@@ -459,7 +459,7 @@ class SignatureEvidenceAdapterTest {
             }
 
             @Override
-            public SignResult sign(Path a, Path o) {
+            public SignResult sign(Path a, Path o, SigningInfo key) {
                 throw new UnsupportedOperationException();
             }
 
@@ -509,7 +509,7 @@ class SignatureEvidenceAdapterTest {
             }
 
             @Override
-            public SignResult sign(Path a, Path o) {
+            public SignResult sign(Path a, Path o, SigningInfo key) {
                 throw new UnsupportedOperationException();
             }
 
@@ -570,7 +570,7 @@ class SignatureEvidenceAdapterTest {
         }
 
         @Override
-        public SignResult sign(Path a, Path o) {
+        public SignResult sign(Path a, Path o, SigningInfo key) {
             throw new UnsupportedOperationException();
         }
 

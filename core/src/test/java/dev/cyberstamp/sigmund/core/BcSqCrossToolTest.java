@@ -11,7 +11,7 @@ import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.bouncycastle.openpgp.PGPUtil;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -21,25 +21,21 @@ import org.junit.jupiter.api.io.TempDir;
  * Sequoia supports v6 keys (RFC 9580), so both bc→sq and sq→bc
  * round-trips work with v6 Ed25519 and RSA keys.
  */
-@EnabledIf("sqAvailable")
+@DisabledIfSystemProperty(named = "sigmund.test.skip-sq", matches = "true")
 class BcSqCrossToolTest {
-
-    static boolean sqAvailable() {
-        return SqRunner.isToolAvailable();
-    }
 
     @Test
     void sqSignBcVerifyEd25519(@TempDir Path tempDir) throws Exception {
         Path sqHome = tempDir.resolve("sq-home");
         SqRunner sq = new SqRunner("sq", sqHome);
 
-        String sqFp = sq.generateKey("SQ Test <sq@test.example>", "cv25519");
+        String sqFp = sq.generateKey("SQ Test <sq@test.example>", "cv25519", "rfc9580");
         SqRunner sqSigner = new SqRunner("sq", sqHome, sqFp);
 
         Path artifact = tempDir.resolve("artifact.txt");
         Files.writeString(artifact, "cross-tool test SQ→BC ed25519");
         Path sigFile = tempDir.resolve("artifact.txt.asc");
-        sqSigner.sign(artifact, sigFile);
+        SigningTests.signWithOnlyKey(sqSigner, artifact, sigFile);
 
         String sqCert = sq.exportCert(sqFp);
         BcKeyStore bcStore = createBcKeyStore(tempDir);
@@ -62,7 +58,7 @@ class BcSqCrossToolTest {
         Path artifact = tempDir.resolve("artifact.txt");
         Files.writeString(artifact, "cross-tool test BC→SQ ed25519");
         Path sigFile = tempDir.resolve("artifact.txt.asc");
-        bcSigner.sign(artifact, sigFile);
+        SigningTests.signWithOnlyKey(bcSigner, artifact, sigFile);
 
         String bcCert = bcRunner.exportCert(bcFp);
         Path sqHome = tempDir.resolve("sq-home");

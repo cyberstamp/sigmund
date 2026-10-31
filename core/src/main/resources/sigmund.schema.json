@@ -99,11 +99,11 @@
             "gnupg-home": { "description": "GnuPG home directory to read public keys from. Default ~/.gnupg.", "$ref": "#/$defs/setting" },
             "cert-d-home": { "description": "Shared OpenPGP cert-d directory for public certificates. Default ~/.local/share/pgp.cert.d.", "$ref": "#/$defs/setting" },
             "bc-private-home": { "description": "Directory of BC's private key store. Default ~/.local/share/sigmund/bc-private.", "$ref": "#/$defs/setting" },
-            "signing-fingerprint": { "description": "Full fingerprint of the key to sign with.", "$ref": "#/$defs/signingFingerprint" },
+            "signing-fingerprint": { "description": "Full fingerprint of the key to sign with, or a list of them to sign with each; a key's type comes from its fingerprint's length. Ignored when a key comes from signing-key-env or tsk-file.", "$ref": "#/$defs/signingFingerprints" },
             "tsk-file": { "description": "Path to an exported Transferable Secret Key to sign with.", "$ref": "#/$defs/setting" },
             "signing-key-env": { "description": "Environment variable holding an ASCII-armored signing key. Default SIGMUND_BC_SIGNING_KEY.", "$ref": "#/$defs/setting" },
             "passphrase-env": { "description": "Environment variable holding the key's passphrase. Default SIGMUND_BC_PASSPHRASE.", "$ref": "#/$defs/setting" },
-            "cipher-suite": { "description": "Algorithm sigmund keygen --tool bc generates when --cipher-suite is not given. Default ed25519.", "$ref": "#/$defs/setting" }
+            "cipher-suite": { "description": "Algorithm sigmund keygen generates when --cipher-suite is not given. Default ed25519.", "$ref": "#/$defs/setting" }
           }
         },
         "sq": {
@@ -113,7 +113,7 @@
           "properties": {
             "home": { "description": "Sequoia home directory. Default ~/.local/share/sequoia.", "$ref": "#/$defs/setting" },
             "executable": { "description": "Path to the sq executable. Default sq.", "$ref": "#/$defs/setting" },
-            "signing-fingerprint": { "description": "Full fingerprint of the key to sign with. Default: sq's sign.signer-self.", "$ref": "#/$defs/signingFingerprint" }
+            "signing-fingerprint": { "description": "Full fingerprint of the key to sign with, or a list of them to sign with each; a key's type comes from its fingerprint's length. Default: sq's sign.signer-self.", "$ref": "#/$defs/signingFingerprints" }
           }
         },
         "gpg": {
@@ -122,7 +122,7 @@
           "additionalProperties": false,
           "properties": {
             "executable": { "description": "Path to the gpg executable. Default gpg.", "$ref": "#/$defs/setting" },
-            "signing-fingerprint": { "description": "Full fingerprint of the key to sign with. Default: default-key in gpg.conf, else the first secret key.", "$ref": "#/$defs/signingFingerprint" },
+            "signing-fingerprint": { "description": "Full v4 fingerprint of the key to sign with, or a list of them to sign with each. Default: default-key in gpg.conf, else the first secret key.", "$ref": "#/$defs/signingFingerprintsV4" },
             "home": { "description": "GnuPG home directory (--homedir).", "$ref": "#/$defs/setting" },
             "passphrase-env": { "description": "Environment variable holding the key's passphrase. Default SIGMUND_GPG_PASSPHRASE.", "$ref": "#/$defs/setting" }
           }
@@ -176,6 +176,25 @@
       "description": "A full OpenPGP fingerprint: 40 hexadecimal characters for a v4 key, 64 for v6. A key ID, an address or a user ID is not accepted.",
       "type": "string",
       "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"
+    },
+    "signingFingerprintV4": {
+      "description": "A full OpenPGP v4 fingerprint: 40 hexadecimal characters. A key ID, an address or a user ID is not accepted.",
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{40}$"
+    },
+    "signingFingerprints": {
+      "description": "A full OpenPGP fingerprint, or a non-empty list of distinct ones. Sigmund also rejects the same fingerprint listed twice in different case.",
+      "oneOf": [
+        { "$ref": "#/$defs/signingFingerprint" },
+        { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/signingFingerprint" } }
+      ]
+    },
+    "signingFingerprintsV4": {
+      "description": "A full OpenPGP v4 fingerprint, or a non-empty list of distinct ones. Sigmund also rejects the same fingerprint listed twice in different case.",
+      "oneOf": [
+        { "$ref": "#/$defs/signingFingerprintV4" },
+        { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/signingFingerprintV4" } }
+      ]
     },
     "pgp4": {
       "description": "A full OpenPGP v4 fingerprint: 40 hexadecimal characters. A key ID is not accepted.",

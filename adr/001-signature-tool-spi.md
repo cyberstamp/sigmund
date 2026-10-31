@@ -100,7 +100,7 @@ public interface SignatureTool {
 }
 ```
 
-**Tools are fully configured at construction time.** Credentials (key IDs, fingerprints, OIDC provider references) are provided when the tool is created. `sign()` takes no credential argument — the tool embodies its context. `canSign()` returns true only if signing credentials were provided.
+**Tools are fully configured at construction time.** Credentials (key IDs, fingerprints, OIDC provider references) are provided when the tool is created. `sign()` is called once per key the tool reports in `signingInfo()`, with that entry: the entry selects one of the keys configured at construction and supplies no credential. `canSign()` returns true only if signing credentials were provided.
 
 **`canVerify(VerificationUnit)`** lets each tool declare what it can handle within its format. For OpenPGP, GPG handles `packetVersion() <= 4` and SQ handles `packetVersion() >= 5`. For Sigstore, the tool always handles its own unit type. This keeps all routing decisions out of the facade.
 

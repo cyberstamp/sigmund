@@ -136,6 +136,54 @@ class SigmundTest {
         }
 
         @Test
+        void aToolchainToolWithNoKeyOfTheRequestedTypesDoesNotSign() {
+            var gpg = mockTool("gpg", true, true, Set.of("pgp4"));
+            var sq = mockTool("sq", true, true, Set.of("pgp6"));
+            var config = new SigmundConfig(null, null, null,
+                    new SigningConfig(null, List.of("gpg", "sq"), List.of(), Map.of("pqc", List.of("pgp6"))),
+                    null, null);
+            try (var sigmund = Sigmund.builder().config(config).addTool(gpg).addTool(sq).build()) {
+
+                SigningPlan plan = sigmund.signer("pqc").plan();
+
+                assertThat(plan.keys()).extracting(SigningInfo::toolName).containsExactly("sq");
+                assertThat(plan.problems()).isEmpty();
+            }
+        }
+
+        @Test
+        void aRequestedTypeNoToolchainToolHasFailsWhenSigningStarts() throws IOException {
+            var gpg = mockTool("gpg", true, true, Set.of("pgp4"));
+            var config = new SigmundConfig(null, null, null,
+                    new SigningConfig(null, List.of("gpg"), List.of("pgp6"), Map.of()),
+                    null, null);
+            try (var sigmund = Sigmund.builder().config(config).addTool(gpg).build()) {
+
+                Signer signer = sigmund.signer();
+
+                Path artifact = createTempFile("mismatch.jar");
+                assertThatThrownBy(() -> signer.sign(artifact, tempDir))
+                        .isInstanceOf(SigmundException.class)
+                        .hasMessage("no signing key for requested credential type pgp6; keys in the run: gpg pgp4");
+            }
+        }
+
+        @Test
+        void aToolchainToolNotInTheRunThrowsAtSignerCreation() {
+            var config = new SigmundConfig(null, null, null,
+                    new SigningConfig(null, List.of("gpg"), List.of(), Map.of()),
+                    null, null);
+            try (var sigmund = Sigmund.builder().config(config).verificationConfig(onlyTools("bc"))
+                    .addTool(mockTool("bc", true, true, Set.of("pgp4"))).build()) {
+
+                assertThatThrownBy(sigmund::signer)
+                        .isInstanceOf(SigmundException.class)
+                        .hasMessageContaining("gpg")
+                        .hasMessageContaining("not available");
+            }
+        }
+
+        @Test
         void signerWithUnknownProfileThrows() {
             var config = new SigmundConfig(null, null, null,
                     new SigningConfig(null, List.of(), List.of(),
@@ -712,6 +760,21 @@ class SigmundTest {
         }
 
         @Test
+        void aListForASettingThatTakesOneValueIsError() {
+            assertThatThrownBy(() -> builderFor("tools: { bc: { gnupg-home: [/a, /b] } }").build())
+                    .isInstanceOf(PolicyConfigException.class)
+                    .hasMessageContaining("tools.bc.gnupg-home must be a single value, not a list");
+        }
+
+        @Test
+        void aScalarHoldingSeveralValuesForAListSettingIsError() {
+            assertThatThrownBy(() -> builderFor("tools: { sq: { signing-fingerprint: \"A,B\" } }").build())
+                    .isInstanceOf(PolicyConfigException.class)
+                    .hasMessageContaining(
+                            "tools.sq.signing-fingerprint: 'A,B' holds more than one value; write them as a list");
+        }
+
+        @Test
         void addingAnUnknownSigningToolNamesTheNearestTool() {
             assertThatThrownBy(() -> Sigmund.builder().addSigningTool("bcc", Map.of()))
                     .isInstanceOf(SigmundException.class)
@@ -1077,7 +1140,7 @@ class SigmundTest {
                 }
 
                 @Override
-                public SignResult sign(Path a, Path o) {
+                public SignResult sign(Path a, Path o, SigningInfo key) {
                     throw new UnsupportedOperationException();
                 }
 
@@ -1204,6 +1267,12 @@ class SigmundTest {
             }
 
             @Override
+            public List<SigningInfo> signingInfo() {
+                return credentialTypes.stream().sorted()
+                        .map(type -> new SigningInfo(name, null, null, null, type)).toList();
+            }
+
+            @Override
             public SignatureFormat signatureFormat() {
                 return format;
             }
@@ -1219,7 +1288,7 @@ class SigmundTest {
             }
 
             @Override
-            public SignResult sign(Path a, Path o) {
+            public SignResult sign(Path a, Path o, SigningInfo key) {
                 try {
                     Files.writeString(o, "signature");
                 } catch (IOException e) {
@@ -1275,7 +1344,7 @@ class SigmundTest {
             }
 
             @Override
-            public SignResult sign(Path a, Path o) {
+            public SignResult sign(Path a, Path o, SigningInfo key) {
                 throw new UnsupportedOperationException();
             }
 
@@ -1326,7 +1395,7 @@ class SigmundTest {
             }
 
             @Override
-            public SignResult sign(Path a, Path o) {
+            public SignResult sign(Path a, Path o, SigningInfo key) {
                 throw new UnsupportedOperationException();
             }
 
@@ -1414,7 +1483,7 @@ class SigmundTest {
         }
 
         @Override
-        public SignResult sign(Path a, Path o) {
+        public SignResult sign(Path a, Path o, SigningInfo key) {
             throw new UnsupportedOperationException();
         }
 
@@ -1485,7 +1554,7 @@ class SigmundTest {
         }
 
         @Override
-        public SignResult sign(Path a, Path o) {
+        public SignResult sign(Path a, Path o, SigningInfo key) {
             throw new UnsupportedOperationException();
         }
 
@@ -1569,7 +1638,7 @@ class SigmundTest {
         }
 
         @Override
-        public SignResult sign(Path a, Path o) {
+        public SignResult sign(Path a, Path o, SigningInfo key) {
             throw new UnsupportedOperationException();
         }
 
@@ -1631,7 +1700,7 @@ class SigmundTest {
         }
 
         @Override
-        public SignResult sign(Path a, Path o) {
+        public SignResult sign(Path a, Path o, SigningInfo key) {
             throw new UnsupportedOperationException();
         }
 

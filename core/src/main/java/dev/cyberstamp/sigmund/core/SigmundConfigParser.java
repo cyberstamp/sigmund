@@ -488,7 +488,7 @@ class SigmundConfigParser {
     /**
      * Parses the top-level {@code tools} section into a {@link ToolsConfig} registry.
      * <p>
-     * Each tool entry maps a tool name to its settings, each a single value. Only the shape is
+     * Each tool entry maps a tool name to its settings, each a single value or a list of single values. Only the shape is
      * checked here: which tools exist and which settings each accepts is known to the tool
      * factories, so tool and setting names are checked when tools are built.
      *
@@ -517,15 +517,33 @@ class SigmundConfigParser {
             throw new PolicyConfigException(location + " must be a mapping of settings, not " + describe(node));
         }
         Map<String, String> settings = new LinkedHashMap<>();
+        Set<String> lists = new LinkedHashSet<>();
         for (Map.Entry<String, JsonNode> entry : node.properties()) {
             JsonNode value = entry.getValue();
-            if (!value.isValueNode() || value.isNull()) {
-                throw new PolicyConfigException(location + "." + entry.getKey()
+            String settingLocation = location + "." + entry.getKey();
+            if (value.isArray()) {
+                settings.put(entry.getKey(), joinListItems(value, settingLocation));
+                lists.add(entry.getKey());
+            } else if (!value.isValueNode() || value.isNull()) {
+                throw new PolicyConfigException(settingLocation
                         + " must be a single value, not " + describe(value));
+            } else {
+                settings.put(entry.getKey(), value.asString());
             }
-            settings.put(entry.getKey(), value.asString());
         }
-        return new ToolConfig(settings);
+        return new ToolConfig(settings, lists);
+    }
+
+    private static String joinListItems(JsonNode list, String location) {
+        List<String> items = new ArrayList<>();
+        for (JsonNode item : list) {
+            if (!item.isValueNode() || item.isNull()) {
+                throw new PolicyConfigException(location + ": list items must be single values, not "
+                        + describe(item));
+            }
+            items.add(item.asString());
+        }
+        return String.join(ToolSetting.LIST_SEPARATOR, items);
     }
 
     // --- Trust Policy (rules / defaults) ---

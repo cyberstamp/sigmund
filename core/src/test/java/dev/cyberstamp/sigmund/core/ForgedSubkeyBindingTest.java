@@ -1,13 +1,11 @@
 package dev.cyberstamp.sigmund.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
 import java.security.spec.ECGenParameterSpec;
@@ -38,6 +36,7 @@ import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyPair;
 import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyEncryptorBuilder;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -100,9 +99,9 @@ class ForgedSubkeyBindingTest {
     class EveryBackend {
 
         @Test
+        @DisabledIfSystemProperty(named = "sigmund.test.skip-gpg", matches = "true")
+        @DisabledIfSystemProperty(named = "sigmund.test.skip-sq", matches = "true")
         void noBackendAttributesTheSignatureToTheVictim() throws Exception {
-            assumeTrue(GpgRunner.isToolAvailable() && SqRunner.isToolAvailable(),
-                    "gpg and sq are needed to compare backends");
             Keys keys = Keys.generate();
             Path artifact = Files.writeString(dir.resolve("artifact.txt"), "attacker content");
             OpenPgpClaim claim = keys.signWithAttackerSubkey(artifact);
@@ -110,8 +109,7 @@ class ForgedSubkeyBindingTest {
 
             BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc"));
             store.addFetched(keys.forgedCertificate(), "hkps://lenient.keyserver.example");
-            Path gpgHome = Files.createDirectories(dir.resolve("gpg-home"));
-            Files.setPosixFilePermissions(gpgHome, PosixFilePermissions.fromString("rwx------"));
+            Path gpgHome = GpgTestKeys.home(dir.resolve("gpg-home"));
             Path sqHome = Files.createDirectories(dir.resolve("sq-home"));
             Path certFile = Files.writeString(dir.resolve("forged.asc"), forged);
             CliTool.run(Map.of("GNUPGHOME", gpgHome.toString()),

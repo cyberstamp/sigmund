@@ -6,7 +6,6 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -15,7 +14,7 @@ import org.bouncycastle.openpgp.PGPUtil;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -31,12 +30,9 @@ import org.junit.jupiter.api.io.TempDir;
  * A v4 key is used because GnuPG reads only v4 keys; a NIST P-curve key keeps the ECDSA path,
  * which Bouncy Castle generates through a separate fallback, under agreement.
  */
-@EnabledIf("bothCliToolsAvailable")
+@DisabledIfSystemProperty(named = "sigmund.test.skip-gpg", matches = "true")
+@DisabledIfSystemProperty(named = "sigmund.test.skip-sq", matches = "true")
 class BackendAgreementTest {
-
-    static boolean bothCliToolsAvailable() {
-        return GpgRunner.isToolAvailable() && SqRunner.isToolAvailable();
-    }
 
     /** What one backend concluded, named so a disagreement report is readable. */
     private record Answer(String backend, ClaimOutcome outcome, IndeterminateReason reason,
@@ -130,10 +126,10 @@ class BackendAgreementTest {
 
             Path artifact = Files.writeString(dir.resolve("artifact.txt"), content);
             Path signature = dir.resolve("artifact.txt.asc");
-            new BcRunner(signingStore, fingerprint, null).sign(artifact, signature);
+            BcRunner signer = new BcRunner(signingStore, fingerprint, null);
+            SigningTests.signWithOnlyKey(signer, artifact, signature);
 
-            Path gpgHome = Files.createDirectories(dir.resolve("gpg-home"));
-            Files.setPosixFilePermissions(gpgHome, PosixFilePermissions.fromString("rwx------"));
+            Path gpgHome = GpgTestKeys.home(dir.resolve("gpg-home"));
             Path sqHome = Files.createDirectories(dir.resolve("sq-home"));
 
             BcKeyStore verifyingStore = new BcKeyStore(null, dir.resolve("verify-cert-d"),
