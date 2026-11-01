@@ -58,8 +58,9 @@ an ignored key would silently drop what you wrote. The same holds inside every s
 value of the wrong shape — a list where one value is expected, `"true"` for `true` — is an
 error rather than read as something else. Values are read as written: only `true`, `false`,
 `null` and plain numbers are typed, so `yes`, `on` and `~` are words, and `0x12345678` or `0123`
-stays text rather than becoming a number. Quote fingerprints and key IDs anyway, as the examples
-do. The schema of earlier versions (`trust`,
+stays text rather than becoming a number. The file is read as YAML 1.2, as editors read it: under
+YAML 1.1 an unquoted `0x12345678` would have reached a tool as the number `305419896`. Quote
+fingerprints and key IDs anyway, as the examples do. The schema of earlier versions (`trust`,
 `signature-optional`, `policy`, `artifacts`, `version`) is rejected with a message saying what
 replaces it.
 
@@ -255,6 +256,8 @@ verify.
 **Default:** `[]` (empty)
 
 The issuers trusted to vouch for identities in signer entries that do not name their own. This is the default grant for identities: a fingerprint needs no issuer, because the signature proves the key, but an email address or a CI workflow is only as good as whoever vouched for it.
+
+Nothing is trusted unless the file lists it — not even keys.openpgp.org. A built-in grant would sit outside the file and its policy digest, and could change meaning between Sigmund versions. When bootstrap names a signer by an address keys.openpgp.org verified, it lists the directory here in the generated file instead, so the grant is reviewed with the policy and removed with one line.
 
 ```yaml
 issuers:
