@@ -5,6 +5,10 @@
 Accepted — implemented by roadmap phase P1. Run-level types are deferred to the
 phases that populate them (see *Run result*).
 
+Amended by [ADR-009](009-an-unbound-key-is-never-failed.md): a key its certificate does not bind
+is `INDETERMINATE(KEY_UNAVAILABLE)`, never `FAILED`, including when its self-signatures do not
+verify.
+
 ## Context
 
 Verification today produces two enums and a flat result. `TrustVerifier.assess()`

@@ -38,6 +38,9 @@ import java.util.List;
  *        lets a claim no installed tool can check say whose signature it would be, so that a
  *        requirement left unmet only for want of such a claim reads as unsupported rather than
  *        as the wrong signer
+ * @param reasonDetail why the reason applies, in the verifying tool's words — a key no keyserver
+ *        has, or one served without the self-signature that binds it — or {@code null}; it
+ *        explains the reason and never changes the outcome
  */
 public record ClaimResult(
         String kind,
@@ -52,7 +55,8 @@ public record ClaimResult(
         Instant verifiedAt,
         String algorithm,
         String verifiedBy,
-        Credential declaredIssuer) {
+        Credential declaredIssuer,
+        String reasonDetail) {
 
     /**
      * Creates a result for a claim whose evidence names no issuer by full fingerprint.
@@ -76,14 +80,14 @@ public record ClaimResult(
             ClaimTimeSource claimTimeSource, Instant verifiedAt, String algorithm,
             String verifiedBy) {
         this(kind, outcome, reason, attesterCredentials, attesterDisplayName, trustRoot, evidence,
-                claimTime, claimTimeSource, verifiedAt, algorithm, verifiedBy, null);
+                claimTime, claimTimeSource, verifiedAt, algorithm, verifiedBy, null, null);
     }
 
     /**
      * Normalizes the optional components and rejects results that cannot be explained.
      *
-     * @throws IllegalArgumentException if the outcome and reason disagree, or the evidence,
-     *         kind or outcome is missing
+     * @throws IllegalArgumentException if the outcome and reason disagree, a detail explains
+     *         no reason, or the evidence, kind or outcome is missing
      */
     public ClaimResult {
         if (kind == null || kind.isBlank()) {
@@ -98,6 +102,9 @@ public record ClaimResult(
         if (outcome != ClaimOutcome.INDETERMINATE && reason != null) {
             throw new IllegalArgumentException(
                     "a " + outcome + " claim must not carry an indeterminate reason");
+        }
+        if (reason == null && reasonDetail != null) {
+            throw new IllegalArgumentException("a reason detail needs a reason to explain");
         }
         if (evidence == null) {
             throw new IllegalArgumentException("a claim result must name its evidence");
@@ -133,7 +140,7 @@ public record ClaimResult(
         return new ClaimResult(kind, result.outcome(), result.reason(), provenCredentials,
                 result.signerDisplayName(), trustRoot, evidence,
                 claim.claimTime(), claim.claimTimeSource(), verifiedAt, result.algorithm(),
-                verifiedBy, declaredIssuerOf(claim));
+                verifiedBy, declaredIssuerOf(claim), result.reasonDetail());
     }
 
     /**
@@ -163,7 +170,7 @@ public record ClaimResult(
         }
         return new ClaimResult(kind, ClaimOutcome.VERIFIED, null, List.of(declaredIssuer),
                 attesterDisplayName, trustRoot, evidence, claimTime, claimTimeSource, verifiedAt,
-                algorithm, verifiedBy, declaredIssuer);
+                algorithm, verifiedBy, declaredIssuer, null);
     }
 
     /**
@@ -178,7 +185,7 @@ public record ClaimResult(
         credentials.addAll(additional);
         return new ClaimResult(kind, outcome, reason, credentials, attesterDisplayName,
                 trustRoot, evidence, claimTime, claimTimeSource, verifiedAt, algorithm,
-                verifiedBy, declaredIssuer);
+                verifiedBy, declaredIssuer, reasonDetail);
     }
 
     /**
@@ -191,7 +198,7 @@ public record ClaimResult(
     public ClaimResult unresolved(IndeterminateReason unresolvedReason) {
         return new ClaimResult(kind, ClaimOutcome.INDETERMINATE, unresolvedReason,
                 attesterCredentials, attesterDisplayName, trustRoot, evidence, claimTime,
-                claimTimeSource, verifiedAt, algorithm, verifiedBy, declaredIssuer);
+                claimTimeSource, verifiedAt, algorithm, verifiedBy, declaredIssuer, null);
     }
 
     /**

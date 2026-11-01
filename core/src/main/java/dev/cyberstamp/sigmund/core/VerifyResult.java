@@ -24,6 +24,7 @@ public abstract sealed class VerifyResult
     private final IndeterminateReason reason;
     private final String signerDisplayName;
     private final String algorithm;
+    private final String reasonDetail;
 
     /**
      * Creates a new verify result.
@@ -39,11 +40,33 @@ public abstract sealed class VerifyResult
      */
     protected VerifyResult(ClaimOutcome outcome, IndeterminateReason reason,
             String signerDisplayName, String algorithm) {
+        this(outcome, reason, signerDisplayName, algorithm, null);
+    }
+
+    /**
+     * Creates a new verify result saying why its reason applies.
+     *
+     * @param outcome what verification established
+     * @param reason why verification could not complete, required when the outcome is
+     *        {@link ClaimOutcome#INDETERMINATE} and meaningless otherwise
+     * @param signerDisplayName human-readable signer description (UID, email, URI),
+     *        or {@code null} if unknown
+     * @param algorithm the signing algorithm name, or {@code null} if unknown
+     * @param reasonDetail why the reason applies, or {@code null}
+     * @throws IllegalArgumentException if an indeterminate outcome carries no reason, a
+     *         conclusive one carries a reason, or a detail explains no reason
+     */
+    protected VerifyResult(ClaimOutcome outcome, IndeterminateReason reason,
+            String signerDisplayName, String algorithm, String reasonDetail) {
         requireConsistent(outcome, reason);
+        if (reason == null && reasonDetail != null) {
+            throw new IllegalArgumentException("a reason detail needs a reason to explain");
+        }
         this.outcome = outcome;
         this.reason = reason;
         this.signerDisplayName = signerDisplayName;
         this.algorithm = algorithm;
+        this.reasonDetail = reasonDetail;
     }
 
     private static void requireConsistent(ClaimOutcome outcome, IndeterminateReason reason) {
@@ -73,6 +96,22 @@ public abstract sealed class VerifyResult
      */
     public IndeterminateReason reason() {
         return reason;
+    }
+
+    /**
+     * Returns why the reason applies, in a few words, when the tool could say.
+     *
+     * <p>
+     * One reason covers situations an operator resolves differently:
+     * {@link IndeterminateReason#KEY_UNAVAILABLE} is a key no store or keyserver has, a key
+     * served without the self-signature that binds it, and a key whose certificate a tool cannot
+     * use. The detail tells them apart for the report; it never changes the outcome.
+     *
+     * @return the detail, such as {@code "no local key store or configured keyserver has it"},
+     *         or {@code null}
+     */
+    public String reasonDetail() {
+        return reasonDetail;
     }
 
     /**

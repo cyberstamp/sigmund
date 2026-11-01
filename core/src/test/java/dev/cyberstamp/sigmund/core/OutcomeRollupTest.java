@@ -188,14 +188,14 @@ class OutcomeRollupTest {
             return new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null,
                     List.of(KeyCredential.openPgp(fingerprint)), null, TrustRootRef.unknown(), REF,
                     null, ClaimTimeSource.SIGNER, Instant.EPOCH, "RSA", "bc",
-                    KeyCredential.openPgp(fingerprint));
+                    KeyCredential.openPgp(fingerprint), null);
         }
 
         private static ClaimResult unsupportedNaming(String fingerprint) {
             return new ClaimResult("openpgp", ClaimOutcome.INDETERMINATE,
                     IndeterminateReason.UNSUPPORTED_ALGORITHM, List.of(), null,
                     TrustRootRef.unknown(), REF, null, ClaimTimeSource.SIGNER, Instant.EPOCH,
-                    "ML-DSA-87+Ed448", null, KeyCredential.openPgp(fingerprint));
+                    "ML-DSA-87+Ed448", null, KeyCredential.openPgp(fingerprint), null);
         }
 
         @Test

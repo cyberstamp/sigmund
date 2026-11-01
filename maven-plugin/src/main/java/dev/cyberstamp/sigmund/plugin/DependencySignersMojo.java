@@ -240,7 +240,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                     getLog().info("Signer: " + first.signerDisplayName());
                     identified = true;
                 } else if (signerSub.stream().allMatch(vr -> vr.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE))) {
-                    getLog().warn("Signer: UNKNOWN (key not in keyring)");
+                    getLog().warn("Signer: UNKNOWN (key unavailable)");
                     identified = false;
                 } else if (signerSub.stream().anyMatch(VerifyResult::isFailed)) {
                     getLog().warn("Signer: VERIFICATION FAILED");
@@ -368,7 +368,9 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             return "";
         }
         return switch (result.reason()) {
-            case KEY_UNAVAILABLE -> " (no key)";
+            case KEY_UNAVAILABLE -> result.reasonDetail() != null
+                    ? " (key unavailable: " + result.reasonDetail() + ")"
+                    : " (key unavailable)";
             case TRUST_ROOT_UNAVAILABLE -> " (trust root unavailable)";
             case DISCOVERY_UNAVAILABLE -> " (evidence source unreachable)";
             case TOOL_UNAVAILABLE -> " (verification tool unavailable)";

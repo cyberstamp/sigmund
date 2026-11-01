@@ -75,6 +75,29 @@ class VerifyResultTest {
     }
 
     @Nested
+    class ReasonDetail {
+
+        @Test
+        void aCopyKeepsItsTypeAndFieldsAndGainsTheDetail() {
+            OpenPgpVerifyResult result = OpenPgpVerifyResult.indeterminate(
+                    IndeterminateReason.KEY_UNAVAILABLE, null, "RSA", 4, "KEYID", "FP")
+                    .withReasonDetail("no keyserver has it");
+
+            assertThat(result.reasonDetail()).isEqualTo("no keyserver has it");
+            assertThat(result.fingerprint()).isEqualTo("FP");
+            assertThat(result.withKeySource(TrustRootRef.unknown()).reasonDetail())
+                    .isEqualTo("no keyserver has it");
+        }
+
+        @Test
+        void aDetailNeedsAReasonToExplain() {
+            assertThatThrownBy(() -> OpenPgpVerifyResult.verified(null, "RSA", 4, "KEYID", "FP")
+                    .withReasonDetail("no keyserver has it"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Nested
     class UnverifiedResultTests {
 
         @Test

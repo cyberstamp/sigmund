@@ -4,7 +4,7 @@ A Maven plugin and CLI for signing artifacts, verifying signatures, and enforcin
 
 ## Overview
 
-Sigmund is a general-purpose signing and trust verification tool for Maven that brings dependency signature verification to the Maven ecosystem — a capability no other tool provides. It can verify who signed each dependency in your project and enforce trust policies based on signer identity, giving you visibility into and control over your software supply chain.
+Sigmund is a signing and trust verification tool for Maven. It verifies who signed each dependency against a policy of trusted signers — keys, verified email addresses or CI workflow identities, across OpenPGP and Sigstore — and can generate that policy from the signatures your dependencies already carry, giving you visibility into and control over your software supply chain.
 
 Sigmund is also a drop-in replacement for `maven-gpg-plugin` and `sigstore-maven-plugin`. It supports hybrid post-quantum cryptography (PQC) — `.asc` files containing both a classic signature (RSA/EdDSA) and a PQC v6 signature (ML-DSA-87+Ed448 via Sequoia, RFC 9980). A pure-Java Bouncy Castle backend handles classic OpenPGP with zero external tool dependencies. The Sigstore backend provides keyless signing via OIDC — no long-lived keys to manage — producing `.sigstore.json` bundles alongside or instead of OpenPGP signatures.
 
@@ -24,21 +24,22 @@ Signer: Alice Developer <alice@example.com>
      com.example:lib-a:1.0
      com.example:lib-b:2.0
 
-Signer: NOT VERIFIED
-   PGP4 (RSA): B2A3CF1E8D4F5A6B7C9D0E1F2A3B4C5D6E7F8A9B
-     com.other:tool:3.0
+Signer: Bob Maintainer (Code signing key) <bob@example.org>
+   PGP4 (RSA): BBE7232D7991050B54C8EA0ADC08637CA615D22C
+     org.example:parser:3.1
 
-Signer: UNKNOWN (key not in keyring)
-   PGP4 (DSA): D1031D14464180E0
-     com.internal:messaging:2.1
+Signer: Carol Release <carol@example.net>
+   PGP4 (ECDSA): 9C1F2E7D4B6A08355E3D21C7A9B04F6E12D83A57
+     net.example:tool:2.4
 
 UNSIGNED
-  com.internal:util:1.0
+  com.example:internal-util:1.0
 
-Summary: All clear: 4 dependencies, 3 PGP4 signature(s), 0 PQC signature(s), 2 unique key(s)
+Summary: All clear: 5 dependencies, 4 PGP4 signature(s), 3 unique key(s)
+PQ coverage: 0/5 dependencies have a post-quantum signature
 ```
 
-Many signers appear as `NOT VERIFIED` because `keys.openpgp.org` (the default keyserver) only publishes identity information for keys whose owners have verified their email. See the [Getting Started guide](docs/getting-started.md#why-many-signers-appear-as-not-verified) for details on resolving signer names.
+In most projects some signers appear as `UNKNOWN (key unavailable)`, with the reason on the key line — most often that `keys.openpgp.org`, the default keyserver, served the key without its user IDs, which it publishes only once the key's owner verifies an email address. See the [Getting Started guide](docs/getting-started.md#why-some-signers-appear-as-unknown) for what each reason means and how to resolve more keys.
 
 To shorten subsequent commands, add the plugin to your `pluginManagement`:
 
@@ -76,12 +77,12 @@ mvn sigmund:verify
 
 ## Key Features
 
-- **Dependency signature verification and trust enforcement** — Verify signatures on all project dependencies and enforce policies based on signer identity. No alternative tool offers this capability today.
+- **Dependency signature verification and trust enforcement** — Verify signatures on all project dependencies and enforce policies based on who signed them. Start by observing, then enforce once the policy matches what you expect.
 - **Drop-in replacement for maven-gpg-plugin** — Use existing GPG keys or Bouncy Castle's pure-Java backend for classic OpenPGP with no external dependencies.
 - **Sigstore keyless signing** — OIDC-based signing with no long-lived keys to generate, store, or rotate. Produces `.sigstore.json` bundles. Identity-validated: configure expected OIDC identities and catch mismatches before artifacts are signed. CI-tuned defaults (ambient GitHub Actions OIDC, no browser popups).
 - **Hybrid PQC + classic signing** — ML-DSA-87+Ed448 and Ed25519/RSA in one `.asc` file (RFC 9980). Existing tools see only the classic signature; PQC-aware tools verify both.
-- **Multi-format signing** — Produce both `.asc` (OpenPGP) and `.sigstore.json` (Sigstore) in a single build. Cross-backend identity matching lets a signer configured with just an `email` credential match both OpenPGP and Sigstore signatures.
-- **Four signing backends** — BC (pure Java, always available), Sequoia sq (PQC support), GnuPG (legacy compatibility), and Sigstore (keyless OIDC). Configurable priority and toolchain selection.
+- **Multi-format signing** — Produce both `.asc` (OpenPGP) and `.sigstore.json` (Sigstore) in a single build. Cross-backend identity matching lets one `email` entry match both OpenPGP and Sigstore signatures, vouched for by the issuers you list — keys.openpgp.org for OpenPGP, an OIDC provider for Sigstore.
+- **Four signing backends** — BC (pure Java, always available), Sequoia sq (PQC support), GnuPG (legacy compatibility), and Sigstore (keyless OIDC). The toolchain chooses which tools run, and in what order.
 - **CLI for key management and custom workflows** — Generate keys, sign artifacts, verify signatures, and export certificates outside Maven.
 
 ## Quick Signing Example
@@ -93,16 +94,18 @@ mvn sigmund:signer-info
 ```
 
 ```
-gpg: RSA 41A2197725BD63EB00D071D46A7F5DB1C68BDB81 (Alice <alice@example.com>)
+gpg: pgp4 RSA 41A2197725BD63EB00D071D46A7F5DB1C68BDB81 (Alice <alice@example.com>)
 ```
 
-The `sign` goal is bound to the `verify` phase for release profiles, but you can run it directly:
+The `sign` goal runs in the `verify` phase when added to your build's plugins, or directly:
 
 ```bash
 mvn sigmund:sign
 ```
 
-The plugin uses GPG by default if available, falling back to the Bouncy Castle backend. Configure a specific signing key in `sigmund.yaml`:
+Without configuration, every installed tool that has a default signing key signs: in practice GnuPG's default key, plus Sequoia's if its configuration names one. Bouncy Castle signs only when given a key — in `sigmund.yaml`, or through `SIGMUND_BC_SIGNING_KEY` for [ephemeral CI signing](docs/signing.md#ephemeral-ci-signing), where it signs alone unless `signing.toolchain` names the tools. List tools under `signing.toolchain` to choose exactly which ones sign.
+
+Configure a specific signing key in `sigmund.yaml`:
 
 ```yaml
 tools:
@@ -148,7 +151,7 @@ Run `mvn sigmund:sign` to sign with both — classic signature first, PQC signat
 - [Maven Plugin Reference](docs/maven-plugin.md) — Complete plugin goal and configuration reference
 - [CLI Reference](docs/cli-reference.md) — Command-line tool usage
 - [Configuration Reference](docs/configuration.md) — `sigmund.yaml` configuration options
-- [Architecture Overview](docs/architecture.md) — Three-tool system and key management
+- [Architecture Overview](docs/architecture.md) — Tools, key stores and the signing and verification pipelines
 - [Known Limitations](docs/limitations.md) — Current limitations and workarounds
 
 ## Project Status

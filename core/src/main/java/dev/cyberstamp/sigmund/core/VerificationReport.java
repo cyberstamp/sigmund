@@ -331,7 +331,11 @@ public final class VerificationReport {
         StringBuilder headline = new StringBuilder(claim.kind()).append(' ')
                 .append(claim.outcome());
         if (claim.reason() != null) {
-            headline.append(" (").append(claim.reason()).append(')');
+            headline.append(" (").append(claim.reason());
+            if (claim.reasonDetail() != null) {
+                headline.append(": ").append(claim.reasonDetail());
+            }
+            headline.append(')');
         }
         if (claim.verifiedBy() != null) {
             headline.append(" by ").append(claim.verifiedBy());

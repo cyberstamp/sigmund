@@ -5,6 +5,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPairGenerator;
@@ -581,11 +584,25 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         BcKeyStore.KeyLookup found = certificateFor(fingerprint);
         if (found == null) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, null, algorithm, version, fingerprint,
-                    fingerprint);
+                    fingerprint).withReasonDetail(notFoundDetail(opgu));
         }
 
         return verifySignature(artifactFile, opgu, found, version, fingerprint, algorithm,
                 keyStore.primaryUserIdOf(found.ring()));
+    }
+
+    /**
+     * Says why no copy of the key was found. A result citing a missing key is reported only when
+     * fetching it failed or was not attempted, so a fetcher means the keyservers were asked;
+     * keys are fetched by full fingerprint, never by a 64-bit key ID.
+     */
+    private String notFoundDetail(OpenPgpClaim opgu) {
+        if (opgu.issuerFingerprint() == null) {
+            return "the signature names only a key ID, which is not looked up on keyservers";
+        }
+        return fetcher == null
+                ? "no local key store has it, and key fetching is off"
+                : "no local key store or configured keyserver has it";
     }
 
     private String extractKeyIdFromSignature(OpenPgpClaim opgu) {
@@ -617,7 +634,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             }
             if (findVerificationKey(pubKeyRing, signature) == null) {
                 return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId, algorithm, version,
-                        fingerprint, fingerprint);
+                        fingerprint, fingerprint).withReasonDetail("the certificate found does not contain the signing key");
             }
 
             OpenPGPCertificate certificate = new OpenPGPCertificate(pubKeyRing,
@@ -627,7 +644,8 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
                 return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint);
             }
             if (!document.isValid(VERIFICATION_POLICY)) {
-                return keyNotValid(certificate, document, signature, version, fingerprint, algorithm, userId);
+                return keyNotValid(certificate, document, signature, version, fingerprint, algorithm, userId,
+                        found.source());
             }
             PGPPublicKey signingKey = document.getIssuer().getPGPPublicKey();
             return OpenPgpVerifyResult.verified(userId, algorithm, version, fingerprint, fingerprint)
@@ -647,16 +665,17 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * Only a key that was revoked or had expired when it signed makes the signature
      * {@link ClaimOutcome#FAILED}. Otherwise the bytes are what the key signed, and what
      * is missing is a key that can be trusted to have made them: an algorithm the verification
-     * policy rejects is {@link IndeterminateReason#UNSUPPORTED_ALGORITHM}, and a certificate
-     * that carries no self-signature binding the key — as keys.openpgp.org serves one whose
-     * owner never verified an address — is {@link IndeterminateReason#KEY_UNAVAILABLE}, since
-     * a fuller copy of the certificate may resolve it. Self-signatures that are present, use
-     * acceptable algorithms and still do not bind the key are a broken or forged certificate,
-     * which is {@code FAILED}.
+     * policy rejects is {@link IndeterminateReason#UNSUPPORTED_ALGORITHM}, and any other key the
+     * certificate does not bind is {@link IndeterminateReason#KEY_UNAVAILABLE} — one served
+     * without its self-signatures, as keys.openpgp.org serves a key whose owner never verified an
+     * address, where a fuller copy may resolve it; one whose self-signature covers a user ID
+     * that is not UTF-8, which Bouncy Castle's certificate API drops although GnuPG and Sequoia
+     * use it; and one whose self-signatures do not verify, which GnuPG and Sequoia also refuse
+     * to use rather than report as an attack (ADR-009).
      */
     private OpenPgpVerifyResult keyNotValid(OpenPGPCertificate certificate,
             OpenPGPDocumentSignature document, PGPSignature signature, int version,
-            String fingerprint, String algorithm, String userId) {
+            String fingerprint, String algorithm, String userId, TrustRootRef source) {
         Date signedAt = signature.getCreationTime();
         OpenPGPCertificate.OpenPGPComponentKey issuer = document.getIssuer();
         OpenPGPCertificate.OpenPGPPrimaryKey primary = certificate.getPrimaryKey();
@@ -671,13 +690,32 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
                 issuer.getPGPPublicKey());
         if (selfSignatures.isEmpty()) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId,
-                    algorithm, version, fingerprint, fingerprint);
+                    algorithm, version, fingerprint, fingerprint)
+                    .withReasonDetail("the copy from "
+                            + (source.identifier() != null ? source.identifier() : source.kind())
+                            + " carries no self-signature binding the key");
         }
         if (selfSignatures.stream().anyMatch(BcRunner::rejectedByPolicy)) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM, userId,
                     algorithm, version, fingerprint, fingerprint);
         }
-        return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint);
+        return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId,
+                algorithm, version, fingerprint, fingerprint)
+                .withReasonDetail(hasUndecodableUserId(primary.getPGPPublicKey())
+                        ? "its user ID is not valid UTF-8, which Bouncy Castle cannot read"
+                        : "its self-signatures do not bind it");
+    }
+
+    private static boolean hasUndecodableUserId(PGPPublicKey primary) {
+        Iterator<byte[]> userIds = primary.getRawUserIDs();
+        while (userIds.hasNext()) {
+            try {
+                StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(userIds.next()));
+            } catch (CharacterCodingException e) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean revokedOrExpiredAt(OpenPGPCertificate.OpenPGPComponentKey key, Date at) {
