@@ -139,5 +139,32 @@ class OpenPgpSignatureFormatTest {
             assertThat(result).contains("block1");
             assertThat(result).contains("block2");
         }
+
+        /**
+         * Verifiers that read only the first block — Maven Central among them — must see the
+         * classic signature, whatever order the signatures were made in.
+         */
+        @Test
+        void putsV4BlocksBeforeV6KeepingTheOrderWithinAVersion(@TempDir Path tmp) throws IOException {
+            BcKeyStore store = new BcKeyStore(null, tmp.resolve("cert-d"), tmp.resolve("bc-private"));
+            Path artifact = Files.writeString(tmp.resolve("artifact.txt"), "content");
+            Path v4First = sign(store, artifact, tmp.resolve("v4-first.asc"), null);
+            Path v6 = sign(store, artifact, tmp.resolve("v6.asc"), Credential.TYPE_PGP6);
+            Path v4Second = sign(store, artifact, tmp.resolve("v4-second.asc"), null);
+            Path output = tmp.resolve("combined.asc");
+
+            format.combine(List.of(v6, v4First, v4Second), output);
+
+            List<String> blocks = AscCombiner.extractAllBlocks(Files.readString(output));
+            assertThat(blocks).containsExactly(Files.readString(v4First), Files.readString(v4Second),
+                    Files.readString(v6));
+        }
+
+        private Path sign(BcKeyStore store, Path artifact, Path signature, String credentialType) {
+            String fingerprint = new BcRunner(store, null, null).generateKey("Test <test@example.com>", "ed25519",
+                    credentialType);
+            SigningTests.signWithOnlyKey(new BcRunner(store, fingerprint, null), artifact, signature);
+            return signature;
+        }
     }
 }

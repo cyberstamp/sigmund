@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -82,9 +83,14 @@ public class OpenPgpSignatureFormat implements SignatureFormat {
 
     /**
      * Combines multiple OpenPGP signature files into a single output file
-     * by concatenating their armored blocks.
+     * by concatenating their armored blocks, each preserved as its tool wrote it.
+     * <p>
+     * The blocks are ordered by signature packet version — v4 before v6, the given order kept
+     * within a version, a block whose version cannot be read last — so that verifiers reading
+     * only the first block, Maven Central among them, see the classic signature whatever order
+     * the signatures were made in.
      *
-     * @param signatures the signature files to combine
+     * @param signatures the signature files to combine, one armored signature each
      * @param output the output file to write
      * @throws ToolExecutionException if files cannot be read or written
      */
@@ -92,8 +98,7 @@ public class OpenPgpSignatureFormat implements SignatureFormat {
     public void combine(List<Path> signatures, Path output) {
         try {
             var sb = new StringBuilder();
-            for (Path sig : signatures) {
-                String content = Files.readString(sig);
+            for (String content : classicFirst(signatures)) {
                 if (!sb.isEmpty()) {
                     sb.append('\n');
                 }
@@ -104,6 +109,20 @@ public class OpenPgpSignatureFormat implements SignatureFormat {
         } catch (IOException e) {
             throw new ToolExecutionException("Failed to combine OpenPGP signatures", e);
         }
+    }
+
+    private static List<String> classicFirst(List<Path> signatures) throws IOException {
+        List<String> contents = new ArrayList<>(signatures.size());
+        for (Path sig : signatures) {
+            contents.add(Files.readString(sig));
+        }
+        contents.sort(Comparator.comparingInt(OpenPgpSignatureFormat::orderingVersion));
+        return contents;
+    }
+
+    private static int orderingVersion(String armoredSignature) {
+        int version = AscCombiner.inspectSignaturePacket(armoredSignature).version();
+        return version > 0 ? version : Integer.MAX_VALUE;
     }
 
     private OpenPgpClaim parseBlock(String block) {

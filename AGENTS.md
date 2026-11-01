@@ -11,7 +11,7 @@ Sigmund is a Maven plugin and CLI for artifact signing, signature verification, 
 Where to look:
 
 - `docs/sigmund-verification-design-direction.md` — what verification is for and why (cited as §n)
-- `docs/sigmund-verification-roadmap.md` — what is done, what is next, and the decision log
+- `docs/sigmund-verification-roadmap.md` — what is next and in what order
 - `adr/` — decisions and the alternatives rejected
 - `docs/configuration.md` — the `sigmund.yaml` schema, published for editors as
   `core/src/main/resources/sigmund.schema.json`
@@ -42,8 +42,8 @@ wrapping to change after `mvn verify`.
 ## Working Rules
 
 - **No backward compatibility.** Sigmund has not been adopted. Replace types, config keys and
-  parameters outright — no aliases, deprecations or migration code. Design docs are edited in
-  place.
+  parameters outright — no aliases, deprecations or migration code. Design docs in `docs/` are
+  edited in place; ADRs are not (see [Architecture Decision Records](#architecture-decision-records)).
 - **Core uses repository concepts, never build-tool types.** Coordinates, layout and sidecar
   conventions are fine in `core`; Maven plugin API, project model, resolver session and Gradle
   API are not.
@@ -139,8 +139,28 @@ Rules the code relies on; breaking one is a defect even if tests pass.
 ## Design Process
 
 For non-trivial changes:
-1. Write or update an ADR in `adr/` for architectural decisions
+1. Write an ADR in `adr/` for an architectural decision; one that changes an accepted decision is a
+   new ADR
 2. Create a design spec capturing requirements and approach
 3. Break implementation into tasks with clear boundaries
 4. Each task should be independently testable
 5. Review against spec after implementation
+
+## Architecture Decision Records
+
+An ADR records one decision: what was decided, why, and what it was chosen over. How the system
+works today belongs in `docs/` and the javadoc, not in an ADR — an ADR that describes the code
+goes stale with every change, and the decision it holds gets lost among the description.
+
+- **Sections:** Status; Context — the problem and the forces at the time; Decision — stated so a
+  later ADR can amend or reverse it; Alternatives — each option rejected and why; Consequences —
+  what follows, costs included.
+- **Not in an ADR:** class or method listings, configuration reference, step-by-step flows,
+  lists of classes added or changed, test plans, follow-up task lists. Code or YAML appears only
+  when the decision is about a shape — an interface, a config key — and then only the part
+  decided.
+- **Status:** `Proposed`, `Accepted`, `Deferred` or `Superseded by ADR-n`, followed by one line
+  per later change, such as `Amended by ADR-n: <what changed>`.
+- **A proposed ADR is edited freely. An accepted one is not:** only its Status gains lines, and
+  factual slips — a typo, a broken link — are fixed in place. A change to an accepted decision is
+  a new ADR naming the ADR and the part it amends or supersedes.
