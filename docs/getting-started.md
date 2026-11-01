@@ -53,42 +53,53 @@ Signer: Alice Developer <alice@example.com>
      com.example:lib-a:1.0
      com.example:lib-b:2.0
 
-Signer: NOT VERIFIED
-   PGP4 (RSA): B2A3CF1E8D4F5A6B7C9D0E1F2A3B4C5D6E7F8A9B
-     com.other:tool:3.0
+Signer: Bob Maintainer (Code signing key) <bob@example.org>
+   PGP4 (RSA): BBE7232D7991050B54C8EA0ADC08637CA615D22C
+     org.example:parser:3.1
 
-Signer: UNKNOWN (key not in keyring)
-   PGP4 (DSA): D1031D14464180E0
-     com.internal:messaging:2.1
+Signer: Carol Release <carol@example.net>
+   PGP4 (ECDSA): 9C1F2E7D4B6A08355E3D21C7A9B04F6E12D83A57
+     net.example:tool:2.4
 
 UNSIGNED
-  com.internal:util:1.0
+  com.example:internal-util:1.0
 
-Summary: All clear: 4 dependencies, 3 PGP4 signature(s), 0 PGP6 signature(s), 2 unique key(s)
+Summary: All clear: 5 dependencies, 4 PGP4 signature(s), 3 unique key(s)
+PQ coverage: 0/5 dependencies have a post-quantum signature
 ```
 
 The output groups artifacts by signer. Each signer shows their name and email (if known) and key fingerprints. Classical v4 signatures (RSA, EdDSA) and post-quantum v6 signatures (ML-DSA) are reported separately. Unsigned artifacts appear in their own section. When the `sigmund-sigstore` module is on the classpath, `.sigstore.json` bundles are also resolved and verified — Sigstore signers appear with their OIDC identity (email or workflow URI) instead of a PGP fingerprint.
 
 Sigmund fetches unknown keys from `keys.openpgp.org` by default to resolve signer identities. The fetched keys are only kept in memory for the duration of the build and are not persisted to disk.
 
-### Why Many Signers Appear as NOT VERIFIED
+### Why Some Signers Appear as UNKNOWN
 
-You'll notice that many signers show as `NOT VERIFIED` rather than with a name and email. This is expected and is a consequence of how `keys.openpgp.org` — Sigmund's default keyserver — works.
+In most projects some signers appear like this:
 
-Unlike older keyservers, `keys.openpgp.org` is a **verifying keyserver**: it only publishes a key's user ID (the name and email) after the key owner confirms their email address through a verification link. Keys whose owners haven't completed this step are served without user IDs — Sigmund gets the key material (enough for signature verification) but not the identity information, so the signer is reported as `NOT VERIFIED`.
+```
+Signer: UNKNOWN (key unavailable)
+   PGP4 (RSA): C7BE5BCC9FEC15518CFDA882B0F3710FA64900E7 (key unavailable: the copy from hkps://keys.openpgp.org carries no self-signature binding the key)
+     com.google.code.gson:gson:2.11.0
+```
 
-This is why `keys.openpgp.org` is the default rather than alternatives like `keyserver.ubuntu.com` or the legacy SKS pool. Those servers accept key uploads from anyone without any identity verification, which means anyone can upload a key claiming to be `Alice Developer <alice@example.com>`. The `keys.openpgp.org` model trades convenience for integrity: fewer names are visible, but the names you do see are backed by verified email ownership.
+Sigmund found no usable copy of the signing key, so it could not check the signature. The reason in parentheses says why:
 
-### Resolving More Signer Names
+- **`the copy from hkps://keys.openpgp.org carries no self-signature binding the key`** — the most common case. `keys.openpgp.org` is a **verifying keyserver**: it publishes a key's user IDs (name and email) only after the key's owner confirms the address through a verification link, and until then serves the key without them. Older keys carry their self-signatures — the signatures by which a key states what it may be used for — only on those user IDs, so the copy served cannot be used to check anything.
+- **`no local key store or configured keyserver has it`** — the key is not published where Sigmund looked.
+- **`the signature names only a key ID, which is not looked up on keyservers`** — the signature carries a short key ID rather than a full fingerprint, and Sigmund fetches keys by fingerprint.
 
-To resolve more signer names, you can add additional keyservers such as `keyserver.ubuntu.com` and `pgp.mit.edu`:
+`keys.openpgp.org` is the default because the names it does publish are backed by a verified email address. Keyservers such as `keyserver.ubuntu.com` accept uploads from anyone, so anyone can upload a key claiming to be `Alice Developer <alice@example.com>`.
+
+### Resolving More Keys
+
+Which keyservers to ask is your choice: each one learns which keys your build looks up. To resolve more keys, add a keyserver such as `keyserver.ubuntu.com`:
 
 ```bash
 mvn sigmund:dependency-signers \
-  -Dsigmund.keyservers=hkps://keys.openpgp.org,hkps://keyserver.ubuntu.com,hkps://pgp.mit.edu
+  -Dsigmund.keyservers=hkps://keys.openpgp.org,hkps://keyserver.ubuntu.com
 ```
 
-With these additional keyservers, most signers will now show names and emails — including those previously listed as `NOT VERIFIED` or `UNKNOWN (key not in keyring)`.
+Keys it serves with their user IDs become usable, and their signers show a name and email. A key you hold in GnuPG's or Sequoia's own store (`gpg --import`, `sq cert import`) is used too.
 
 **Important:** The names and emails returned by keyservers other than `keys.openpgp.org` are **not verified**. Anyone can upload a key to those servers claiming any identity. Treat these as hints for investigation, not proof of who signed an artifact. Trust decisions in `sigmund.yaml` should be based on key fingerprints, not on self-reported names.
 

@@ -66,6 +66,7 @@ class ClaimResultTest {
 
             assertThat(claimResult.outcome()).isEqualTo(ClaimOutcome.INDETERMINATE);
             assertThat(claimResult.reason()).isEqualTo(IndeterminateReason.KEY_UNAVAILABLE);
+            assertThat(claimResult.reasonDetail()).isNull();
             assertThat(claimResult.attesterCredentials()).isEmpty();
         }
 
@@ -83,8 +84,29 @@ class ClaimResultTest {
         }
     }
 
+    @Test
+    void anIndeterminateClaimKeepsTheToolsDetail() {
+        OpenPgpClaim claim = new OpenPgpClaim("armored", 4, FP, 1, null);
+        VerifyResult result = OpenPgpVerifyResult.indeterminate(
+                IndeterminateReason.KEY_UNAVAILABLE, null, "RSA", 4, FP, FP).withReasonDetail("no keyserver has it");
+
+        ClaimResult claimResult = ClaimResult.of(claim, "openpgp", result, List.of(), REF,
+                TrustRootRef.unknown(), "bc", Instant.now());
+
+        assertThat(claimResult.reasonDetail()).isEqualTo("no keyserver has it");
+        assertThat(claimResult.unresolved(IndeterminateReason.KEY_UNAVAILABLE).reasonDetail()).isNull();
+    }
+
     @Nested
     class Invariants {
+
+        @Test
+        void aDetailNeedsAReasonToExplain() {
+            assertThatThrownBy(() -> new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null,
+                    List.of(), null, TrustRootRef.unknown(), REF, null,
+                    ClaimTimeSource.SIGNER, Instant.EPOCH, "RSA", "bc", null, "no keyserver has it"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
 
         @Test
         void evidenceIsRequired() {

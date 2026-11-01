@@ -293,21 +293,22 @@ Signer: Alice Developer <alice@example.com>
      com.example:lib-a:1.0
      com.example:lib-b:2.0
 
-Signer: NOT VERIFIED
-   PGP4 (RSA): B2A3CF1E8D4F5A6B7C9D0E1F2A3B4C5D6E7F8A9B
-     com.other:tool:3.0
+Signer: Bob Maintainer (Code signing key) <bob@example.org>
+   PGP4 (RSA): BBE7232D7991050B54C8EA0ADC08637CA615D22C
+     org.example:parser:3.1
 
-Signer: UNKNOWN (key not in keyring)
-   PGP4 (DSA): D1031D14464180E0
-     com.internal:messaging:2.1
+Signer: Carol Release <carol@example.net>
+   PGP4 (ECDSA): 9C1F2E7D4B6A08355E3D21C7A9B04F6E12D83A57
+     net.example:tool:2.4
 
 UNSIGNED
-  com.internal:util:1.0
+  com.example:internal-util:1.0
 
-Summary: All clear: 4 dependencies, 3 PGP4 signature(s), 0 PQC signature(s), 2 unique key(s)
+Summary: All clear: 5 dependencies, 4 PGP4 signature(s), 3 unique key(s)
+PQ coverage: 0/5 dependencies have a post-quantum signature
 ```
 
-Many signers appear as `NOT VERIFIED` because the default keyserver (`keys.openpgp.org`) only publishes identity information for keys whose owners have verified their email. See [Why Many Signers Appear as NOT VERIFIED](getting-started.md#why-many-signers-appear-as-not-verified) for details and how to resolve more names using additional keyservers.
+Signers whose key Sigmund could not use appear as `UNKNOWN (key unavailable)`, with the reason on the key line. See [Why Some Signers Appear as UNKNOWN](getting-started.md#why-some-signers-appear-as-unknown) for what each reason means and how to resolve more keys.
 
 **Generating a trust config:**
 

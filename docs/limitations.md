@@ -11,6 +11,7 @@ This page documents known limitations, ecosystem maturity notes, and caveats for
 - [GPG exit code 2 for hybrid .asc files](#gpg-exit-code-2-for-hybrid-asc-files)
 - [Sequoia verdicts are read from its report text](#sequoia-verdicts-are-read-from-its-report-text)
 - [GnuPG does not honour revocation reasons](#gnupg-does-not-honour-revocation-reasons)
+- [BC cannot use a user ID that is not UTF-8](#bc-cannot-use-a-user-id-that-is-not-utf-8)
 - [Key passphrase protection caveats](#key-passphrase-protection-caveats)
   - [BC keys: decrypted material on the Java heap](#bc-keys-decrypted-material-on-the-java-heap)
 - [PQC ecosystem maturity](#pqc-ecosystem-maturity)
@@ -74,6 +75,17 @@ treats every such signature as `FAILED` when GnuPG answers — including a signa
 a key was retired, which the other backends verify. GnuPG is stricter, never more lenient, than
 the others here. Reading the revocation details from GnuPG's key listing is part of roadmap task
 P4.7.
+
+## BC cannot use a user ID that is not UTF-8
+
+Some older keys carry a user ID in another encoding — gson's release key, which signs
+`com.google.code.gson:gson`, is one. Its self-signature is valid, and GnuPG and Sequoia verify
+signatures by such a key. Bouncy Castle's certificate API drops a user ID it cannot decode, so to
+BC the key is not bound, and BC reports `INDETERMINATE` with `KEY_UNAVAILABLE` where the other
+backends report `VERIFIED`. It is never reported as `FAILED`
+([ADR-009](../adr/009-an-unbound-key-is-never-failed.md)). When `sq` or `gpg` holds the key in its
+own store (`sq cert import`, `gpg --import`), verification falls through to it and the signature
+verifies; a key Sigmund fetches from a keyserver reaches only BC.
 
 ## Key passphrase protection caveats
 

@@ -118,7 +118,11 @@ public class SignatureVerificationReport {
     private void formatResult(StringBuilder sb, VerifyResult r) {
         sb.append(r.outcome());
         if (r.reason() != null) {
-            sb.append(" [").append(r.reason()).append(']');
+            sb.append(" [").append(r.reason());
+            if (r.reasonDetail() != null) {
+                sb.append(": ").append(r.reasonDetail());
+            }
+            sb.append(']');
         }
         if (r.algorithm() != null) {
             sb.append(" (").append(r.algorithm()).append(')');

@@ -11,7 +11,9 @@ import java.nio.file.Path;
 import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -381,6 +383,97 @@ class BcRunnerTest {
 
         private Path artifact() {
             return dir.resolve("artifact.txt");
+        }
+    }
+
+    /**
+     * One reason, {@code KEY_UNAVAILABLE}, covers keys an operator resolves differently; the
+     * detail says which, so a report can tell a key nobody publishes from one served without
+     * the self-signature that binds it.
+     */
+    @Nested
+    class UnavailableKeyDetail {
+
+        @TempDir
+        Path dir;
+
+        @Test
+        void aKeyNoStoreHasWithFetchingOffSaysSo() throws Exception {
+            Signed signed = sign();
+            BcRunner verifier = new BcRunner(emptyStore(), null, null);
+
+            OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), signed.claim());
+
+            assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+            assertThat(result.reasonDetail()).isEqualTo("no local key store has it, and key fetching is off");
+        }
+
+        @Test
+        void aSignatureNamingOnlyAKeyIdSaysItIsNotLookedUp() throws Exception {
+            Signed signed = sign();
+            OpenPgpClaim keyIdOnly = new OpenPgpClaim(signed.claim().armoredBlock(),
+                    signed.claim().packetVersion(), null, signed.claim().algorithmId(), null);
+            BcRunner verifier = new BcRunner(emptyStore(), null, null);
+
+            OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), keyIdOnly);
+
+            assertThat(result.reasonDetail())
+                    .isEqualTo("the signature names only a key ID, which is not looked up on keyservers");
+        }
+
+        @Test
+        void aCopyWithoutSelfSignaturesNamesWhereItCameFrom() throws Exception {
+            Signed signed = sign();
+            BcKeyStore store = emptyStore();
+            store.addFetched(withoutSelfSignatures(signed.store().findPublicKey(signed.fingerprint()).ring()),
+                    "hkps://keys.example.org");
+            BcRunner verifier = new BcRunner(store, null, null);
+
+            OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), signed.claim());
+
+            assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+            assertThat(result.reasonDetail())
+                    .isEqualTo("the copy from hkps://keys.example.org carries no self-signature binding the key");
+        }
+
+        private record Signed(BcKeyStore store, String fingerprint, Path artifact, OpenPgpClaim claim) {
+        }
+
+        private Signed sign() throws IOException {
+            BcKeyStore store = new BcKeyStore(null, dir.resolve("signer-cert-d"), dir.resolve("signer-bc"));
+            String fingerprint = new BcRunner(store, null, null).generateKey("Signer <signer@example.com>",
+                    "ed25519", null);
+            Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+            Path signature = dir.resolve("artifact.txt.asc");
+            SigningTests.signWithOnlyKey(new BcRunner(store, fingerprint, null), artifact, signature);
+            OpenPgpClaim claim = (OpenPgpClaim) new OpenPgpSignatureFormat()
+                    .parse(Evidence.read(signature, Evidence.SOURCE_SIDECAR)).get(0);
+            return new Signed(store, fingerprint, artifact, claim);
+        }
+
+        private BcKeyStore emptyStore() {
+            return new BcKeyStore(null, dir.resolve("verifier-cert-d"), dir.resolve("verifier-bc"));
+        }
+
+        /**
+         * The certificate with no self-signature on its primary key: its user IDs removed, as
+         * keys.openpgp.org serves a key whose owner never verified an address, and its direct-key
+         * signature too, which keys generated before RFC 9580 lack.
+         */
+        private PGPPublicKeyRing withoutSelfSignatures(PGPPublicKeyRing ring) {
+            List<PGPPublicKey> keys = new ArrayList<>();
+            ring.getPublicKeys().forEachRemaining(keys::add);
+            PGPPublicKey primary = keys.get(0);
+            Iterator<byte[]> ids = primary.getRawUserIDs();
+            while (ids.hasNext()) {
+                primary = PGPPublicKey.removeCertification(primary, ids.next());
+            }
+            Iterator<PGPSignature> directKey = primary.getSignaturesOfType(PGPSignature.DIRECT_KEY);
+            while (directKey.hasNext()) {
+                primary = PGPPublicKey.removeCertification(primary, directKey.next());
+            }
+            keys.set(0, primary);
+            return new PGPPublicKeyRing(keys);
         }
     }
 

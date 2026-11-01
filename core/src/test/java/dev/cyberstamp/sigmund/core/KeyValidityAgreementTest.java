@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPairGenerator;
@@ -117,6 +119,51 @@ class KeyValidityAgreementTest {
         assertThat(outcomes(publicRing(key), artifact, claim)).isEqualTo(everywhere("FAILED"));
     }
 
+    /**
+     * A user ID that is not valid UTF-8 — as older keys carry, gson's release key among them —
+     * certified correctly over its raw bytes. GnuPG and Sequoia verify with it; Bouncy Castle's
+     * certificate API drops a user ID it cannot decode, so the key is not one BC will use. That
+     * is {@code INDETERMINATE}, never the attack signal, since the certification verifies.
+     */
+    @Test
+    void aUserIdThatIsNotUtf8IsVerifiedByGpgAndSqAndNotUsedByBc() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact);
+        byte[] latin1UserId = "\u00c9amonn <eamonn@example.org>".getBytes(StandardCharsets.ISO_8859_1);
+
+        PGPPublicKeyRing cert = withUserId(key, latin1UserId, certifyRaw(key, latin1UserId));
+
+        Map<String, VerifyResult> answers = answers(cert, artifact, claim);
+        Map<String, String> expected = everywhere("VERIFIED");
+        expected.put("bc", "INDETERMINATE(" + IndeterminateReason.KEY_UNAVAILABLE + ")");
+        assertThat(outcomes(answers)).isEqualTo(expected);
+        assertThat(answers.get("bc").reasonDetail())
+                .isEqualTo("its user ID is not valid UTF-8, which Bouncy Castle cannot read");
+    }
+
+    /**
+     * A certification by the primary key that does not verify over the user ID it is attached
+     * to: the certificate was altered by someone without the primary key. The signature itself
+     * was made by the key, and a user ID is never a credential, so the alteration gains nothing:
+     * every backend refuses the key rather than reporting an attack (ADR-009).
+     */
+    @Test
+    void aUserIdCertificationThatDoesNotVerifyIsAKeyThatIsNotAvailableEverywhere() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact);
+        byte[] certified = "Release Signer <release@example.org>".getBytes(StandardCharsets.UTF_8);
+        byte[] shown = "Mallory <mallory@example.org>".getBytes(StandardCharsets.UTF_8);
+
+        PGPPublicKeyRing cert = withUserId(key, shown, certifyRaw(key, certified));
+
+        Map<String, VerifyResult> answers = answers(cert, artifact, claim);
+        assertThat(outcomes(answers))
+                .isEqualTo(everywhere("INDETERMINATE(" + IndeterminateReason.KEY_UNAVAILABLE + ")"));
+        assertThat(answers.get("bc").reasonDetail()).isEqualTo("its self-signatures do not bind it");
+    }
+
     private static Map<String, String> everywhere(String outcome) {
         Map<String, String> expected = new LinkedHashMap<>();
         expected.put("bc", outcome);
@@ -128,8 +175,12 @@ class KeyValidityAgreementTest {
     /** Each backend's outcome, with its reason where there is one, so a report shows all three. */
     private Map<String, String> outcomes(PGPPublicKeyRing cert, Path artifact, OpenPgpClaim claim)
             throws Exception {
+        return outcomes(answers(cert, artifact, claim));
+    }
+
+    private static Map<String, String> outcomes(Map<String, VerifyResult> answers) {
         Map<String, String> outcomes = new LinkedHashMap<>();
-        answers(cert, artifact, claim).forEach((backend, result) -> outcomes.put(backend,
+        answers.forEach((backend, result) -> outcomes.put(backend,
                 result.reason() == null
                         ? result.outcome().name()
                         : result.outcome() + "(" + result.reason() + ")"));
@@ -180,6 +231,39 @@ class KeyValidityAgreementTest {
                 new JcaPGPContentSignerBuilder(PublicKeyAlgorithmTags.RSA_GENERAL, certificationHash),
                 new JcePBESecretKeyEncryptorBuilder(0).build(null))
                 .generateSecretKeyRing();
+    }
+
+    /** The key's certificate with its user IDs replaced by one user ID and the given certification. */
+    private static PGPPublicKeyRing withUserId(PGPSecretKeyRing key, byte[] userId, PGPSignature certification) {
+        PGPPublicKey stripped = withoutUserIds(publicRing(key)).getPublicKey();
+        return new PGPPublicKeyRing(List.of(PGPPublicKey.addCertification(stripped, userId, certification)));
+    }
+
+    /**
+     * A positive certification of the given user ID bytes, hashed as RFC 4880 §5.2.4 specifies,
+     * since Bouncy Castle's generator only certifies a user ID given as text, which it encodes
+     * as UTF-8.
+     */
+    private static PGPSignature certifyRaw(PGPSecretKeyRing key, byte[] userId) throws Exception {
+        PGPSecretKey secret = key.getSecretKey();
+        PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                new JcaPGPContentSignerBuilder(PublicKeyAlgorithmTags.RSA_GENERAL, HashAlgorithmTags.SHA256),
+                secret.getPublicKey());
+        generator.init(PGPSignature.POSITIVE_CERTIFICATION, secret.extractPrivateKey(null));
+        PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+        hashed.setSignatureCreationTime(true, Date.from(Instant.now().minus(DAY).plusSeconds(60)));
+        hashed.setKeyFlags(false, KeyFlags.CERTIFY_OTHER | KeyFlags.SIGN_DATA);
+        hashed.setIssuerFingerprint(false, secret.getPublicKey());
+        generator.setHashedSubpackets(hashed.generate());
+        byte[] keyBody = secret.getPublicKey().getPublicKeyPacket().getEncodedContents();
+        generator.update((byte) 0x99);
+        generator.update((byte) (keyBody.length >> 8));
+        generator.update((byte) keyBody.length);
+        generator.update(keyBody);
+        generator.update((byte) 0xB4);
+        generator.update(ByteBuffer.allocate(4).putInt(userId.length).array());
+        generator.update(userId);
+        return generator.generate();
     }
 
     private static PGPPublicKeyRing publicRing(PGPSecretKeyRing secret) {
