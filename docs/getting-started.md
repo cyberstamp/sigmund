@@ -18,7 +18,7 @@ Sigmund requires:
 - **JDK 17 or later** — Check with `java -version`
 - **Maven 3.9 or later** — Check with `mvn -version`
 
-No external tools are required for this walkthrough. Sigmund includes a pure-Java Bouncy Castle backend that handles classic OpenPGP signature verification without needing `gpg` or `sq` installed. Sigstore bundle (`.sigstore.json`) verification is also available when the `sigmund-sigstore` module is on the classpath — see [Signing with Sigstore](signing.md#signing-with-sigstore) for setup.
+No external tools are required for this walkthrough. Sigmund includes a pure-Java Bouncy Castle backend that handles classic OpenPGP signature verification without needing `gpg` or `sq` installed. Sigstore bundle (`.sigstore.json`) verification is also available when you add `sigmund-sigstore` as a plugin dependency — see [Enabling Sigstore Support](maven-plugin.md#enabling-sigstore-support).
 
 > **Note:** The examples in this guide use the `sigmund` plugin prefix (e.g., `mvn sigmund:dependency-signers`). This requires adding the plugin to your project's `pluginManagement`:
 >
@@ -68,7 +68,7 @@ Summary: All clear: 5 dependencies, 4 PGP4 signature(s), 3 unique key(s)
 PQ coverage: 0/5 dependencies have a post-quantum signature
 ```
 
-The output groups artifacts by signer. Each signer shows their name and email (if known) and key fingerprints. Classical v4 signatures (RSA, EdDSA) and post-quantum v6 signatures (ML-DSA) are reported separately. Unsigned artifacts appear in their own section. When the `sigmund-sigstore` module is on the classpath, `.sigstore.json` bundles are also resolved and verified — Sigstore signers appear with their OIDC identity (email or workflow URI) instead of a PGP fingerprint.
+The output groups artifacts by signer. Each signer shows their name and email (if known) and key fingerprints. Classical v4 signatures (RSA, EdDSA) and post-quantum v6 signatures (ML-DSA) are reported separately. Unsigned artifacts appear in their own section. When you add `sigmund-sigstore` as a plugin dependency ([Enabling Sigstore Support](maven-plugin.md#enabling-sigstore-support)), `.sigstore.json` bundles are also resolved and verified — Sigstore signers appear with their OIDC identity (email or workflow URI) instead of a PGP fingerprint.
 
 Sigmund fetches unknown keys from `keys.openpgp.org` by default to resolve signer identities. The fetched keys are only kept in memory for the duration of the build and are not persisted to disk.
 
@@ -162,7 +162,7 @@ mvn sigmund:verify
 
 ```
 [INFO] SATISFIED (2)
-[INFO]   openpgp VERIFIED by bc (Ed25519) - Alice Developer <alice@example.com>
+[INFO]   openpgp VERIFIED by bc (EdDSA) - Alice Developer <alice@example.com>
 [INFO]     com.example:lib-a:1.0
 [INFO]     com.example:lib-b:2.0
 [INFO]

@@ -670,6 +670,32 @@ class DependencySignersMojoTest {
             return RulePolicy.compile(config.trustPolicySpec(), config.signers());
         }
 
+        /**
+         * The everyday update: a dependency added later, signed by a publisher the policy already
+         * names, needs a rule of its own requiring that signer — not a second definition of it.
+         */
+        @Test
+        void aNewArtifactSignedByAKnownSignerGetsARequirementOnThatSigner(@TempDir Path dir)
+                throws Exception {
+            Path file = configWith(dir, """
+                    signers:
+                      alice:
+                        pgp4: "%s"
+                    rules:
+                      - match: com.example:lib
+                        requires: alice
+                    """.formatted(FULL_FP));
+
+            TrustPolicy policy = update(file, signedBy(lib, FULL_FP), signedBy(util, FULL_FP));
+
+            assertThat(policy.matchRule(util)).as("a rule for the new artifact").isNotNull();
+            assertThat(policy.matchRule(util).requirement().clauses())
+                    .flatExtracting(clause -> clause.signers())
+                    .extracting(signer -> signer.id())
+                    .containsExactly("alice");
+            assertThat(SigmundConfig.parse(file).signers().names()).containsExactly("alice");
+        }
+
         @Test
         void aCatchAllDoesNotHideANewlySignedModule(@TempDir Path dir) throws Exception {
             Path file = configWith(dir, """

@@ -1048,20 +1048,20 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
      * Removes signers that proved no usable credential — only a key ID, or only a user ID —
      * from the trust mappings, so the generated config never names a signer it does not
      * define. Their artifacts are left without a mapping and are reported as not configured.
+     * A signer an update reuses from the config is not among them and stays mapped.
      */
     private void dropSignersWithoutCredentials(List<Map<String, Set<String>>> artifactSignerMaps,
             Map<String, SignerInfo> signersByKey) {
-        Set<String> usable = new HashSet<>();
+        Set<String> unusable = new HashSet<>();
         for (SignerInfo info : signersByKey.values()) {
-            if (info.hasCredentials()) {
-                usable.add(info.id);
-            } else {
+            if (!info.hasCredentials()) {
+                unusable.add(info.id);
                 getLog().warn("Signer " + info.id + " proved no full fingerprint or verified "
                         + "identity and is left out of the config");
             }
         }
         for (Map<String, Set<String>> artifactSigners : artifactSignerMaps) {
-            artifactSigners.values().forEach(ids -> ids.retainAll(usable));
+            artifactSigners.values().forEach(ids -> ids.removeAll(unusable));
             artifactSigners.values().removeIf(Set::isEmpty);
         }
     }
