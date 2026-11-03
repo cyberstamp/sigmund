@@ -3,12 +3,8 @@ package dev.cyberstamp.sigmund.cli;
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.SignatureVerificationReport;
-import dev.cyberstamp.sigmund.core.ToolConfig;
-import dev.cyberstamp.sigmund.core.ToolsConfig;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 
@@ -52,19 +48,7 @@ public class VerifySignatureCommand implements Callable<Integer> {
                     .config(config);
 
             if (sqHomeMixin.hasExplicitHome()) {
-                ToolsConfig tc = config.toolsConfig();
-                Map<String, ToolConfig> merged = new HashMap<>();
-                for (String name : tc.toolNames()) {
-                    merged.put(name, tc.get(name));
-                }
-                Map<String, String> sqSettings = new HashMap<>();
-                ToolConfig existingSq = tc.get("sq");
-                if (existingSq != null) {
-                    sqSettings.putAll(existingSq.settings());
-                }
-                sqSettings.put("home", sqHomeMixin.resolveSequoiaHome().toString());
-                merged.put("sq", new ToolConfig(sqSettings));
-                builder.toolsConfig(new ToolsConfig(merged));
+                builder.toolsConfig(sqHomeMixin.applyTo(config.toolsConfig()));
             }
 
             try (Sigmund sigmund = builder.build()) {

@@ -353,7 +353,7 @@
                                     <executable>bash</executable>
                                     <arguments>
                                         <argument>-c</argument>
-                                        <argument>echo '${project.version}' | grep -q SNAPSHOT || find ${project.basedir}/README.md ${project.basedir}/docs -name '*.md' -exec sed -i -e '/&lt;artifactId&gt;sigmund-maven-plugin&lt;\/artifactId&gt;/{n;s/&lt;version&gt;[^&lt;]*&lt;\/version&gt;/&lt;version&gt;${project.version}&lt;\/version&gt;/}' -e 's/sigmund-maven-plugin:[^:]*:/sigmund-maven-plugin:${project.version}:/g' -e 's/^\*\*Version:\*\* .*/\*\*Version:\*\* ${project.version}/' {} +</argument>
+                                        <argument>echo '${project.version}' | grep -q SNAPSHOT || find ${project.basedir}/README.md ${project.basedir}/docs -name '*.md' -exec sed -i -e '/&lt;artifactId&gt;sigmund-[a-z-]*&lt;\/artifactId&gt;/{n;s/&lt;version&gt;[0-9][^&lt;]*&lt;\/version&gt;/&lt;version&gt;${project.version}&lt;\/version&gt;/}' -e 's/&lt;sigmund\.version&gt;[^&lt;]*&lt;\/sigmund\.version&gt;/&lt;sigmund.version&gt;${project.version}&lt;\/sigmund.version&gt;/g' -e 's/sigmund-maven-plugin:[^:]*:/sigmund-maven-plugin:${project.version}:/g' -e 's/^\*\*Version:\*\* .*/\*\*Version:\*\* ${project.version}/' {} +</argument>
                                     </arguments>
                                 </configuration>
                             </execution>

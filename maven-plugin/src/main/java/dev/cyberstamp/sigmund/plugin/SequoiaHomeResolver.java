@@ -1,6 +1,5 @@
 package dev.cyberstamp.sigmund.plugin;
 
-import dev.cyberstamp.sigmund.core.ToolConfig;
 import dev.cyberstamp.sigmund.core.ToolsConfig;
 import java.io.File;
 import java.util.Map;
@@ -33,10 +32,8 @@ final class SequoiaHomeResolver {
      * @return tool configuration with sq home override, or empty if sqHome is null
      */
     static ToolsConfig toolsConfigOverrides(File sqHome) {
-        if (sqHome == null) {
-            return ToolsConfig.EMPTY;
-        }
-        return new ToolsConfig(Map.of("sq",
-                new ToolConfig(Map.of("home", sqHome.toPath().toString()))));
+        return sqHome == null
+                ? ToolsConfig.EMPTY
+                : ToolsConfig.EMPTY.withSettings("sq", Map.of("home", sqHome.toPath().toString()));
     }
 }

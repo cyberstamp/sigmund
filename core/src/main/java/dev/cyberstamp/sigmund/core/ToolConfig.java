@@ -1,5 +1,7 @@
 package dev.cyberstamp.sigmund.core;
 
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
@@ -32,5 +34,24 @@ public record ToolConfig(Map<String, String> settings, Set<String> lists) {
      */
     public ToolConfig(Map<String, String> settings) {
         this(settings, Set.of());
+    }
+
+    /**
+     * Returns a copy with the given single-valued settings added or replacing those written.
+     *
+     * <p>
+     * Settings the overrides leave alone keep their shape: a list stays a list, so a command-line
+     * override of a tool's home does not turn its list of signing fingerprints into one value
+     * holding several.
+     *
+     * @param overrides the settings to set, each a single value
+     * @return the copy
+     */
+    public ToolConfig withSettings(Map<String, String> overrides) {
+        Map<String, String> merged = new HashMap<>(settings);
+        merged.putAll(overrides);
+        Set<String> stillLists = new HashSet<>(lists);
+        stillLists.removeAll(overrides.keySet());
+        return new ToolConfig(merged, stillLists);
     }
 }

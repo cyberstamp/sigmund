@@ -3,6 +3,7 @@ package dev.cyberstamp.sigmund.plugin;
 import dev.cyberstamp.sigmund.core.ClaimOutcome;
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SignatureVerificationReport;
+import dev.cyberstamp.sigmund.core.ToolsConfig;
 import dev.cyberstamp.sigmund.core.VerificationConfig;
 import java.io.File;
 import java.util.Map;
@@ -65,7 +66,7 @@ public class VerifySignatureMojo extends AbstractSigmundMojo {
         try {
             return buildSigmund(
                     new VerificationConfig(true, false, null, null),
-                    mergeToolOverrides(SequoiaHomeResolver.toolsConfigOverrides(sqHome)));
+                    mergeToolOverrides(ToolsConfig.EMPTY));
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to create verifier", e);
         }

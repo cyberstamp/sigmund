@@ -487,13 +487,17 @@ See the [configuration guide](configuration.md) for all Sigstore tool settings (
 
 ### Maven Plugin Setup
 
-Add `sigmund-sigstore` as a plugin dependency to enable the Sigstore backend:
+Add `sigmund-sigstore` as a plugin dependency to enable the Sigstore backend, at the plugin's own version — one property keeps the two in step:
 
 ```xml
+<properties>
+  <sigmund.version>0.0.2</sigmund.version>
+</properties>
+
 <plugin>
   <groupId>dev.cyberstamp.sigmund</groupId>
   <artifactId>sigmund-maven-plugin</artifactId>
-  <version>0.0.2</version>
+  <version>${sigmund.version}</version>
   <dependencies>
     <dependency>
       <groupId>dev.cyberstamp.sigmund</groupId>
@@ -608,7 +612,7 @@ While types are requested, a key whose type cannot be read — an unparseable `t
 tool 'bc': the credential type of signing key key.tsk cannot be read, and the run requests credential types [pgp4]
 ```
 
-Use `sigmund:signer-info` (Maven) or `sigmund signer-info` (CLI) to see which tools and keys are active:
+Sign with a profile by naming it — `mvn sigmund:sign -Dsigmund.profile=classic`, or `sigmund sign --file <file> --profile classic` — and preview what it signs with `signer-info`, which takes the same option:
 
 ```bash
 mvn sigmund:signer-info
