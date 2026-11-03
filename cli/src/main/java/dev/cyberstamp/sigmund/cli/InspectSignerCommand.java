@@ -6,12 +6,9 @@ import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.SignerInspectionReport;
 import dev.cyberstamp.sigmund.core.SignerInspectionReportFormatter;
-import dev.cyberstamp.sigmund.core.ToolConfig;
 import dev.cyberstamp.sigmund.core.ToolsConfig;
 import dev.cyberstamp.sigmund.core.VerificationConfig;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
@@ -119,7 +116,7 @@ public class InspectSignerCommand implements Callable<Integer> {
                 effectiveResolve, fileVerification.importToKeyring(),
                 effectiveServers, fileVerification.toolchain());
 
-        ToolsConfig toolsConfig = mergeSquoiaHome(fileTools);
+        ToolsConfig toolsConfig = sqHomeMixin.applyTo(fileTools);
 
         return Sigmund.builder()
                 .verificationConfig(verificationConfig)
@@ -139,19 +136,4 @@ public class InspectSignerCommand implements Callable<Integer> {
         }
     }
 
-    /**
-     * Merges Sequoia home override into the tools config if specified.
-     */
-    private ToolsConfig mergeSquoiaHome(ToolsConfig base) {
-        if (sqHomeMixin.resolveSequoiaHome() == null) {
-            return base;
-        }
-        Map<String, ToolConfig> merged = new HashMap<>();
-        for (String name : base.toolNames()) {
-            merged.put(name, base.get(name));
-        }
-        merged.put("sq", new ToolConfig(
-                Map.of("home", sqHomeMixin.resolveSequoiaHome().toString())));
-        return new ToolsConfig(merged);
-    }
 }

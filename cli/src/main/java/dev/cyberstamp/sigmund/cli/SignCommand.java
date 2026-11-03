@@ -11,7 +11,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 
-@CommandLine.Command(name = "sign", description = "Create a hybrid signature combining GPG and PQC", mixinStandardHelpOptions = true)
+@CommandLine.Command(name = "sign", description = "Sign an artifact with the keys of the configured signing tools", mixinStandardHelpOptions = true)
 public class SignCommand implements Callable<Integer> {
 
     @CommandLine.Option(names = { "--file" }, required = true, description = "Artifact file to sign")
@@ -22,6 +22,10 @@ public class SignCommand implements Callable<Integer> {
 
     @CommandLine.Mixin
     private ConfigMixin configMixin;
+
+    @CommandLine.Option(names = {
+            "--profile" }, description = "Signing profile whose credential types choose the keys that sign (default: signing.credential-types, else every key)")
+    private String profile;
 
     @CommandLine.Option(names = {
             "--output" }, description = "Output signature file path (only valid when signing produces a single file)")
@@ -38,7 +42,7 @@ public class SignCommand implements Callable<Integer> {
                 if (outputDir == null) {
                     outputDir = Path.of(".");
                 }
-                SigningOutput result = sigmund.signer().sign(artifactFile, outputDir);
+                SigningOutput result = SigningSupport.signer(sigmund, profile).sign(artifactFile, outputDir);
 
                 if (output != null && !output.isEmpty()) {
                     return handleExplicitOutput(result);

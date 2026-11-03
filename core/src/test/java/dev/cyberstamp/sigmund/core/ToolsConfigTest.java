@@ -3,6 +3,7 @@ package dev.cyberstamp.sigmund.core;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ToolsConfigTest {
@@ -48,5 +49,28 @@ class ToolsConfigTest {
         var tc = new ToolsConfig(null);
         assertThat(tc.isEmpty()).isTrue();
         assertThat(tc.size()).isEqualTo(0);
+    }
+
+    @Test
+    void anOverrideKeepsTheToolsOtherSettingsAndTheirShape() {
+        var written = new ToolsConfig(Map.of(
+                "sq", new ToolConfig(Map.of("home", "/from/file", "signing-fingerprint", "AAAA,BBBB"),
+                        Set.of("signing-fingerprint")),
+                "bc", new ToolConfig(Map.of("cipher-suite", "ed25519"))));
+
+        ToolsConfig merged = written.withSettings("sq", Map.of("home", "/from/command-line"));
+
+        assertThat(merged.get("sq").settings()).containsEntry("home", "/from/command-line")
+                .containsEntry("signing-fingerprint", "AAAA,BBBB");
+        assertThat(merged.get("sq").lists()).containsExactly("signing-fingerprint");
+        assertThat(merged.get("bc")).isEqualTo(written.get("bc"));
+        assertThat(written.get("sq").settings()).containsEntry("home", "/from/file");
+    }
+
+    @Test
+    void anOverrideForAToolTheFileDoesNotConfigureIsItsOnlySetting() {
+        ToolsConfig merged = ToolsConfig.EMPTY.withSettings("gpg", Map.of("home", "/gpg"));
+
+        assertThat(merged.get("gpg").settings()).containsExactly(Map.entry("home", "/gpg"));
     }
 }

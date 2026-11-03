@@ -164,6 +164,7 @@ sigmund sign --file <FILE> [options]
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--file` | Yes | — | Artifact file to sign |
+| `--profile` | No | — | One of `signing.profiles`: its credential types choose the keys that sign. Without it, `signing.credential-types` chooses them, or every key signs |
 | `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory (overrides `SEQUOIA_HOME`) |
 | `--output` | No | `<file>.asc` | Output signature file path |
 

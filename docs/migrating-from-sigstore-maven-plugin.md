@@ -99,15 +99,19 @@ Sigmund offers everything `sigstore-maven-plugin` does, plus:
 **After (sigmund-maven-plugin):**
 
 ```xml
+<properties>
+  <sigmund.version>0.0.2</sigmund.version>
+</properties>
+
 <plugin>
   <groupId>dev.cyberstamp.sigmund</groupId>
   <artifactId>sigmund-maven-plugin</artifactId>
-  <version>0.0.2</version>
+  <version>${sigmund.version}</version>
   <dependencies>
     <dependency>
       <groupId>dev.cyberstamp.sigmund</groupId>
       <artifactId>sigmund-sigstore</artifactId>
-      <version>0.0.1</version>
+      <version>${sigmund.version}</version>
     </dependency>
   </dependencies>
   <executions>
@@ -122,7 +126,7 @@ Sigmund offers everything `sigstore-maven-plugin` does, plus:
 </plugin>
 ```
 
-Note the `sigmund-sigstore` plugin dependency — this enables the Sigstore backend in the Maven plugin. The CLI bundles it automatically, but the Maven plugin keeps it optional so projects that only need OpenPGP don't pull in sigstore-java's transitive dependencies.
+Note the `sigmund-sigstore` plugin dependency, at the plugin's own version — this enables the Sigstore backend in the Maven plugin. The CLI bundles it automatically, but the Maven plugin keeps it optional so projects that only need OpenPGP don't pull in sigstore-java's transitive dependencies.
 
 ### 2. Configuration mapping
 

@@ -3,7 +3,6 @@ package dev.cyberstamp.sigmund.plugin;
 import dev.cyberstamp.sigmund.core.ConfigLoader;
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SigmundConfig;
-import dev.cyberstamp.sigmund.core.ToolConfig;
 import dev.cyberstamp.sigmund.core.ToolsConfig;
 import dev.cyberstamp.sigmund.core.VerificationConfig;
 import java.io.File;
@@ -116,30 +115,11 @@ abstract class AbstractSigmundMojo extends AbstractMojo {
      * @return the merged tool configuration
      */
     protected ToolsConfig mergeToolOverrides(ToolsConfig baseConfig) {
-        Map<String, Map<String, String>> overrides = toolOverrides();
-        if (overrides.isEmpty()) {
-            return baseConfig;
+        ToolsConfig merged = baseConfig;
+        for (var override : toolOverrides().entrySet()) {
+            merged = merged.withSettings(override.getKey(), override.getValue());
         }
-        Map<String, ToolConfig> merged = new HashMap<>();
-        for (String toolName : baseConfig.toolNames()) {
-            var tc = baseConfig.get(toolName);
-            if (tc != null) {
-                merged.put(toolName, tc);
-            }
-        }
-        for (var override : overrides.entrySet()) {
-            String toolName = override.getKey();
-            Map<String, String> overrideSettings = override.getValue();
-            var existing = merged.get(toolName);
-            if (existing != null) {
-                var mergedSettings = new HashMap<>(existing.settings());
-                mergedSettings.putAll(overrideSettings);
-                merged.put(toolName, new ToolConfig(mergedSettings));
-            } else {
-                merged.put(toolName, new ToolConfig(overrideSettings));
-            }
-        }
-        return new ToolsConfig(merged);
+        return merged;
     }
 
     /**

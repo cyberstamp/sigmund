@@ -21,14 +21,14 @@ import org.apache.maven.project.MavenProject;
 import org.apache.maven.project.MavenProjectHelper;
 
 /**
- * Signs all project artifacts using the tool chain configured in {@code sigmund.yaml}.
+ * Signs all project artifacts with the keys the signing plan selects.
  * <p>
  * Bound to the VERIFY phase. Creates detached signature files for the main artifact,
  * POM, and all attached artifacts. The signature format and extension are determined
  * by the signing tools (e.g., {@code .asc} for OpenPGP, {@code .sigstore.json} for
- * Sigstore). Signing tools and their priority are determined by the
- * {@code signing.tools} section of {@code sigmund.yaml}; Mojo parameters act as
- * overrides.
+ * Sigstore). {@code signing.toolchain} chooses the tools and their order, each tool's
+ * {@code tools.<name>} settings name its keys, and {@code -Dsigmund.profile} or
+ * {@code signing.credential-types} chooses which of those keys sign.
  *
  * @see Sigmund
  * @see Signer
@@ -49,7 +49,7 @@ public class SignMojo extends AbstractSigningMojo {
             return;
         }
         try (Sigmund sigmund = buildSigningSigmund()) {
-            Signer signer = sigmund.signer();
+            Signer signer = signer(sigmund);
             for (SigningInfo info : signer.plan().keys()) {
                 getLog().info(info.display());
             }

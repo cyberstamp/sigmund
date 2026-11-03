@@ -56,13 +56,17 @@ The Sigmund Maven plugin provides goals for signing artifacts and verifying depe
 
 ## Enabling Sigstore Support
 
-The Maven plugin does not include Sigstore support by default. To enable it, add `sigmund-sigstore` as a plugin dependency:
+The Maven plugin does not include Sigstore support by default. To enable it, add `sigmund-sigstore` as a plugin dependency, at the plugin's own version — one property keeps the two in step:
 
 ```xml
+<properties>
+  <sigmund.version>0.0.2</sigmund.version>
+</properties>
+
 <plugin>
   <groupId>dev.cyberstamp.sigmund</groupId>
   <artifactId>sigmund-maven-plugin</artifactId>
-  <version>0.0.2</version>
+  <version>${sigmund.version}</version>
   <dependencies>
     <dependency>
       <groupId>dev.cyberstamp.sigmund</groupId>
@@ -83,19 +87,21 @@ For the CLI, Sigstore support is bundled automatically.
 
 **Default Phase:** `verify`
 
-Signs all project artifacts (JAR, POM, sources, javadoc) with hybrid GPG and PQC signatures, and attaches the `.asc` files for deployment.
+Signs the project's artifacts — the main artifact, the POM and every attached artifact — with the keys the signing plan selects (see [Signing](signing.md)), and attaches the signature files for deployment: one `.asc` per artifact for OpenPGP, a `.sigstore.json` for Sigstore.
 
 **Parameters:**
 
 | Property | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `sigmund.profile` | No | — | One of `signing.profiles`: its credential types choose the keys that sign. Without it, `signing.credential-types` chooses them, or every key signs |
+| `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml`, else `~/.config/sigmund/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
+| `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 | `sigmund.gpgHome` | No | — | GnuPG home directory: overrides `tools.gpg.home`, which BC also reads public keys from unless `tools.bc.gnupg-home` is set |
 | `sigmund.skip` | No | `false` | Skip signing |
 
 **Configuration:**
 
-Tool-specific settings (key fingerprints, passphrases) are configured in `sigmund.yaml`. See [Configuration Reference](configuration.md).
+Tool-specific settings (key fingerprints, passphrases) are configured in `sigmund.yaml`. See [Configuration Reference](configuration.md). Each module reads its own project directory's `sigmund.yaml`, whichever directory Maven was started from; to sign every module of a multi-module build with one file, name it with `-Dsigmund.trustConfig` or set `<trustConfigFile>` in the plugin's configuration.
 
 ### sigmund:signer-info
 
@@ -108,7 +114,8 @@ Displays the effective signing configuration and signer identities without perfo
 | Property | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `sigmund.profile` | No | default profile | Signing profile to display |
-| `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml`, else `~/.config/sigmund/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
+| `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 | `sigmund.gpgHome` | No | — | GnuPG home directory: overrides `tools.gpg.home`, which BC also reads public keys from unless `tools.bc.gnupg-home` is set |
 | `sigmund.skip` | No | `false` | Skip this goal |
 
@@ -126,7 +133,7 @@ mvn sigmund:signer-info -Dsigmund.profile=hybrid
 
 ```
 gpg: pgp4 RSA 41A2197725BD63EB00D071D46A7F5DB1C68BDB81 (Alice <alice@example.com>)
-sq: pgp6 ML-DSA-87+Ed448 D62AAB339E45E5EA2FD036872B01D46A517A2991... (Alice <alice@example.com>)
+sq: pgp6 ML-DSA-87+Ed448 D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F (Alice <alice@example.com>)
 ```
 
 When the signing plan has problems, such as a profile requesting a credential type no key covers, the goal logs the keys and then fails with the problems joined in the failure message:
@@ -156,7 +163,7 @@ The report groups results by outcome, then by who attested them. Each artifact l
 | `sigmund.keyservers` | No | `hkps://keys.openpgp.org` | Comma-separated keyserver list. Used when `resolveSigners` is enabled. |
 | `sigmund.verifyPomFiles` | No | `false` | Also verify signatures on POM files for each dependency |
 | `sigmund.detail` | No | `false` | Add the credentials proven and the trust root to each attester group, and the evidence file and claim time to each artifact, and list ignored artifacts. Results are grouped by outcome and then by attester either way |
-| `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 | `sigmund.gpgHome` | No | — | GnuPG home directory: overrides `tools.gpg.home`, which BC also reads public keys from unless `tools.bc.gnupg-home` is set |
 | `sigmund.importToKeyring` | No | — | Persist fetched keys to keyrings. Overrides config file setting. |
 | `sigmund.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
@@ -175,7 +182,7 @@ dependency tree signed by a handful of signers reads as a handful of blocks:
 
 ```
 SATISFIED (2)
-  openpgp VERIFIED by bc (Ed25519) - Jane Doe <jane@example.com>
+  openpgp VERIFIED by bc (EdDSA) - Jane Doe <jane@example.com>
     com.example:lib:1.0
     com.example:lib-b:2.0
 
@@ -200,7 +207,7 @@ checked against, and each artifact the evidence it was read from:
 
 ```
 SATISFIED (2)
-  openpgp VERIFIED by bc (Ed25519) - Jane Doe <jane@example.com>
+  openpgp VERIFIED by bc (EdDSA) - Jane Doe <jane@example.com>
     credential pgp4 DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF
     trust root openpgp-cert-d /home/jane/.local/share/pgp.cert.d
     com.example:lib:1.0
@@ -231,8 +238,10 @@ Verifies a single signed artifact without requiring a project. This is a standal
 |----------|----------|---------|-------------|
 | `file` | Yes | — | Artifact file to verify |
 | `signature` | Yes | — | Signature `.asc` file |
-| `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
+| `sigmund.gpgHome` | No | — | GnuPG home directory: overrides `tools.gpg.home`, which BC also reads public keys from unless `tools.bc.gnupg-home` is set |
 | `sigmund.lenient` | No | `false` | Pass if at least one signature is valid and none failed |
+| `sigmund.skip` | No | `false` | Skip this goal |
 
 **Example:**
 
@@ -259,7 +268,7 @@ Dependencies are grouped by signer, sorted alphabetically. Unsigned artifacts an
 | `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml` | Path to the trust configuration file |
 | `sigmund.resolveSigners` | No | `true` | Fetch unknown GPG keys from keyservers to resolve signer identities |
 | `sigmund.keyservers` | No | `hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
-| `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory for PQC cert lookup |
+| `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 | `sigmund.gpgHome` | No | — | GnuPG home directory: overrides `tools.gpg.home`, which BC also reads public keys from unless `tools.bc.gnupg-home` is set |
 | `sigmund.importToKeyring` | No | — | Persist fetched keys to keyrings. Overrides config file setting. |
 | `sigmund.includeTestDependencies` | No | `false` | Include test-scoped dependencies |
@@ -276,13 +285,11 @@ mvn sigmund:dependency-signers
 
 # Generate sigmund.yaml from actual signatures
 mvn sigmund:dependency-signers \
-  -Dsigmund.generateTrustConfig=true \
-  -Dsigmund.resolveSigners=true
+  -Dsigmund.generateTrustConfig=true
 
 # Update an existing sigmund.yaml with newly added dependencies
 mvn sigmund:dependency-signers \
-  -Dsigmund.updateTrustConfig=true \
-  -Dsigmund.resolveSigners=true
+  -Dsigmund.updateTrustConfig=true
 ```
 
 **Output:**
@@ -333,6 +340,8 @@ Inspects a signer identity across all available sources (local keystores and key
 | `sigmund.tool` | No | all | Restrict inspection to a specific tool (`bc`, `sq`, `gpg`) |
 | `sigmund.keyservers` | No | `hkps://keys.openpgp.org` | Comma-separated keyserver list |
 | `sigmund.resolveSigners` | No | `true` | Fetch keys from keyservers |
+| `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
+| `sigmund.gpgHome` | No | — | GnuPG home directory: overrides `tools.gpg.home`, which BC also reads public keys from unless `tools.bc.gnupg-home` is set |
 | `sigmund.skip` | No | `false` | Skip this goal |
 
 One of `sigmund.fingerprint` or `sigmund.email` is required. A Sigstore keyless identity has no key material to look up, so it cannot be inspected.
@@ -360,8 +369,8 @@ Maven properties (`-Dsigmund.*`) override `sigmund.yaml` values, which override 
 **Example:**
 
 ```bash
-# Enable fetching unknown keys from keyservers
-mvn verify -Dsigmund.resolveSigners=true
+# Verify without fetching keys or asking directories, for example offline
+mvn verify -Dsigmund.resolveSigners=false
 ```
 
 ## CI/CD Integration

@@ -85,4 +85,23 @@ public class ToolsConfig {
     public int size() {
         return tools.size();
     }
+
+    /**
+     * Returns a copy with single-valued settings laid over one tool's, such as a home directory
+     * given on the command line.
+     *
+     * <p>
+     * The tool's other settings keep their shape (see {@link ToolConfig#withSettings(Map)}); a
+     * tool the file does not configure gets the overrides as its only settings.
+     *
+     * @param toolName the tool to override, such as {@code sq}
+     * @param overrides the settings to set, each a single value
+     * @return the copy
+     */
+    public ToolsConfig withSettings(String toolName, Map<String, String> overrides) {
+        Map<String, ToolConfig> copy = new LinkedHashMap<>(tools);
+        ToolConfig existing = copy.get(toolName);
+        copy.put(toolName, existing != null ? existing.withSettings(overrides) : new ToolConfig(overrides));
+        return new ToolsConfig(copy);
+    }
 }

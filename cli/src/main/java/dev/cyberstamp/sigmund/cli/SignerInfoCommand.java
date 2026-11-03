@@ -25,9 +25,7 @@ public class SignerInfoCommand implements Callable<Integer> {
         try {
             SigmundConfig config = configMixin.loadConfig();
             try (Sigmund sigmund = SigningSupport.buildSigningSigmund(config, sqHomeMixin)) {
-                Signer signer = profile != null
-                        ? sigmund.signer(profile)
-                        : sigmund.signer();
+                Signer signer = SigningSupport.signer(sigmund, profile);
 
                 SigningPlan plan = signer.plan();
                 if (profile != null) {
