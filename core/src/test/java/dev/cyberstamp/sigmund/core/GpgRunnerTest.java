@@ -265,7 +265,7 @@ class GpgRunnerTest {
 
     @Test
     void theDefaultKeyIsOfUnknownTypeWhenListingFails(@TempDir Path home) {
-        GpgRunner gpg = new GpgRunner("false", null, home.toString());
+        GpgRunner gpg = new GpgRunner("false", null, home);
 
         List<SigningInfo> infos = gpg.signingInfo();
 
@@ -299,7 +299,7 @@ class GpgRunnerTest {
         void eachKeySignsWithItself() throws IOException {
             String fp1 = generate("One <one@example.com>");
             String fp2 = generate("Two <two@example.com>");
-            GpgRunner runner = new GpgRunner("gpg", List.of(fp1, fp2), home().toString(), null,
+            GpgRunner runner = new GpgRunner("gpg", List.of(fp1, fp2), home(), null,
                     false, false, List.of());
 
             List<SigningInfo> keys = runner.signingInfo();

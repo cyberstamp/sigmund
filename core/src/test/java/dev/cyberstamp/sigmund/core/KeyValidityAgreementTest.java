@@ -203,7 +203,7 @@ class KeyValidityAgreementTest {
         try (BcRunner bc = new BcRunner(store, null, null)) {
             answers.put("bc", bc.verify(artifact, claim));
         }
-        answers.put("gpg", new GpgRunner("gpg", null, gpgHome.toString()).verify(artifact, claim));
+        answers.put("gpg", new GpgRunner("gpg", null, gpgHome).verify(artifact, claim));
         answers.put("sq", new SqRunner(sqHome).verify(artifact, claim));
         return answers;
     }

@@ -144,7 +144,7 @@ class BackendAgreementTest {
 
             return new Fixture(artifact, signature,
                     new BcRunner(verifyingStore, null, null),
-                    new GpgRunner("gpg", null, gpgHome.toString()),
+                    new GpgRunner("gpg", null, gpgHome),
                     new SqRunner(sqHome));
         }
 

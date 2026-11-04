@@ -17,7 +17,6 @@ import dev.sigstore.oidc.client.OidcClients;
 import dev.sigstore.oidc.client.OidcTokenMatcher;
 import dev.sigstore.oidc.client.TokenStringOidcClient;
 import dev.sigstore.strings.StringMatcher;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -201,7 +200,7 @@ public class SigstoreToolFactory implements SignatureToolFactory {
         String trustedRoot = Setting.TRUSTED_ROOT.from(settings);
         if (trustedRoot != null && !trustedRoot.isBlank()) {
             return KeylessVerifier.builder()
-                    .trustedRootProvider(TrustedRootProvider.from(Path.of(trustedRoot)))
+                    .trustedRootProvider(TrustedRootProvider.from(Setting.TRUSTED_ROOT.pathFrom(settings)))
                     .build();
         }
         return staging

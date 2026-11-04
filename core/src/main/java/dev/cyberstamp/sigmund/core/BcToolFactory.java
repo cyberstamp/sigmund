@@ -124,9 +124,9 @@ final class BcToolFactory implements SignatureToolFactory {
      * Resolves the GnuPG home directory.
      */
     private static Path resolveGnupgHome(Map<String, String> settings) {
-        String home = Setting.GNUPG_HOME.from(settings);
+        Path home = Setting.GNUPG_HOME.pathFrom(settings);
         if (home != null) {
-            return Path.of(home);
+            return home;
         }
         String userHome = System.getProperty("user.home");
         return userHome != null ? Path.of(userHome, ".gnupg") : null;
@@ -141,9 +141,9 @@ final class BcToolFactory implements SignatureToolFactory {
      * certificates one tool stores are visible to the other.
      */
     static Path resolveCertDHome(Map<String, String> settings) {
-        String home = Setting.CERT_D_HOME.from(settings);
+        Path home = Setting.CERT_D_HOME.pathFrom(settings);
         if (home != null) {
-            return Path.of(home);
+            return home;
         }
         return localShare("cert-d home").resolve("pgp.cert.d");
     }
@@ -156,9 +156,9 @@ final class BcToolFactory implements SignatureToolFactory {
      * public certificate store shared with other tools, and secret keys do not belong in it.
      */
     static Path resolveBcPrivateHome(Map<String, String> settings) {
-        String home = Setting.BC_PRIVATE_HOME.from(settings);
+        Path home = Setting.BC_PRIVATE_HOME.pathFrom(settings);
         if (home != null) {
-            return Path.of(home);
+            return home;
         }
         return localShare("BC private key store").resolve("sigmund").resolve("bc-private");
     }
@@ -175,8 +175,7 @@ final class BcToolFactory implements SignatureToolFactory {
      * Resolves an optional file path from settings.
      */
     private static Path resolveOptionalPath(Map<String, String> settings, ToolSetting setting) {
-        String value = setting.from(settings);
-        return value != null ? Path.of(value) : null;
+        return setting.pathFrom(settings);
     }
 
     /**

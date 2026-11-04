@@ -1,5 +1,6 @@
 package dev.cyberstamp.sigmund.core;
 
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -77,6 +78,18 @@ public interface ToolSetting {
      */
     default String from(Map<String, String> settings, String defaultValue) {
         return settings.getOrDefault(key(), defaultValue);
+    }
+
+    /**
+     * Reads this setting as a path, a leading {@code ~} standing for the user's home directory as
+     * it does in a shell ({@link UserPaths#expand}).
+     *
+     * @param settings the tool's settings
+     * @return the path, or {@code null} when not set
+     */
+    default Path pathFrom(Map<String, String> settings) {
+        String value = from(settings);
+        return value == null ? null : UserPaths.expand(value);
     }
 
     /**

@@ -120,7 +120,7 @@ class ForgedSubkeyBindingTest {
             try (BcRunner bc = new BcRunner(store, null, null)) {
                 Map<String, VerifyResult> results = Map.of(
                         "bc", bc.verify(artifact, claim),
-                        "gpg", new GpgRunner("gpg", null, gpgHome.toString()).verify(artifact, claim),
+                        "gpg", new GpgRunner("gpg", null, gpgHome).verify(artifact, claim),
                         "sq", new SqRunner(sqHome).verify(artifact, claim));
 
                 results.forEach((backend, result) -> {

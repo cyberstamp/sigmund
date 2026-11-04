@@ -23,7 +23,7 @@ The Sigmund CLI provides command-line tools for key management, artifact signing
 
 ## Getting the CLI
 
-Download `sigmund.jar` from the [latest GitHub release](https://github.com/aloubyansky/sigmund/releases).
+Download `sigmund.jar` from the [latest GitHub release](https://github.com/cyberstamp/sigmund/releases/latest).
 
 Alternatively, build from source:
 
@@ -57,11 +57,11 @@ These options are available for all commands:
 
 | Option | Description |
 |--------|-------------|
-| `--config <path>` | Path to `sigmund.yaml` configuration file (default: looks in current directory and parent directories). Available on all commands except `export-cert`. |
+| `--config <path>` | Path to `sigmund.yaml` configuration file (default: `sigmund.yaml` in the current directory, else `~/.config/sigmund/sigmund.yaml`; without either, commands run without configuration). A named file that does not exist is an error. |
 | `--help` | Display help information for the command |
 | `--version` | Display Sigmund version |
 
-All commands (except `export-cert`) read configuration from `sigmund.yaml` in the current directory or its parents unless `--config` specifies a different location. Command-line options override configuration file values.
+All commands read `sigmund.yaml` from the current directory, else `~/.config/sigmund/sigmund.yaml`, unless `--config` names a file. Parent directories are not searched. Command-line options override configuration file values.
 
 ## Commands
 
@@ -105,7 +105,7 @@ export SIGMUND_BC_PASSPHRASE="my-secure-passphrase"
 sigmund keygen --userid "Alice <alice@example.com>"
 ```
 
-The command outputs the fingerprint of the generated key. Save this fingerprint — it's required for signing operations.
+The command outputs the fingerprint of the generated key. Name it under `tools.bc.signing-fingerprint` to sign with it, and publish its public certificate with [`sigmund export-cert`](#sigmund-export-cert).
 
 ---
 
@@ -121,8 +121,8 @@ sigmund signer-info [options]
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
-| `--profile` | No | default profile | Signing profile to display |
-| `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory (overrides `SEQUOIA_HOME`) |
+| `--profile` | No | — | One of `signing.profiles`: its credential types choose the keys shown. Without it, `signing.credential-types` chooses them, or every key is shown |
+| `--sq-home` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 
 **Examples:**
 
@@ -153,7 +153,7 @@ Problem: no signing key for requested credential type pgp6; keys in the run: sq 
 
 ### `sigmund sign`
 
-Create a signature for an artifact. The signing tool(s) and key fingerprints are read from `sigmund.yaml` unless overridden by command-line options.
+Sign an artifact with the keys the signing plan selects: `signing.toolchain` names the tools, each tool's `tools.<name>` settings name its keys, and `--profile`, or `signing.credential-types`, chooses which of them sign. See [Signing](signing.md).
 
 ```bash
 sigmund sign --file <FILE> [options]
@@ -165,7 +165,7 @@ sigmund sign --file <FILE> [options]
 |--------|----------|---------|-------------|
 | `--file` | Yes | — | Artifact file to sign |
 | `--profile` | No | — | One of `signing.profiles`: its credential types choose the keys that sign. Without it, `signing.credential-types` chooses them, or every key signs |
-| `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory (overrides `SEQUOIA_HOME`) |
+| `--sq-home` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 | `--output` | No | `<file>.asc` | Output signature file path |
 
 **Example:**
@@ -182,7 +182,7 @@ The command creates a `.asc` signature file next to the artifact (or at the path
 
 ### `sigmund verify-signature`
 
-Verify a signature using all available tools according to tool priority configured in `sigmund.yaml`.
+Verify each signature in an artifact's signature file — every block of an `.asc`, or a Sigstore bundle — with the tools `verification.toolchain` names, in order.
 
 ```bash
 sigmund verify-signature --file <FILE> --signature <ASC> [options]
@@ -193,8 +193,8 @@ sigmund verify-signature --file <FILE> --signature <ASC> [options]
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--file` | Yes | — | Artifact file to verify |
-| `--signature` | Yes | — | Signature `.asc` file |
-| `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory (overrides `SEQUOIA_HOME`) |
+| `--signature` | Yes | — | Signature file: `.asc` or `.sigstore.json` |
+| `--sq-home` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 | `--lenient` | No | `false` | Pass if at least one signature is valid and none failed |
 
 **Verification modes:**
@@ -215,10 +215,12 @@ Sample output:
 
 ```
 Signature Verification Report:
-  [1] VERIFIED (ML-DSA-87+Ed448) [key: D62AAB33...] [signer: Alice <alice@example.com>]
-  [2] VERIFIED (EdDSA) [key: 4AEE18F8...] [signer: Alice <alice@example.com>]
+  [1] VERIFIED (EdDSA) [key: 8B1C2D3E4F5A6B7C8D9E0F1A2B3C4D5E6F7A8B9C] [signer: Alice <alice@example.com>]
+  [2] VERIFIED (ML-DSA-87+Ed448) [key: D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F] [signer: Alice <alice@example.com>]
   Overall: 2 VERIFIED
 ```
+
+Blocks are listed in file order, classic first. `key` is the key that verified the block — often a signing subkey, so it can differ from the primary fingerprint your key is known by.
 
 The last line counts outcomes rather than naming a verdict of its own. A block
 left undecided reads as `INDETERMINATE` followed by the reason, for example
@@ -244,14 +246,14 @@ The identifier is auto-detected by default: hex strings are treated as fingerpri
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
-| `<identifier>` | No | — | Signer identifier (fingerprint or email, auto-detected) |
+| `<identifier>` | Yes | — | Signer identifier: a full fingerprint or an email, auto-detected |
 | `--fingerprint` | No | — | Treat identifier as a fingerprint |
 | `--email` | No | — | Treat identifier as an email |
-| `--keyservers` | No | from config | Keyservers to query (comma-separated) |
+| `--keyservers`, `--keyserver` | No | `verification.keyservers`, else `hkps://keys.openpgp.org` | Keyservers to query, comma-separated; giving them turns fetching on even when `resolve-signers` is `false` |
 | `--tool` | No | all | Restrict inspection to a specific tool (`bc`, `sq`, `gpg`) |
-| `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
+| `--sq-home` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 
-A positional `<identifier>` is required: a full fingerprint or an email. A Sigstore keyless identity has no key material to look up, so it cannot be inspected.
+A Sigstore keyless identity has no key material to look up, so it cannot be inspected.
 
 **Examples:**
 
@@ -271,7 +273,7 @@ sigmund inspect-signer alice@example.com
 
 ### `sigmund export-cert`
 
-Export a PQC public certificate from the Sequoia keystore for distribution to others.
+Export the public certificate of a key Bouncy Castle holds — typically one `sigmund keygen` generated — so you can publish it (to keys.openpgp.org, say) and others can verify what you sign. It looks in the stores `tools.bc` names in `sigmund.yaml`, as `keygen` does. For keys sq or gpg hold, use `sq cert export` or `gpg --export`.
 
 ```bash
 sigmund export-cert --fingerprint <FP> [options]
@@ -281,8 +283,7 @@ sigmund export-cert --fingerprint <FP> [options]
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
-| `--fingerprint` | Yes | — | PQC key fingerprint to export |
-| `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory (overrides `SEQUOIA_HOME`) |
+| `--fingerprint` | Yes | — | Fingerprint of the key whose certificate to export |
 | `--output`, `-o` | No | stdout | Output file path |
 
 **Example:**
@@ -290,27 +291,23 @@ sigmund export-cert --fingerprint <FP> [options]
 Export a certificate to a file:
 
 ```bash
-sigmund export-cert --fingerprint D62AAB339E45E5EA2FD036872B01D46A517A2991... \
-  --output alice-pqc.cert
+sigmund export-cert --fingerprint 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12 \
+  --output alice.asc
 ```
 
 Export to stdout (for piping):
 
 ```bash
-sigmund export-cert --fingerprint D62AAB339E45E5EA2FD036872B01D46A517A2991...
+sigmund export-cert --fingerprint 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
 ```
 
-The exported certificate can be shared with others so they can verify signatures you create. Recipients import the certificate into their keyring using:
-
-```bash
-sq cert import < alice-pqc.cert
-```
+The file holds the public key only, ASCII-armored, ready to upload to a keyserver or to hand to someone who imports it with `gpg --import alice.asc` or `sq cert import alice.asc`.
 
 ---
 
 ## Configuration File
 
-The CLI reads `sigmund.yaml` from the current directory (or the path specified by `--config`) to determine tool settings and defaults. This is the same configuration file used by the Maven plugin.
+The CLI reads `sigmund.yaml` from the current directory, else `~/.config/sigmund/sigmund.yaml` (or the file `--config` names) to determine tool settings and defaults. This is the same configuration file used by the Maven plugin.
 
 Example `sigmund.yaml` for CLI usage:
 

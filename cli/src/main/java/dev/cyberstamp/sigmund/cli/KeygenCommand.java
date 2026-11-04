@@ -78,7 +78,8 @@ public class KeygenCommand implements Callable<Integer> {
                 }
             }
             System.out.println();
-            System.out.println("Use this fingerprint with the 'sign' command.");
+            System.out.println("Name it under tools.bc.signing-fingerprint in sigmund.yaml to sign with it, and");
+            System.out.println("publish its public certificate with: sigmund export-cert --fingerprint " + fingerprint);
             return 0;
         }
     }

@@ -68,6 +68,12 @@ class BcToolFactoryTest {
     }
 
     @Test
+    void aHomeWrittenWithATildeIsUnderTheUsersHome() {
+        assertThat(BcToolFactory.resolveCertDHome(Map.of("cert-d-home", "~/.local/share/pgp.cert.d")))
+                .isEqualTo(Path.of(System.getProperty("user.home"), ".local", "share", "pgp.cert.d"));
+    }
+
+    @Test
     void configuredPathsWin() {
         assertThat(BcToolFactory.resolveCertDHome(Map.of("cert-d-home", "/tmp/cert-d")))
                 .isEqualTo(Path.of("/tmp/cert-d"));
