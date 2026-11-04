@@ -40,7 +40,7 @@
         <!-- The Protobuf runtime sigstore-java's generated classes were built with; the CLI imports
              it ahead of the Quarkus BOM, which would otherwise pin an older one. Raise it with
              sigstore-java. -->
-        <protobuf.version>4.35.1</protobuf.version>
+        <protobuf.version>4.36.2</protobuf.version>
         <jackson.version>3.2.4</jackson.version>
         <json-schema-validator.version>3.0.8</json-schema-validator.version>
         <cli-assured.version>0.2.3</cli-assured.version>
