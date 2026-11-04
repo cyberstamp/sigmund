@@ -7,6 +7,15 @@ import java.util.Set;
 
 final class SqToolFactory implements SignatureToolFactory {
 
+    /**
+     * The sq command: {@code executable}, a leading {@code ~} being the user's home, else
+     * {@code sq} on the {@code PATH}.
+     */
+    private static String executable(Map<String, String> settings) {
+        Path executable = Setting.EXECUTABLE.pathFrom(settings);
+        return executable != null ? executable.toString() : "sq";
+    }
+
     @Override
     public String toolName() {
         return "sq";
@@ -41,7 +50,7 @@ final class SqToolFactory implements SignatureToolFactory {
      */
     @Override
     public SignatureTool createSigning(Map<String, String> settings, SignerIdentity expected) {
-        String executable = Setting.EXECUTABLE.from(settings, "sq");
+        String executable = executable(settings);
         Path home = resolveHome(settings);
         List<String> fingerprints = SigningFingerprint.allFrom(toolName(), Setting.SIGNING_FINGERPRINT, settings);
         if (fingerprints.isEmpty()) {
@@ -53,14 +62,13 @@ final class SqToolFactory implements SignatureToolFactory {
 
     @Override
     public SignatureTool createVerifyOnly(Map<String, String> settings) {
-        String executable = Setting.EXECUTABLE.from(settings, "sq");
+        String executable = executable(settings);
         Path home = resolveHome(settings);
         return new SqRunner(executable, home, List.of());
     }
 
     private static Path resolveHome(Map<String, String> settings) {
-        String homeSetting = Setting.HOME.from(settings);
-        return homeSetting != null ? Path.of(homeSetting) : null;
+        return Setting.HOME.pathFrom(settings);
     }
 
     /** The settings {@code tools.sq} accepts, each read only through its constant. */

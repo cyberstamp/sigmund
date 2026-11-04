@@ -37,7 +37,7 @@ class BcGpgCrossToolTest {
         Files.writeString(artifact, "cross-tool test GPG→BC ed25519");
         Path sigFile = tempDir.resolve("artifact.txt.asc");
 
-        GpgRunner gpgRunner = new GpgRunner("gpg", null, gpgHome.toString());
+        GpgRunner gpgRunner = new GpgRunner("gpg", null, gpgHome);
         SigningTests.signWithOnlyKey(gpgRunner, artifact, sigFile);
         assertThat(Files.exists(sigFile)).isTrue();
 
@@ -60,7 +60,7 @@ class BcGpgCrossToolTest {
         Files.writeString(artifact, "cross-tool test GPG→BC rsa");
         Path sigFile = tempDir.resolve("artifact.txt.asc");
 
-        GpgRunner gpgRunner = new GpgRunner("gpg", null, gpgHome.toString());
+        GpgRunner gpgRunner = new GpgRunner("gpg", null, gpgHome);
         SigningTests.signWithOnlyKey(gpgRunner, artifact, sigFile);
 
         String armoredPubKey = exportGpgKey(gpgHome, "gpg-rsa@test.example");

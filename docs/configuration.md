@@ -620,7 +620,7 @@ verification:
 **Type:** Map of tool name → tool settings  
 **Default:** `{}` (empty)
 
-Configures per-tool settings used by both signing and verification. All tool-specific configuration lives here, so `signing` and `verification` only name tools.
+Configures per-tool settings used by both signing and verification. All tool-specific configuration lives here, so `signing` and `verification` only name tools. A path setting — a home directory, `tsk-file`, `trusted-root`, `executable` — may start with `~`, which stands for your home directory as it does in a shell.
 
 ```yaml
 tools:

@@ -255,7 +255,7 @@ class MultiKeySigningTest {
     }
 
     private GpgRunner gpgRunner(String name) throws IOException {
-        return new GpgRunner("gpg", null, gpgHome(name).toString());
+        return new GpgRunner("gpg", null, gpgHome(name));
     }
 
     private Path gpgHome(String name) throws IOException {

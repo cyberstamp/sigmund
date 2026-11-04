@@ -295,7 +295,7 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
      * @param home the GPG home directory, or null to use the default
      * @throws IllegalArgumentException if gpgExecutable is null or empty
      */
-    GpgRunner(String gpgExecutable, String signingFingerprint, String home) {
+    GpgRunner(String gpgExecutable, String signingFingerprint, Path home) {
         this(gpgExecutable, signingFingerprint == null ? List.of() : List.of(signingFingerprint), home, null,
                 false, false, List.of());
     }
@@ -314,13 +314,13 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
      * @param keyservers keyserver URLs to fetch from
      * @throws IllegalArgumentException if gpgExecutable is null or empty
      */
-    GpgRunner(String gpgExecutable, List<String> signingFingerprints, String home,
+    GpgRunner(String gpgExecutable, List<String> signingFingerprints, Path home,
             String passphrase,
             boolean resolveSigners, boolean importToKeyring, List<String> keyservers) {
         this(gpgExecutable, signingFingerprints, home, passphrase, true, resolveSigners, importToKeyring, keyservers);
     }
 
-    GpgRunner(String gpgExecutable, List<String> signingFingerprints, String home,
+    GpgRunner(String gpgExecutable, List<String> signingFingerprints, Path home,
             String passphrase, boolean signingCapable,
             boolean resolveSigners, boolean importToKeyring, List<String> keyservers) {
         if (gpgExecutable == null || gpgExecutable.isEmpty()) {
@@ -330,8 +330,8 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
         this.signingFingerprints = List.copyOf(signingFingerprints);
         this.passphrase = passphrase;
         this.signingCapable = signingCapable;
-        this.env = home != null ? Map.of("GNUPGHOME", home) : null;
-        this.gpgHome = home != null ? Path.of(home) : Path.of(System.getProperty("user.home"), ".gnupg");
+        this.env = home != null ? Map.of("GNUPGHOME", home.toString()) : null;
+        this.gpgHome = home != null ? home : Path.of(System.getProperty("user.home"), ".gnupg");
         this.format = new OpenPgpSignatureFormat();
         this.resolveSigners = resolveSigners;
         this.importToKeyring = importToKeyring;

@@ -1,5 +1,6 @@
 package dev.cyberstamp.sigmund.core;
 
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -77,6 +78,26 @@ public interface ToolSetting {
      */
     default String from(Map<String, String> settings, String defaultValue) {
         return settings.getOrDefault(key(), defaultValue);
+    }
+
+    /**
+     * Reads this setting as a path, a leading {@code ~} standing for the user's home directory as
+     * it does in a shell: YAML leaves {@code ~/.gnupg} as written, and a tool given it would use a
+     * directory named {@code ~} under the current one. {@code ~user} is not expanded.
+     *
+     * @param settings the tool's settings
+     * @return the path, or {@code null} when not set
+     */
+    default Path pathFrom(Map<String, String> settings) {
+        String value = from(settings);
+        if (value == null) {
+            return null;
+        }
+        String userHome = System.getProperty("user.home");
+        if (userHome != null && (value.equals("~") || value.startsWith("~/"))) {
+            return Path.of(userHome, value.substring(1).replaceFirst("^/", ""));
+        }
+        return Path.of(value);
     }
 
     /**
