@@ -23,7 +23,7 @@ The Sigmund CLI provides command-line tools for key management, artifact signing
 
 ## Getting the CLI
 
-Download `sigmund.jar` from the [latest GitHub release](https://github.com/aloubyansky/sigmund/releases).
+Download `sigmund.jar` from the [latest GitHub release](https://github.com/cyberstamp/sigmund/releases/latest).
 
 Alternatively, build from source:
 
