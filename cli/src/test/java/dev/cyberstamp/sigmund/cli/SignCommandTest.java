@@ -48,6 +48,16 @@ class SignCommandTest {
     }
 
     @Test
+    void theSignatureFileIsReportedByItsNormalizedPath() throws IOException {
+        Path artifact = configureTwoKeys();
+
+        Run run = run(SignCommand::new, "--file", dir.resolve(".").resolve(artifact.getFileName()).toString());
+
+        assertEquals(0, run.exitCode(), run.out() + run.err());
+        assertTrue(run.out().contains("Signature file: " + dir.resolve("lib-1.0.jar.asc").toAbsolutePath()), run.out());
+    }
+
+    @Test
     void anUnknownProfileFailsNamingTheProfiles() throws IOException {
         Path artifact = configureTwoKeys();
 

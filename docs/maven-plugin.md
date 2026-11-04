@@ -113,7 +113,7 @@ Displays the effective signing configuration and signer identities without perfo
 
 | Property | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `sigmund.profile` | No | default profile | Signing profile to display |
+| `sigmund.profile` | No | — | One of `signing.profiles`: its credential types choose the keys shown. Without it, `signing.credential-types` chooses them, or every key is shown |
 | `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml`, else `~/.config/sigmund/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
 | `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 | `sigmund.gpgHome` | No | — | GnuPG home directory: overrides `tools.gpg.home`, which BC also reads public keys from unless `tools.bc.gnupg-home` is set |

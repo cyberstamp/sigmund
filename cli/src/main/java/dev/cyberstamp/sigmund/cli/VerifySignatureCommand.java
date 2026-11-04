@@ -18,7 +18,7 @@ import picocli.CommandLine;
  * <li><b>Lenient mode</b> (--lenient flag): At least one signature must pass, none may fail.</li>
  * </ul>
  */
-@CommandLine.Command(name = "verify-signature", description = "Verify a hybrid signature", mixinStandardHelpOptions = true)
+@CommandLine.Command(name = "verify-signature", description = "Verify an artifact's signature file (.asc or .sigstore.json)", mixinStandardHelpOptions = true)
 public class VerifySignatureCommand implements Callable<Integer> {
 
     @CommandLine.Option(names = { "--file" }, required = true, description = "Artifact file to verify")

@@ -1,17 +1,18 @@
 package dev.cyberstamp.sigmund.cli;
 
 import dev.cyberstamp.sigmund.core.ToolsConfig;
+import dev.cyberstamp.sigmund.core.UserPaths;
 import java.nio.file.Path;
 import java.util.Map;
 import picocli.CommandLine;
 
 /**
- * Picocli mixin for the {@code --sq-home} option and path utilities
- * shared across CLI commands.
+ * Picocli mixin for the {@code --sq-home} option shared across CLI commands.
  */
 public class SqHomeMixin {
 
-    @CommandLine.Option(names = { "--sq-home" }, description = "Sequoia home directory (overrides SEQUOIA_HOME)")
+    @CommandLine.Option(names = {
+            "--sq-home" }, description = "Sequoia home directory (overrides tools.sq.home and SEQUOIA_HOME)")
     private String sqHome;
 
     boolean hasExplicitHome() {
@@ -20,7 +21,7 @@ public class SqHomeMixin {
 
     Path resolveSequoiaHome() {
         if (sqHome != null && !sqHome.isEmpty()) {
-            return expandTilde(sqHome);
+            return UserPaths.expand(sqHome);
         }
         return null;
     }
@@ -35,13 +36,5 @@ public class SqHomeMixin {
     ToolsConfig applyTo(ToolsConfig tools) {
         Path home = resolveSequoiaHome();
         return home == null ? tools : tools.withSettings("sq", Map.of("home", home.toString()));
-    }
-
-    Path expandTilde(String path) {
-        if (path.startsWith("~/")) {
-            String userHome = System.getProperty("user.home");
-            return Path.of(userHome, path.substring(2));
-        }
-        return Path.of(path);
     }
 }

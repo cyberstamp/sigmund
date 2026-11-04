@@ -24,7 +24,7 @@ public class SignCommand implements Callable<Integer> {
     private ConfigMixin configMixin;
 
     @CommandLine.Option(names = {
-            "--profile" }, description = "Signing profile whose credential types choose the keys that sign (default: signing.credential-types, else every key)")
+            "--profile" }, description = "Signing profile to sign with (default: signing.credential-types, else every key)")
     private String profile;
 
     @CommandLine.Option(names = {
@@ -78,7 +78,7 @@ public class SignCommand implements Callable<Integer> {
         }
         System.out.println("Signature created successfully!");
         System.out.println();
-        System.out.println("Signature file: " + outputFile.toAbsolutePath());
+        System.out.println("Signature file: " + outputFile.toAbsolutePath().normalize());
         return 0;
     }
 
@@ -92,7 +92,7 @@ public class SignCommand implements Callable<Integer> {
         System.out.println("Signature created successfully!");
         System.out.println();
         for (SignedFile sf : result.files()) {
-            System.out.println("Signature file: " + sf.path().toAbsolutePath());
+            System.out.println("Signature file: " + sf.path().toAbsolutePath().normalize());
         }
         return 0;
     }

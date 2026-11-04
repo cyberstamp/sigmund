@@ -17,7 +17,8 @@ public class SignerInfoCommand implements Callable<Integer> {
     @CommandLine.Mixin
     private ConfigMixin configMixin;
 
-    @CommandLine.Option(names = { "--profile" }, description = "Signing profile to display (default: use the default profile)")
+    @CommandLine.Option(names = {
+            "--profile" }, description = "Signing profile to show (default: signing.credential-types, else every key)")
     private String profile;
 
     @Override

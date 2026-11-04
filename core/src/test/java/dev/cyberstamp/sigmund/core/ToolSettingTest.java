@@ -7,8 +7,8 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * A path a tool setting holds is read as a shell would read it at the start: {@code ~} is the
- * user's home directory, since YAML leaves it as written and the documentation writes paths so.
+ * A path a tool setting holds is read through {@link UserPaths#expand}, so {@code ~} is the user's
+ * home directory, as the documentation writes paths.
  */
 class ToolSettingTest {
 
@@ -24,20 +24,8 @@ class ToolSettingTest {
     private static final Path USER_HOME = Path.of(System.getProperty("user.home"));
 
     @Test
-    void aLeadingTildeIsTheUsersHome() {
+    void aPathSettingExpandsALeadingTilde() {
         assertThat(Setting.HOME.pathFrom(Map.of("home", "~/.gnupg"))).isEqualTo(USER_HOME.resolve(".gnupg"));
-    }
-
-    @Test
-    void aBareTildeIsTheUsersHome() {
-        assertThat(Setting.HOME.pathFrom(Map.of("home", "~"))).isEqualTo(USER_HOME);
-    }
-
-    @Test
-    void otherPathsAreReadAsWritten() {
-        assertThat(Setting.HOME.pathFrom(Map.of("home", "/srv/keys"))).isEqualTo(Path.of("/srv/keys"));
-        assertThat(Setting.HOME.pathFrom(Map.of("home", "keys/~"))).isEqualTo(Path.of("keys/~"));
-        assertThat(Setting.HOME.pathFrom(Map.of("home", "~other/keys"))).isEqualTo(Path.of("~other/keys"));
     }
 
     @Test

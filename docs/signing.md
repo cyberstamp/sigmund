@@ -95,7 +95,7 @@ If the plan has problems, such as a requested credential type no key covers, the
 | Select profile | `--profile hybrid` | `-Dsigmund.profile=hybrid` |
 | Explicit config | `--config path/to/sigmund.yaml` | `-Dsigmund.trustConfig=path/to/sigmund.yaml` |
 
-When `--profile` is specified, only the keys whose credential type the profile lists are shown. Without it, the default profile is used (or all keys of all configured tools if no default profile is set).
+When `--profile` is specified, only the keys whose credential type the profile lists are shown. Without it, `signing.credential-types` chooses them, or every key of every configured tool is shown.
 
 This is useful for verifying your setup before a release, debugging CI signing configuration, or confirming that a config file is being loaded correctly.
 
