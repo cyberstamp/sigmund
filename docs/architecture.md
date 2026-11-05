@@ -223,7 +223,7 @@ Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP sign
 -----END PGP SIGNATURE-----
 ```
 
-Neither signature is re-armored — each is preserved byte-for-byte as its respective tool produced it. Verifiers that parse only the first armored block (including Maven Central) see only the classic signature and succeed. PQC-aware tools process all blocks.
+Neither signature is re-armored — each is preserved byte-for-byte as its respective tool produced it. Verifiers that parse only the first armored block — Maven Central, `sq verify` — see only the classic signature and succeed. Sigmund splits the file into its blocks and verifies each as its own claim, routing the v6 block to `sq`.
 
 ## Verification Pipeline
 

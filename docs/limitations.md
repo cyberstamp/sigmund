@@ -128,14 +128,14 @@ If IANA registers additional PQC algorithms beyond this range in the future, a S
 
 ## PQC signature sizes
 
-PQC signatures are significantly larger than classical signatures:
+PQC signatures are much larger than classical ones. Measured as they appear in an armored `.asc`:
 
-| Algorithm | Signature size |
-|-----------|---------------|
-| Ed25519 (classical) | ~64 bytes |
-| ML-DSA-65+Ed25519 | ~3.3 KB |
-| ML-DSA-87+Ed448 (default) | ~4.6 KB |
+| Key | Per signature in the `.asc` |
+|-----|----------------------------|
+| Ed25519 (classical, v4) | 248–325 bytes |
+| ML-DSA-65+Ed25519 | 4,752 bytes |
+| ML-DSA-87+Ed448 (default) | 6,604 bytes |
 
-For a typical Maven module with 4 artifacts (JAR, POM, javadoc, sources) signed with both classical and PQC signatures, expect approximately 18 KB of additional `.asc` data. This is negligible compared to artifact sizes (JARs are typically measured in KB to MB).
+For a typical Maven module with 4 artifacts (JAR, POM, javadoc, sources) signed with a classical and the default PQC key, expect about 27 KB of `.asc` data, against about 1 KB classical-only. This is small next to the artifacts themselves. See [PQC Signature Sizes](signing.md#pqc-signature-sizes) for how the figures were measured.
 
 Hybrid `.asc` files allow gradual PQC adoption — classical-only tools ignore the PQC signature block, and the size increase only affects the signature files, not the artifacts themselves.

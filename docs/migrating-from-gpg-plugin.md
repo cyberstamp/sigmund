@@ -208,7 +208,7 @@ Once you have a PQC key, Sigmund automatically creates hybrid signatures — eac
 1. **Classic signature** (v4 RSA, EdDSA, or ECDSA) — backward-compatible with Maven Central and all existing GPG tools
 2. **PQC signature** (v6 ML-DSA-87+Ed448 or ML-DSA-65+Ed25519) — quantum-resistant, per [RFC 9980](https://datatracker.ietf.org/doc/rfc9980/)
 
-The classic signature comes first so existing tools (including Maven Central) only see and verify it. PQC-aware tools verify both.
+The classic signature comes first, so tools that read only the first block — Maven Central, `sq verify` — see and verify it. Sigmund verifies both.
 
 See the [signing guide](signing.md) for details on generating PQC keys and configuring hybrid signing.
 

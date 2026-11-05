@@ -80,7 +80,7 @@ mvn sigmund:verify
 - **Dependency signature verification and trust enforcement** — Verify signatures on all project dependencies and enforce policies based on who signed them. Start by observing, then enforce once the policy matches what you expect.
 - **Drop-in replacement for maven-gpg-plugin** — Use existing GPG keys or Bouncy Castle's pure-Java backend for classic OpenPGP with no external dependencies.
 - **Sigstore keyless signing** — OIDC-based signing with no long-lived keys to generate, store, or rotate. Produces `.sigstore.json` bundles. Identity-validated: configure expected OIDC identities and catch mismatches before artifacts are signed. CI-tuned defaults (ambient GitHub Actions OIDC, no browser popups).
-- **Hybrid PQC + classic signing** — ML-DSA-87+Ed448 and Ed25519/RSA in one `.asc` file (RFC 9980). Existing tools see only the classic signature; PQC-aware tools verify both.
+- **Hybrid PQC + classic signing** — ML-DSA-87+Ed448 and Ed25519/RSA in one `.asc` file (RFC 9980). Maven Central and `sq verify` read only the first, classic signature; Sigmund verifies both.
 - **Multi-format signing** — Produce both `.asc` (OpenPGP) and `.sigstore.json` (Sigstore) in a single build. Cross-backend identity matching lets one `email` entry match both OpenPGP and Sigstore signatures, vouched for by the issuers you list — keys.openpgp.org for OpenPGP, an OIDC provider for Sigstore.
 - **Four signing backends** — BC (pure Java, always available), Sequoia sq (PQC support), GnuPG (legacy compatibility), and Sigstore (keyless OIDC). The toolchain chooses which tools run, and in what order.
 - **CLI for key management and custom workflows** — Generate keys, sign artifacts, verify signatures, and export certificates outside Maven.

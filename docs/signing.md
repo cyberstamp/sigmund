@@ -59,7 +59,7 @@ Sigmund signs artifacts using one or more OpenPGP backends. The signing pipeline
 -----END PGP SIGNATURE-----
 ```
 
-Existing tools (GPG, Maven Central) see only the first block and work as before. PQC-aware tools can verify all blocks.
+Maven Central and `sq verify` read only the first block, the classic signature, and GnuPG verifies the classic block and warns about the post-quantum one ([Backward Compatibility](#backward-compatibility)). Sigmund verifies every block, each as its own claim, so checking the post-quantum signature takes Sigmund (with `sq` installed for the v6 block), not `sq` alone.
 
 ## Checking the Signing Setup
 
@@ -80,8 +80,8 @@ mvn sigmund:signer-info
 Example output:
 
 ```
-bc: pgp4 Ed25519 D62AAB339E45E5EA2FD036872B01D46A517A2991... (Alice <alice@example.com>)
-sq: pgp6 ML-DSA-87+Ed448 A1B2C3D4E5F6... (Alice <alice@example.com>)
+bc: pgp4 EdDSA 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12 (Alice <alice@example.com>)
+sq: pgp6 ML-DSA-87+Ed448 D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F (Alice <alice@example.com>)
 ```
 
 Each line shows the tool name, the credential type (`pgp4`, `pgp6`, or `type unknown`), the algorithm, the key fingerprint, and the user ID. A tool with several keys prints one line per key that will sign.
@@ -162,7 +162,8 @@ BC key generated successfully!
 Fingerprint: 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
 Key is passphrase-protected (from SIGMUND_BC_PASSPHRASE).
 
-Use this fingerprint with the 'sign' command.
+Name it under tools.bc.signing-fingerprint in sigmund.yaml to sign with it, and
+publish its public certificate with: sigmund export-cert --fingerprint 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
 ```
 
 **Supported cipher suites:**
@@ -265,11 +266,11 @@ tools:
     signing-key-env: MY_SIGNING_KEY
 ```
 
-**Priority:** `tsk-file` takes precedence over `signing-key-env` if both are configured.
+**Priority:** a key in the environment variable wins over `tsk-file` — a file holding an exported secret key (a Transferable Secret Key), such as the one `export-secret-key` writes — which wins over `signing-fingerprint`, so CI can override a file-based setup without editing `sigmund.yaml`.
 
 ## Hybrid PQC Signing
 
-Hybrid signing combines a classic signature (GPG or BC) with a post-quantum signature (Sequoia sq) in one `.asc` file. This provides quantum resistance while maintaining backward compatibility.
+Hybrid signing combines a classic and a post-quantum signature in one `.asc` file. The post-quantum one comes from `sq`; the classic one from `gpg` or `bc`, or from `sq` itself with a v4 key beside its v6 one ([sq with both keys](#sq-with-both-keys)). This provides quantum resistance while maintaining backward compatibility.
 
 ### Prerequisites
 
@@ -347,20 +348,29 @@ sq key generate \
 
 The default cipher suite `mldsa87-ed448` is a hybrid composite of ML-DSA-87 (post-quantum) and Ed448 (classical). This provides quantum resistance while maintaining classical security. See `sq key generate --help` for the full set of options.
 
-Output:
+The output begins with the key's summary; the primary key's fingerprint is the one to use:
 
 ```
-Key generated successfully!
+ - ┌ D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F
+   └ Your Name <you@example.com>
+   - certification created
 
-Fingerprint: D62AAB339E45E5EA2FD036872B01D46A517A2991ABCDEF1234567890ABCDEF12
-Stored in:   /home/user/.local/share/sequoia
+Transferable Secret Key.
 
-Use this fingerprint with the 'sign' command.
+      Fingerprint: D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F
+  Public-key algo: ML-DSA-87+Ed448
+       Secret key: Unencrypted
+    Creation time: 2026-11-04 20:50:38 UTC
+  Expiration time: 2029-11-04 14:16:59 UTC (creation time + 2years 11months 30days 9h 16m 45s)
+        Key flags: certification
+...
 ```
+
+An sq key expires after three years unless `--expiration` says otherwise (a date, a duration such as `5y`, or `never`). Signatures made before the expiry stay valid; a signature made after it fails verification. Extend it in time with `sq key expire --cert <fingerprint> --expiration 5y`, and publish the updated certificate.
 
 ### Signing with PQC
 
-If you have a single key in your Sequoia store (or have set `sign.signer-self` in sq's config), no configuration is needed — Sigmund uses it automatically:
+If sq's own configuration names your key under `sign.signer-self`, no Sigmund configuration is needed. Otherwise name it with `tools.sq.signing-fingerprint`, as below — a key merely being in sq's store is not enough:
 
 ```bash
 mvn sigmund:sign
@@ -426,7 +436,7 @@ signing:
 `signer-info --profile hybrid` shows one line per key:
 
 ```
-sq: pgp4 Ed25519 41A2197725BD63EB00D071D46A7F5DB1C68BDB81 (Your Name <you@example.com>)
+sq: pgp4 EdDSA 41A2197725BD63EB00D071D46A7F5DB1C68BDB81 (Your Name <you@example.com>)
 sq: pgp6 ML-DSA-87+Ed448 D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F (Your Name <you@example.com>)
 ```
 
@@ -446,17 +456,23 @@ tools:
 
 ### PQC Signature Sizes
 
-With the default `mldsa87-ed448` cipher suite, the PQC signature adds approximately:
+A post-quantum signature is far larger than a classic one. Measured with sq 1.4.0 and Sigmund's Bouncy Castle backend, each key signing a detached signature (the artifact's size makes no difference):
 
-| Component | ML-DSA-87 (default) | ML-DSA-65 | Ed25519/Ed448 (comparison) |
-|-----------|---------------------|-----------|----------------------------|
-| Public key | ~2,592 bytes | ~1,952 bytes | 114 bytes (Ed448) / 64 bytes (Ed25519) |
-| Private key | ~4,896 bytes | ~4,032 bytes | N/A |
-| Signature | ~4,627 bytes | ~3,309 bytes | 114 bytes (Ed448) / 64 bytes (Ed25519) |
+| Key | Signature | In the `.asc` (armored) | Public certificate (armored) |
+|---|---|---|---|
+| sq `mldsa87-ed448` (v6, the default PQC suite) | 4,832 bytes | 6,604 bytes | 59,083 bytes |
+| sq `mldsa65-ed25519` (v6) | 3,464 bytes | 4,752 bytes | 42,854 bytes |
+| sq `cv25519` (v4) | 191 bytes | 325 bytes | 2,342 bytes |
+| bc `ed25519` (v4, `keygen`'s default) | 119 bytes | 248 bytes | 981 bytes |
+| bc `ed448` (v6) | 205 bytes | 366 bytes | 2,411 bytes |
 
-**Per artifact:** ~4.6 KB for ML-DSA-87, ~3.3 KB for ML-DSA-65
+A composite signature carries both of its algorithms: an ML-DSA-87 signature (4,627 bytes) and an Ed448 one (114 bytes), with the packet around them. Armoring adds about a third. A hybrid `.asc` holds the classic block and the post-quantum one, so with a bc Ed25519 key and the default PQC suite it is 248 + 6,604 = 6,852 bytes.
 
-**Typical Maven module** (JAR, POM, sources, javadoc): ~18 KB for ML-DSA-87, ~13 KB for ML-DSA-65
+**Per artifact:** about 6.6 KB for `mldsa87-ed448`, 4.8 KB for `mldsa65-ed25519`, on top of the classic signature.
+
+**Typical Maven module** (JAR, POM, sources, javadoc): about 26 KB for `mldsa87-ed448`, 19 KB for `mldsa65-ed25519`.
+
+The certificates are large because sq gives a new key a primary key and signing, authentication and encryption subkeys, all post-quantum for the ML-DSA suites.
 
 ## Signing with Sigstore
 
@@ -622,53 +638,14 @@ mvn sigmund:signer-info -Dsigmund.profile=classic
 
 ## Signing Pipeline
 
-The signing pipeline combines signatures from multiple tools into a single `.asc` file:
+Signing an artifact runs the same steps whatever the tools:
 
-```
-artifact.jar
-    |
-    +-- Classic tool (BC or GPG)
-    |   |
-    |   +-- bc / gpg --detach-sign --> classic.asc
-    |       (v4 or v6 signature packet)
-    |
-    +-- PQC tool (sq, if configured)
-    |   |
-    |   +-- sq sign --signature-file --> pqc.sig
-    |       (v6 PQC signature packet)
-    |
-    +-- OpenPgpSignatureFormat.combine()
-        |
-        +-- artifact.jar.asc (combined signatures)
-```
+1. **The signing plan picks the keys** — each enabled tool's keys, narrowed by a profile or `signing.credential-types` (see [above](#signing-credential-types-and-profiles)). A plan with a problem stops here, before anything is signed.
+2. **Each key makes one signature.** One tool can make several: `sq` with a v4 and a v6 key makes both.
+3. **OpenPGP signatures are combined into one `.asc`**, one armored block per signature, each kept byte for byte as its tool wrote it. v4 blocks come first, whatever order the keys were listed in, so verifiers that read only the first block — Maven Central among them — see a classic signature.
+4. **Sigstore writes its own `.sigstore.json`**, since a bundle cannot be combined with others.
 
-**Stage 1 — Classic signature:**
-
-The signing tool (BC by default, or GPG if configured) produces a detached ASCII-armored signature. BC uses Bouncy Castle's `PGPSignatureGenerator` to create the signature in pure Java. GPG invokes the external `gpg` process:
-
-```bash
-gpg --batch --yes --armor --detach-sign \
-  [--local-user <keyId>] \
-  --output <sig> <artifact>
-```
-
-The signature version (v4 or v6) is determined by the key version. BC generates v6 signatures for v6 keys and v4 signatures for v4 keys. GPG always produces v4 signatures.
-
-**Stage 2 — PQC signature (optional):**
-
-If PQC signing is configured and `sq` is available, `SqRunner` invokes Sequoia `sq`:
-
-```bash
-sq --overwrite sign \
-  --signer <fingerprint> \
-  --signature-file <sig> <artifact>
-```
-
-Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP signature packet with the configured PQC hybrid cipher suite (ML-DSA-87+Ed448 by default) per RFC 9980.
-
-**Stage 3 — Combine:**
-
-`OpenPgpSignatureFormat` concatenates the signatures into a single `.asc` file as separate armored blocks, classic first. Neither signature is re-armored — each is preserved byte-for-byte as its respective tool produced it. Verifiers that parse only the first armored block (including Maven Central) see only the classic signature and succeed. PQC-aware tools process all blocks.
+When `signing.signer` is set, every signature is checked against that signer before anything is written. How each tool is invoked is described in [Architecture](architecture.md#signing-pipeline).
 
 ## Backward Compatibility
 
