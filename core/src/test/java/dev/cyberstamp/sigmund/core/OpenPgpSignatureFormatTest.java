@@ -161,9 +161,11 @@ class OpenPgpSignatureFormatTest {
         }
 
         private Path sign(BcKeyStore store, Path artifact, Path signature, String credentialType) {
-            String fingerprint = new BcRunner(store, null, null).generateKey("Test <test@example.com>", "ed25519",
+            String fingerprint = BcTestKeys.generate(store, "Test <test@example.com>", "ed25519",
                     credentialType);
-            SigningTests.signWithOnlyKey(new BcRunner(store, fingerprint, null), artifact, signature);
+            try (BcRunner signer = new BcRunner(store, fingerprint, null)) {
+                SigningTests.signWithOnlyKey(signer, artifact, signature);
+            }
             return signature;
         }
     }

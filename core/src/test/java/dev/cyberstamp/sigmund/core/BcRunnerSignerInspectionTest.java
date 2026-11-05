@@ -32,34 +32,38 @@ class BcRunnerSignerInspectionTest {
 
     @Test
     void canInspectKeyCredential() {
-        BcRunner runner = createRunner(false, List.of());
-        assertThat(runner.canInspect(
-                new KeyCredential("pgp4", "AABB000000000000000000000000000000000000"))).isTrue();
+        try (BcRunner runner = createRunner(false, List.of())) {
+            assertThat(runner.canInspect(
+                    new KeyCredential("pgp4", "AABB000000000000000000000000000000000000"))).isTrue();
+        }
     }
 
     @Test
     void canInspectAnEmailIdentity() {
-        BcRunner runner = createRunner(false, List.of());
-        assertThat(runner.canInspect(IdentityCredential.email(null, "a@b.com"))).isTrue();
+        try (BcRunner runner = createRunner(false, List.of())) {
+            assertThat(runner.canInspect(IdentityCredential.email(null, "a@b.com"))).isTrue();
+        }
     }
 
     @Test
     void cannotInspectAWorkflowIdentity() {
-        BcRunner runner = createRunner(false, List.of());
-        assertThat(runner.canInspect(
-                new IdentityCredential("https://issuer", Map.of(IdentityCredential.SUBJECT, "subject"))))
-                .isFalse();
+        try (BcRunner runner = createRunner(false, List.of())) {
+            assertThat(runner.canInspect(
+                    new IdentityCredential("https://issuer", Map.of(IdentityCredential.SUBJECT, "subject"))))
+                    .isFalse();
+        }
     }
 
     @Test
     void inspectLocalStoreNotFoundReturnsPerSourceResults() {
-        BcRunner runner = createRunner(false, List.of());
-        var results = runner.inspect(
-                new KeyCredential("pgp4",
-                        "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD"));
-        assertThat(results.isEmpty()).isFalse();
-        assertThat(results.stream().allMatch(r -> !r.found())).isTrue();
-        assertThat(results.stream().anyMatch(
-                r -> r.sourceLabel().startsWith(TrustRootRef.KIND_OPENPGP_CERT_D + " "))).isTrue();
+        try (BcRunner runner = createRunner(false, List.of())) {
+            var results = runner.inspect(
+                    new KeyCredential("pgp4",
+                            "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD"));
+            assertThat(results.isEmpty()).isFalse();
+            assertThat(results.stream().allMatch(r -> !r.found())).isTrue();
+            assertThat(results.stream().anyMatch(
+                    r -> r.sourceLabel().startsWith(TrustRootRef.KIND_OPENPGP_CERT_D + " "))).isTrue();
+        }
     }
 }

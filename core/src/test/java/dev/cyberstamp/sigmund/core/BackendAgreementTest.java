@@ -44,62 +44,71 @@ class BackendAgreementTest {
 
         @Test
         void aValidSignatureVerifiesEverywhere(@TempDir Path dir) throws Exception {
-            Fixture fixture = Fixture.signed(dir, "agreed content");
+            try (Fixture fixture = Fixture.signed(dir, "agreed content")) {
 
-            assertThat(fixture.answers())
-                    .allSatisfy(answer -> assertThat(answer.outcome())
-                            .as(answer.backend() + " disagreed")
-                            .isEqualTo(ClaimOutcome.VERIFIED));
+                assertThat(fixture.answers())
+                        .allSatisfy(answer -> assertThat(answer.outcome())
+                                .as(answer.backend() + " disagreed")
+                                .isEqualTo(ClaimOutcome.VERIFIED));
+            }
         }
 
         @Test
         void aValidSignatureProvesTheSameKeyEverywhere(@TempDir Path dir) throws Exception {
-            Fixture fixture = Fixture.signed(dir, "agreed content");
-            List<Answer> answers = fixture.answers();
+            try (Fixture fixture = Fixture.signed(dir, "agreed content")) {
+                List<Answer> answers = fixture.answers();
 
-            assertThat(answers.get(0).credentials()).isNotEmpty();
-            assertThat(answers).allSatisfy(answer -> assertThat(answer.credentials())
-                    .as(answer.backend() + " proved different key material")
-                    .containsExactlyInAnyOrderElementsOf(answers.get(0).credentials()));
+                assertThat(answers.get(0).credentials()).isNotEmpty();
+                assertThat(answers).allSatisfy(answer -> assertThat(answer.credentials())
+                        .as(answer.backend() + " proved different key material")
+                        .containsExactlyInAnyOrderElementsOf(answers.get(0).credentials()));
+            }
         }
 
         @Test
         void aTamperedArtifactFailsEverywhere(@TempDir Path dir) throws Exception {
-            Fixture fixture = Fixture.signed(dir, "original content");
-            Files.writeString(fixture.artifact, "tampered content");
+            try (Fixture fixture = Fixture.signed(dir, "original content")) {
+                Files.writeString(fixture.artifact, "tampered content");
 
-            assertThat(fixture.answers())
-                    .allSatisfy(answer -> assertThat(answer.outcome())
-                            .as(answer.backend() + " disagreed")
-                            .isEqualTo(ClaimOutcome.FAILED));
+                assertThat(fixture.answers())
+                        .allSatisfy(answer -> assertThat(answer.outcome())
+                                .as(answer.backend() + " disagreed")
+                                .isEqualTo(ClaimOutcome.FAILED));
+            }
         }
 
         @Test
         void anUnavailableKeyIsIndeterminateEverywhere(@TempDir Path dir) throws Exception {
-            Fixture fixture = Fixture.signedWithoutPublishingTheKey(dir, "unknown signer");
+            try (Fixture fixture = Fixture.signedWithoutPublishingTheKey(dir, "unknown signer")) {
 
-            assertThat(fixture.answers())
-                    .allSatisfy(answer -> {
-                        assertThat(answer.outcome())
-                                .as(answer.backend() + " should not decide without the key")
-                                .isEqualTo(ClaimOutcome.INDETERMINATE);
-                        assertThat(answer.reason())
-                                .as(answer.backend() + " reason")
-                                .isEqualTo(IndeterminateReason.KEY_UNAVAILABLE);
-                    });
+                assertThat(fixture.answers())
+                        .allSatisfy(answer -> {
+                            assertThat(answer.outcome())
+                                    .as(answer.backend() + " should not decide without the key")
+                                    .isEqualTo(ClaimOutcome.INDETERMINATE);
+                            assertThat(answer.reason())
+                                    .as(answer.backend() + " reason")
+                                    .isEqualTo(IndeterminateReason.KEY_UNAVAILABLE);
+                        });
+            }
         }
     }
 
     /**
      * A signing key published to every backend's store, an artifact, and its signature.
      */
-    private static final class Fixture {
+    private static final class Fixture implements AutoCloseable {
 
         private final Path artifact;
         private final Path signature;
         private final BcRunner bc;
         private final GpgRunner gpg;
         private final SqRunner sq;
+
+        @Override
+        public void close() {
+            bc.close();
+        }
 
         private Fixture(Path artifact, Path signature, BcRunner bc, GpgRunner gpg, SqRunner sq) {
             this.artifact = artifact;
@@ -121,31 +130,33 @@ class BackendAgreementTest {
                 throws Exception {
             BcKeyStore signingStore = new BcKeyStore(null, dir.resolve("signing-cert-d"),
                     dir.resolve("signing-private"));
-            String fingerprint = new BcRunner(signingStore, null, null)
-                    .generateKey("Agreement Test <agreement@test.example>", "nistp256", null);
+            String fingerprint = BcTestKeys.generate(signingStore, "Agreement Test <agreement@test.example>", "nistp256", null);
 
             Path artifact = Files.writeString(dir.resolve("artifact.txt"), content);
             Path signature = dir.resolve("artifact.txt.asc");
-            BcRunner signer = new BcRunner(signingStore, fingerprint, null);
-            SigningTests.signWithOnlyKey(signer, artifact, signature);
+            try (BcRunner signer = new BcRunner(signingStore, fingerprint, null)) {
+                SigningTests.signWithOnlyKey(signer, artifact, signature);
 
-            Path gpgHome = GpgTestKeys.home(dir.resolve("gpg-home"));
-            Path sqHome = Files.createDirectories(dir.resolve("sq-home"));
+                Path gpgHome = GpgTestKeys.home(dir.resolve("gpg-home"));
+                Path sqHome = Files.createDirectories(dir.resolve("sq-home"));
 
-            BcKeyStore verifyingStore = new BcKeyStore(null, dir.resolve("verify-cert-d"),
-                    dir.resolve("verify-private"));
-            if (publishKey) {
-                String armoredCert = new BcRunner(signingStore, null, null)
-                        .exportCert(fingerprint);
-                publishToBc(verifyingStore, armoredCert);
-                publishToGpg(gpgHome, dir, armoredCert);
-                publishToSq(sqHome, dir, armoredCert);
+                BcKeyStore verifyingStore = new BcKeyStore(null, dir.resolve("verify-cert-d"),
+                        dir.resolve("verify-private"));
+                if (publishKey) {
+                    String armoredCert;
+                    try (BcRunner exporter = new BcRunner(signingStore, null, null)) {
+                        armoredCert = exporter.exportCert(fingerprint);
+                    }
+                    publishToBc(verifyingStore, armoredCert);
+                    publishToGpg(gpgHome, dir, armoredCert);
+                    publishToSq(sqHome, dir, armoredCert);
+                }
+
+                return new Fixture(artifact, signature,
+                        new BcRunner(verifyingStore, null, null),
+                        new GpgRunner("gpg", null, gpgHome),
+                        new SqRunner(sqHome));
             }
-
-            return new Fixture(artifact, signature,
-                    new BcRunner(verifyingStore, null, null),
-                    new GpgRunner("gpg", null, gpgHome),
-                    new SqRunner(sqHome));
         }
 
         private static void publishToBc(BcKeyStore store, String armoredCert) throws Exception {

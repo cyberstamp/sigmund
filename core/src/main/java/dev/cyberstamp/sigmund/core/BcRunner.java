@@ -36,6 +36,7 @@ import org.bouncycastle.bcpg.sig.KeyFlags;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openpgp.PGPException;
 import org.bouncycastle.openpgp.PGPKeyPair;
+import org.bouncycastle.openpgp.PGPKeyRing;
 import org.bouncycastle.openpgp.PGPKeyRingGenerator;
 import org.bouncycastle.openpgp.PGPPrivateKey;
 import org.bouncycastle.openpgp.PGPPublicKey;
@@ -82,7 +83,7 @@ import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyEncryptorBuilder;
  * @see BcToolFactory
  * @see BcKeyStore
  */
-class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporter,
+class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporter, SecretKeyExporter,
         CertExporter, SignerIdentityResolver, SignerInspection {
 
     private static final String NAME = "bc";
@@ -421,6 +422,22 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             throw new ToolExecutionException("Certificate not found: " + fingerprint);
         }
         return armorKeyRing(found.ring());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Reads the key from the private store, where {@code keygen} writes it, as it was stored —
+     * encrypted when it was generated with a passphrase.
+     */
+    @Override
+    public String exportSecretKey(String fingerprint) {
+        PGPSecretKeyRing secret = keyStore.findSecretKey(fingerprint);
+        if (secret == null) {
+            throw new ToolExecutionException("No secret key " + fingerprint + " in the BC private key store");
+        }
+        return armorKeyRing(secret);
     }
 
     /**
@@ -1220,7 +1237,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     /**
      * Armors a public key ring as an ASCII string.
      */
-    private String armorKeyRing(PGPPublicKeyRing keyRing) {
+    private String armorKeyRing(PGPKeyRing keyRing) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             try (ArmoredOutputStream armored = new ArmoredOutputStream(out)) {
@@ -1228,7 +1245,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             }
             return out.toString();
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to armor certificate", e);
+            throw new UncheckedIOException("Failed to armor key", e);
         }
     }
 }

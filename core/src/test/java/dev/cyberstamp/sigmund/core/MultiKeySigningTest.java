@@ -53,15 +53,16 @@ class MultiKeySigningTest {
         BcKeyStore verifyStore = bcStore("verify");
         importIntoBc(verifyStore, sq.exportCert(v4));
         importIntoBc(verifyStore, sq.exportCert(v6));
-        BcRunner bc = new BcRunner(verifyStore, null, null);
-        for (OpenPgpClaim claim : claims) {
-            assertThat(bc.verify(artifact, claim).isVerified()).as("bc verifies v" + claim.packetVersion())
-                    .isTrue();
+        try (BcRunner bc = new BcRunner(verifyStore, null, null)) {
+            for (OpenPgpClaim claim : claims) {
+                assertThat(bc.verify(artifact, claim).isVerified()).as("bc verifies v" + claim.packetVersion())
+                        .isTrue();
+            }
+            GpgRunner gpg = gpgRunner("verify-gpg");
+            importIntoGpg("verify-gpg", sq.exportCert(v4));
+            OpenPgpClaim v4Claim = claims.stream().filter(c -> c.packetVersion() == 4).findFirst().orElseThrow();
+            assertThat(gpg.verify(artifact, v4Claim).isVerified()).as("gpg verifies the v4 block").isTrue();
         }
-        GpgRunner gpg = gpgRunner("verify-gpg");
-        importIntoGpg("verify-gpg", sq.exportCert(v4));
-        OpenPgpClaim v4Claim = claims.stream().filter(c -> c.packetVersion() == 4).findFirst().orElseThrow();
-        assertThat(gpg.verify(artifact, v4Claim).isVerified()).as("gpg verifies the v4 block").isTrue();
     }
 
     @Test
@@ -81,22 +82,23 @@ class MultiKeySigningTest {
     @DisabledIfSystemProperty(named = "sigmund.test.skip-sq", matches = "true")
     void bcSignsWithTwoV4KeysIntoOneAsc() throws Exception {
         BcKeyStore signStore = bcStore("sign");
-        BcRunner bcSigner = new BcRunner(signStore, null, null);
-        String fp1 = bcSigner.generateKey("One <one@example.com>", "ed25519", null);
-        String fp2 = bcSigner.generateKey("Two <two@example.com>", "ed25519", null);
+        try (BcRunner bcSigner = new BcRunner(signStore, null, null)) {
+            String fp1 = bcSigner.generateKey("One <one@example.com>", "ed25519", null);
+            String fp2 = bcSigner.generateKey("Two <two@example.com>", "ed25519", null);
 
-        List<OpenPgpClaim> claims = sign(bcConfig(fp1, fp2), null, "bc");
+            List<OpenPgpClaim> claims = sign(bcConfig(fp1, fp2), null, "bc");
 
-        assertThat(claims).extracting(OpenPgpClaim::packetVersion).containsExactly(4, 4);
-        List<Credential> proven = new ArrayList<>();
-        for (OpenPgpClaim claim : claims) {
-            VerifyResult result = bcSigner.verify(artifact, claim);
-            assertThat(result.isVerified()).as("bc verifies").isTrue();
-            proven.addAll(bcSigner.extractCredentials(result));
+            assertThat(claims).extracting(OpenPgpClaim::packetVersion).containsExactly(4, 4);
+            List<Credential> proven = new ArrayList<>();
+            for (OpenPgpClaim claim : claims) {
+                VerifyResult result = bcSigner.verify(artifact, claim);
+                assertThat(result.isVerified()).as("bc verifies").isTrue();
+                proven.addAll(bcSigner.extractCredentials(result));
+            }
+            assertThat(proven).contains(KeyCredential.openPgp(fp1), KeyCredential.openPgp(fp2));
+            verifyWithSq(claims, bcSigner.exportCert(fp1), bcSigner.exportCert(fp2));
+            verifyWithGpg(claims, bcSigner.exportCert(fp1), bcSigner.exportCert(fp2));
         }
-        assertThat(proven).contains(KeyCredential.openPgp(fp1), KeyCredential.openPgp(fp2));
-        verifyWithSq(claims, bcSigner.exportCert(fp1), bcSigner.exportCert(fp2));
-        verifyWithGpg(claims, bcSigner.exportCert(fp1), bcSigner.exportCert(fp2));
     }
 
     @Test
@@ -126,16 +128,17 @@ class MultiKeySigningTest {
         BcKeyStore verifyStore = bcStore("verify");
         importIntoBc(verifyStore, cert1);
         importIntoBc(verifyStore, cert2);
-        BcRunner bc = new BcRunner(verifyStore, null, null);
-        for (OpenPgpClaim claim : claims) {
-            assertThat(bc.verify(artifact, claim).isVerified()).as("bc verifies").isTrue();
+        try (BcRunner bc = new BcRunner(verifyStore, null, null)) {
+            for (OpenPgpClaim claim : claims) {
+                assertThat(bc.verify(artifact, claim).isVerified()).as("bc verifies").isTrue();
+            }
+            verifyWithSq(claims, cert1, cert2);
         }
-        verifyWithSq(claims, cert1, cert2);
     }
 
     @Test
     void aRequestedTypeWithNoKeyFailsBeforeSigning() throws Exception {
-        String fp = new BcRunner(bcStore("sign"), null, null).generateKey("One <one@example.com>", "ed25519",
+        String fp = BcTestKeys.generate(bcStore("sign"), "One <one@example.com>", "ed25519",
                 null);
         writeArtifact();
         Path out = Files.createDirectories(dir.resolve("out"));
