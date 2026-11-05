@@ -235,14 +235,15 @@ Unencrypted keys continue to work without a passphrase. Private key files in `bc
 
 For ephemeral CI runners (containers, VMs that are destroyed after each build), you can inject the BC signing key directly from a CI secret — no key files on disk, no `keygen` step on the runner.
 
-**One-time setup:** Export your signing key in ASCII-armored format and store it as a CI secret:
+**One-time setup:** Generate a key, export it armored, and store the file's content as a CI secret named `SIGMUND_BC_SIGNING_KEY`:
 
 ```bash
 sigmund keygen --userid "CI <ci@example.com>"
-# Copy the key file from ~/.local/share/sigmund/bc-private/<first 2 hex>/<rest of fingerprint>
-# Or export with GPG: gpg --export-secret-keys --armor <fingerprint>
-# Store the armored content as a CI secret named SIGMUND_BC_SIGNING_KEY
+sigmund export-secret-key --fingerprint <fingerprint> --output ci-key.asc
+# Store the content of ci-key.asc as the CI secret, then delete the file
 ```
+
+`export-secret-key` writes the key only to a file, created readable by you alone, and never to the console. A key generated with a passphrase stays encrypted with it; give the runner the passphrase as `SIGMUND_BC_PASSPHRASE`. For a key that GnuPG holds, `gpg --export-secret-keys --armor <fingerprint>` produces the same form.
 
 **On each CI run:** Set the environment variable and sign:
 

@@ -18,6 +18,7 @@ The Sigmund CLI provides command-line tools for key management, artifact signing
   - [sigmund verify-signature](#sigmund-verify-signature)
   - [sigmund inspect-signer](#sigmund-inspect-signer)
   - [sigmund export-cert](#sigmund-export-cert)
+  - [sigmund export-secret-key](#sigmund-export-secret-key)
 - [Configuration File](#configuration-file)
 - [CLI vs Maven Plugin](#cli-vs-maven-plugin)
 
@@ -305,6 +306,25 @@ The file holds the public key only, ASCII-armored, ready to upload to a keyserve
 
 ---
 
+### `sigmund export-secret-key`
+
+Export a Bouncy Castle secret key, armored, so that a machine without the key store can sign with it — a CI runner reading it from `SIGMUND_BC_SIGNING_KEY` or a `tools.bc.tsk-file` ([Ephemeral CI Signing](signing.md#ephemeral-ci-signing)). It looks in the stores `tools.bc` names in `sigmund.yaml`, as `keygen` does.
+
+```bash
+sigmund export-secret-key --fingerprint <FP> --output <FILE>
+```
+
+**Options:**
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--fingerprint` | Yes | — | Fingerprint of the key to export |
+| `--output`, `-o` | Yes | — | File to write the key to; it must not exist yet |
+
+Whoever holds the file can sign as the key. It is written only to a file, never to the console, created readable by its owner alone, and an existing file is not overwritten. A key generated with a passphrase stays encrypted with it.
+
+---
+
 ## Configuration File
 
 The CLI reads `sigmund.yaml` from the current directory, else `~/.config/sigmund/sigmund.yaml` (or the file `--config` names) to determine tool settings and defaults. This is the same configuration file used by the Maven plugin.
@@ -339,6 +359,7 @@ See [configuration.md](configuration.md) for full configuration reference.
 | Generate signing keys | CLI | One-time key management task |
 | Sign individual files | CLI | No Maven project needed |
 | Export certificates | CLI | Key management utility |
+| Export a key for CI signing | CLI | `sigmund export-secret-key`, once, on your machine |
 | Custom signing pipelines | CLI | Script-friendly command-line interface |
 
 For most development workflows, use the Maven plugin. The CLI complements the plugin by handling key management and enabling standalone signing workflows.

@@ -38,10 +38,47 @@ class EphemeralSigningKeyTest {
         Path artifact = workDir.resolve("artifact.jar");
         Files.writeString(artifact, "test artifact content");
 
-        Sigmund sigmund;
+        try (Sigmund sigmund = sigmundFor(mode)) {
+
+            Signer signer = sigmund.signer();
+
+            List<SigningInfo> infos = signer.plan().keys();
+            StringBuilder toolNames = new StringBuilder();
+            for (SigningInfo info : infos) {
+                if (!toolNames.isEmpty()) {
+                    toolNames.append(",");
+                }
+                toolNames.append(info.toolName());
+            }
+            Files.writeString(workDir.resolve("tool-names"), toolNames.toString());
+
+            for (SigningInfo info : infos) {
+                Files.writeString(workDir.resolve("fingerprint-" + info.toolName()),
+                        info.fingerprint());
+            }
+
+            SigningOutput output = signer.sign(artifact, workDir);
+            StringBuilder signedTools = new StringBuilder();
+            for (SignedFile sf : output.files()) {
+                if (!signedTools.isEmpty()) {
+                    signedTools.append(",");
+                }
+                signedTools.append(sf.toolName());
+            }
+            Files.writeString(workDir.resolve("signed-tools"), signedTools.toString());
+        }
+    }
+
+    /**
+     * The instance the child process signs with: no configuration in {@code exclusive} mode, so the
+     * environment key claims signing alone, and a {@code bc, gpg} toolchain in {@code key-provider}
+     * mode, where the key only supplies bc.
+     */
+    private static Sigmund sigmundFor(String mode) {
         if ("exclusive".equals(mode)) {
-            sigmund = Sigmund.builder().build();
-        } else if ("key-provider".equals(mode)) {
+            return Sigmund.builder().build();
+        }
+        if ("key-provider".equals(mode)) {
             List<String> toolchain = List.of("bc", "gpg");
             SigmundConfig config = new SigmundConfig(null, null, null,
                     new SigningConfig(null, toolchain, List.of(), Map.of()),
@@ -54,37 +91,9 @@ class EphemeralSigningKeyTest {
                     // tool not available (e.g., gpg not installed)
                 }
             }
-            sigmund = builder.build();
-        } else {
-            throw new IllegalArgumentException("Unknown mode: " + mode);
+            return builder.build();
         }
-
-        Signer signer = sigmund.signer();
-
-        List<SigningInfo> infos = signer.plan().keys();
-        StringBuilder toolNames = new StringBuilder();
-        for (SigningInfo info : infos) {
-            if (!toolNames.isEmpty()) {
-                toolNames.append(",");
-            }
-            toolNames.append(info.toolName());
-        }
-        Files.writeString(workDir.resolve("tool-names"), toolNames.toString());
-
-        for (SigningInfo info : infos) {
-            Files.writeString(workDir.resolve("fingerprint-" + info.toolName()),
-                    info.fingerprint());
-        }
-
-        SigningOutput output = signer.sign(artifact, workDir);
-        StringBuilder signedTools = new StringBuilder();
-        for (SignedFile sf : output.files()) {
-            if (!signedTools.isEmpty()) {
-                signedTools.append(",");
-            }
-            signedTools.append(sf.toolName());
-        }
-        Files.writeString(workDir.resolve("signed-tools"), signedTools.toString());
+        throw new IllegalArgumentException("Unknown mode: " + mode);
     }
 
     @Test
@@ -130,16 +139,17 @@ class EphemeralSigningKeyTest {
     private String generateArmoredKey(Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null,
                 tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        BcRunner gen = new BcRunner(store, null, null);
-        String fp = gen.generateKey("CI Test <ci@example.com>", "ed25519", null);
+        try (BcRunner gen = new BcRunner(store, null, null)) {
+            String fp = gen.generateKey("CI Test <ci@example.com>", "ed25519", null);
 
-        PGPSecretKeyRing ring = store.findSecretKey(fp);
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (ArmoredOutputStream armored = new ArmoredOutputStream(out)) {
-            ring.encode(armored);
+            PGPSecretKeyRing ring = store.findSecretKey(fp);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            try (ArmoredOutputStream armored = new ArmoredOutputStream(out)) {
+                ring.encode(armored);
+            }
+            Files.writeString(tempDir.resolve("fingerprint"), fp);
+            return out.toString();
         }
-        Files.writeString(tempDir.resolve("fingerprint"), fp);
-        return out.toString();
     }
 
     private int fork(String signingKey, Path workDir, String mode) throws Exception {

@@ -45,10 +45,11 @@ class BcGpgCrossToolTest {
         BcKeyStore bcStore = createBcKeyStore(tempDir);
         importKeyIntoBcStore(bcStore, armoredPubKey);
 
-        BcRunner bcRunner = new BcRunner(bcStore, null, null);
-        VerifyResult result = verifyWithBc(bcRunner, artifact, sigFile);
-        assertThat(result.isVerified())
-                .as("BC verification of GPG Ed25519 signature failed").isTrue();
+        try (BcRunner bcRunner = new BcRunner(bcStore, null, null)) {
+            VerifyResult result = verifyWithBc(bcRunner, artifact, sigFile);
+            assertThat(result.isVerified())
+                    .as("BC verification of GPG Ed25519 signature failed").isTrue();
+        }
     }
 
     @Test
@@ -67,10 +68,11 @@ class BcGpgCrossToolTest {
         BcKeyStore bcStore = createBcKeyStore(tempDir);
         importKeyIntoBcStore(bcStore, armoredPubKey);
 
-        BcRunner bcRunner = new BcRunner(bcStore, null, null);
-        VerifyResult result = verifyWithBc(bcRunner, artifact, sigFile);
-        assertThat(result.isVerified())
-                .as("BC verification of GPG RSA signature failed").isTrue();
+        try (BcRunner bcRunner = new BcRunner(bcStore, null, null)) {
+            VerifyResult result = verifyWithBc(bcRunner, artifact, sigFile);
+            assertThat(result.isVerified())
+                    .as("BC verification of GPG RSA signature failed").isTrue();
+        }
     }
 
     @Test
@@ -98,32 +100,34 @@ class BcGpgCrossToolTest {
      */
     private void bcSignGpgVerify(Path tempDir, String cipherSuite, String userId) throws Exception {
         BcKeyStore bcStore = createBcKeyStore(tempDir);
-        BcRunner bcRunner = new BcRunner(bcStore, null, null);
+        try (BcRunner bcRunner = new BcRunner(bcStore, null, null)) {
 
-        String fingerprint = bcRunner.generateKey(userId, cipherSuite, null);
-        BcRunner bcSigner = new BcRunner(bcStore, fingerprint, null);
+            String fingerprint = bcRunner.generateKey(userId, cipherSuite, null);
+            try (BcRunner bcSigner = new BcRunner(bcStore, fingerprint, null)) {
 
-        String armoredCert = bcRunner.exportCert(fingerprint);
+                String armoredCert = bcRunner.exportCert(fingerprint);
 
-        Path gpgHome = GpgTestKeys.home(tempDir.resolve("gpg-home"));
-        Path certFile = tempDir.resolve("bc-cert.asc");
-        Files.writeString(certFile, armoredCert);
-        CliTool.Result importResult = CliTool.run(
-                Map.of("GNUPGHOME", gpgHome.toString()),
-                "gpg", "--batch", "--import", certFile.toString());
-        assertThat(importResult.exitCode())
-                .as("GPG import of BC v4 cert failed: " + importResult.stderr()).isEqualTo(0);
+                Path gpgHome = GpgTestKeys.home(tempDir.resolve("gpg-home"));
+                Path certFile = tempDir.resolve("bc-cert.asc");
+                Files.writeString(certFile, armoredCert);
+                CliTool.Result importResult = CliTool.run(
+                        Map.of("GNUPGHOME", gpgHome.toString()),
+                        "gpg", "--batch", "--import", certFile.toString());
+                assertThat(importResult.exitCode())
+                        .as("GPG import of BC v4 cert failed: " + importResult.stderr()).isEqualTo(0);
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "cross-tool test BC→GPG " + cipherSuite);
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
-        SigningTests.signWithOnlyKey(bcSigner, artifact, sigFile);
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "cross-tool test BC→GPG " + cipherSuite);
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
+                SigningTests.signWithOnlyKey(bcSigner, artifact, sigFile);
 
-        CliTool.Result verifyResult = CliTool.run(
-                Map.of("GNUPGHOME", gpgHome.toString()),
-                "gpg", "--verify", sigFile.toString(), artifact.toString());
-        assertThat(verifyResult.exitCode() == 0 || verifyResult.stderr().contains("Good signature"))
-                .as("GPG verification of BC " + cipherSuite + " signature failed: " + verifyResult.stderr()).isTrue();
+                CliTool.Result verifyResult = CliTool.run(
+                        Map.of("GNUPGHOME", gpgHome.toString()),
+                        "gpg", "--verify", sigFile.toString(), artifact.toString());
+                assertThat(verifyResult.exitCode() == 0 || verifyResult.stderr().contains("Good signature"))
+                        .as("GPG verification of BC " + cipherSuite + " signature failed: " + verifyResult.stderr()).isTrue();
+            }
+        }
     }
 
     /**

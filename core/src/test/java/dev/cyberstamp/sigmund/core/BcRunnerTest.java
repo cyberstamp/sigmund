@@ -56,28 +56,34 @@ class BcRunnerTest {
         }
 
         private String typeOf(BcKeyStore store, String fingerprint) {
-            return new BcRunner(store, fingerprint, null).signingInfo().get(0).credentialType();
+            try (BcRunner runner = new BcRunner(store, fingerprint, null)) {
+                return runner.signingInfo().get(0).credentialType();
+            }
         }
 
         @Test
         void aNamedKeyMissingFromTheStoreIsTypedFromItsFingerprint(@TempDir Path dir) {
             String v4 = "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12";
             String v6 = "B".repeat(64);
-            BcRunner runner = new BcRunner(store(dir), List.of(v4, v6), null, null, null, null,
-                    BcRunner.DEFAULT_CIPHER_SUITE);
+            try (BcRunner runner = new BcRunner(store(dir), List.of(v4, v6), null, null, null, null,
+                    BcRunner.DEFAULT_CIPHER_SUITE)) {
 
-            List<SigningInfo> infos = runner.signingInfo();
+                List<SigningInfo> infos = runner.signingInfo();
 
-            assertThat(infos).extracting(SigningInfo::fingerprint).containsExactly(v4, v6);
-            assertThat(infos).extracting(SigningInfo::credentialType)
-                    .containsExactly(Credential.TYPE_PGP4, Credential.TYPE_PGP6);
+                assertThat(infos).extracting(SigningInfo::fingerprint).containsExactly(v4, v6);
+                assertThat(infos).extracting(SigningInfo::credentialType)
+                        .containsExactly(Credential.TYPE_PGP4, Credential.TYPE_PGP6);
+            }
         }
 
         @Test
         void anUnparseableTskFileGivesOneEntryOfUnknownType(@TempDir Path dir) throws IOException {
             Path tsk = Files.writeString(dir.resolve("broken.tsk"), "not a key");
 
-            List<SigningInfo> infos = new BcRunner(store(dir), null, tsk).signingInfo();
+            List<SigningInfo> infos;
+            try (BcRunner runner = new BcRunner(store(dir), null, tsk)) {
+                infos = runner.signingInfo();
+            }
 
             assertThat(infos).hasSize(1);
             assertThat(infos.get(0).fingerprint()).isEqualTo("broken.tsk");
@@ -88,7 +94,7 @@ class BcRunnerTest {
         void withoutACredentialTypeTheKeyIsV4(@TempDir Path dir) {
             BcKeyStore store = store(dir);
 
-            String fingerprint = new BcRunner(store, null, null).generateKey("A <a@example.com>", "ed25519", null);
+            String fingerprint = BcTestKeys.generate(store, "A <a@example.com>", "ed25519", null);
 
             assertThat(fingerprint).hasSize(40);
             assertThat(typeOf(store, fingerprint)).isEqualTo(Credential.TYPE_PGP4);
@@ -97,21 +103,21 @@ class BcRunnerTest {
         @Test
         void aV4Ed25519KeyUsesTheLegacyEncodingGnuPgReads(@TempDir Path dir) {
             BcKeyStore store = store(dir);
-            BcRunner runner = new BcRunner(store, null, null);
+            try (BcRunner runner = new BcRunner(store, null, null)) {
 
-            String fingerprint = runner.generateKey("A <a@example.com>", "ed25519", Credential.TYPE_PGP4);
+                String fingerprint = runner.generateKey("A <a@example.com>", "ed25519", Credential.TYPE_PGP4);
 
-            PGPPublicKeyRing ring = store.findPublicKey(fingerprint).ring();
-            ring.getPublicKeys().forEachRemaining(key -> assertThat(key.getAlgorithm())
-                    .isEqualTo(PublicKeyAlgorithmTags.EDDSA_LEGACY));
+                PGPPublicKeyRing ring = store.findPublicKey(fingerprint).ring();
+                ring.getPublicKeys().forEachRemaining(key -> assertThat(key.getAlgorithm())
+                        .isEqualTo(PublicKeyAlgorithmTags.EDDSA_LEGACY));
+            }
         }
 
         @Test
         void pgp6GivesAV6Key(@TempDir Path dir) {
             BcKeyStore store = store(dir);
 
-            String fingerprint = new BcRunner(store, null, null)
-                    .generateKey("A <a@example.com>", "ed25519", Credential.TYPE_PGP6);
+            String fingerprint = BcTestKeys.generate(store, "A <a@example.com>", "ed25519", Credential.TYPE_PGP6);
 
             assertThat(fingerprint).hasSize(64);
             assertThat(typeOf(store, fingerprint)).isEqualTo(Credential.TYPE_PGP6);
@@ -119,24 +125,21 @@ class BcRunnerTest {
 
         @Test
         void anEcdsaKeyCannotBeV6(@TempDir Path dir) {
-            assertThatThrownBy(() -> new BcRunner(store(dir), null, null)
-                    .generateKey("A <a@example.com>", "nistp256", Credential.TYPE_PGP6))
+            assertThatThrownBy(() -> BcTestKeys.generate(store(dir), "A <a@example.com>", "nistp256", Credential.TYPE_PGP6))
                     .isInstanceOf(ToolExecutionException.class)
                     .hasMessageContaining("nistp256 produces v4 keys only");
         }
 
         @Test
         void anEd448KeyIsV6Only(@TempDir Path dir) {
-            assertThatThrownBy(() -> new BcRunner(store(dir), null, null)
-                    .generateKey("A <a@example.com>", "ed448", null))
+            assertThatThrownBy(() -> BcTestKeys.generate(store(dir), "A <a@example.com>", "ed448", null))
                     .isInstanceOf(ToolExecutionException.class)
                     .hasMessageContaining("ed448 produces pgp6 keys only");
         }
 
         @Test
         void anUnknownCredentialTypeIsRejected(@TempDir Path dir) {
-            assertThatThrownBy(() -> new BcRunner(store(dir), null, null)
-                    .generateKey("A <a@example.com>", "ed25519", "sigstore"))
+            assertThatThrownBy(() -> BcTestKeys.generate(store(dir), "A <a@example.com>", "ed25519", "sigstore"))
                     .isInstanceOf(ToolExecutionException.class)
                     .hasMessageContaining("Unsupported credential type for bc keys: sigstore");
         }
@@ -330,25 +333,28 @@ class BcRunnerTest {
         @Test
         void aRunnerSigningFromATskVerifiesItsOwnSignatureOverEmptyStores() throws Exception {
             String fp = generate("signer");
-            BcRunner runner = new BcRunner(emptyStore(), null, exportTsk("signer", fp));
+            try (BcRunner runner = new BcRunner(emptyStore(), null, exportTsk("signer", fp))) {
 
-            VerifyResult result = runner.verify(artifact(), signWith(runner));
+                VerifyResult result = runner.verify(artifact(), signWith(runner));
 
-            assertThat(result.isVerified()).isTrue();
-            assertThat(((OpenPgpVerifyResult) result).primaryFingerprint()).isEqualTo(fp);
+                assertThat(result.isVerified()).isTrue();
+                assertThat(((OpenPgpVerifyResult) result).primaryFingerprint()).isEqualTo(fp);
+            }
         }
 
         @Test
         void anotherKeyIsStillNotFound() throws Exception {
-            BcRunner runner = new BcRunner(emptyStore(), null,
-                    exportTsk("signer", generate("signer")));
-            signWith(runner);
-            String otherFp = generate("other");
-            BcRunner other = new BcRunner(store("other"), otherFp, null);
+            try (BcRunner runner = new BcRunner(emptyStore(), null,
+                    exportTsk("signer", generate("signer")))) {
+                signWith(runner);
+                String otherFp = generate("other");
+                try (BcRunner other = new BcRunner(store("other"), otherFp, null)) {
 
-            VerifyResult result = runner.verify(artifact(), signWith(other));
+                    VerifyResult result = runner.verify(artifact(), signWith(other));
 
-            assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+                    assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+                }
+            }
         }
 
         private OpenPgpClaim signWith(BcRunner signer) throws IOException {
@@ -360,8 +366,7 @@ class BcRunnerTest {
         }
 
         private String generate(String name) {
-            return new BcRunner(store(name), null, null)
-                    .generateKey("Test <" + name + "@example.com>", "ed25519", null);
+            return BcTestKeys.generate(store(name), "Test <" + name + "@example.com>", "ed25519", null);
         }
 
         private Path exportTsk(String name, String fp) throws IOException {
@@ -400,12 +405,13 @@ class BcRunnerTest {
         @Test
         void aKeyNoStoreHasWithFetchingOffSaysSo() throws Exception {
             Signed signed = sign();
-            BcRunner verifier = new BcRunner(emptyStore(), null, null);
+            try (BcRunner verifier = new BcRunner(emptyStore(), null, null)) {
 
-            OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), signed.claim());
+                OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), signed.claim());
 
-            assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
-            assertThat(result.reasonDetail()).isEqualTo("no local key store has it, and key fetching is off");
+                assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+                assertThat(result.reasonDetail()).isEqualTo("no local key store has it, and key fetching is off");
+            }
         }
 
         @Test
@@ -413,12 +419,13 @@ class BcRunnerTest {
             Signed signed = sign();
             OpenPgpClaim keyIdOnly = new OpenPgpClaim(signed.claim().armoredBlock(),
                     signed.claim().packetVersion(), null, signed.claim().algorithmId(), null);
-            BcRunner verifier = new BcRunner(emptyStore(), null, null);
+            try (BcRunner verifier = new BcRunner(emptyStore(), null, null)) {
 
-            OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), keyIdOnly);
+                OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), keyIdOnly);
 
-            assertThat(result.reasonDetail())
-                    .isEqualTo("the signature names only a key ID, which is not looked up on keyservers");
+                assertThat(result.reasonDetail())
+                        .isEqualTo("the signature names only a key ID, which is not looked up on keyservers");
+            }
         }
 
         @Test
@@ -427,13 +434,14 @@ class BcRunnerTest {
             BcKeyStore store = emptyStore();
             store.addFetched(withoutSelfSignatures(signed.store().findPublicKey(signed.fingerprint()).ring()),
                     "hkps://keys.example.org");
-            BcRunner verifier = new BcRunner(store, null, null);
+            try (BcRunner verifier = new BcRunner(store, null, null)) {
 
-            OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), signed.claim());
+                OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), signed.claim());
 
-            assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
-            assertThat(result.reasonDetail())
-                    .isEqualTo("the copy from hkps://keys.example.org carries no self-signature binding the key");
+                assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+                assertThat(result.reasonDetail())
+                        .isEqualTo("the copy from hkps://keys.example.org carries no self-signature binding the key");
+            }
         }
 
         private record Signed(BcKeyStore store, String fingerprint, Path artifact, OpenPgpClaim claim) {
@@ -441,11 +449,13 @@ class BcRunnerTest {
 
         private Signed sign() throws IOException {
             BcKeyStore store = new BcKeyStore(null, dir.resolve("signer-cert-d"), dir.resolve("signer-bc"));
-            String fingerprint = new BcRunner(store, null, null).generateKey("Signer <signer@example.com>",
+            String fingerprint = BcTestKeys.generate(store, "Signer <signer@example.com>",
                     "ed25519", null);
             Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
             Path signature = dir.resolve("artifact.txt.asc");
-            SigningTests.signWithOnlyKey(new BcRunner(store, fingerprint, null), artifact, signature);
+            try (BcRunner signer = new BcRunner(store, fingerprint, null)) {
+                SigningTests.signWithOnlyKey(signer, artifact, signature);
+            }
             OpenPgpClaim claim = (OpenPgpClaim) new OpenPgpSignatureFormat()
                     .parse(Evidence.read(signature, Evidence.SOURCE_SIDECAR)).get(0);
             return new Signed(store, fingerprint, artifact, claim);
@@ -477,6 +487,49 @@ class BcRunnerTest {
         }
     }
 
+    /**
+     * A secret key leaves the store armored, as an environment variable such as
+     * {@code SIGMUND_BC_SIGNING_KEY} or a {@code tsk-file} takes it, and signs again from there.
+     */
+    @Nested
+    class SecretKeyExport {
+
+        @TempDir
+        Path dir;
+
+        @Test
+        void anExportedSecretKeySignsFromATskFile() throws Exception {
+            BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc-private"));
+            String fingerprint = BcTestKeys.generate(store, "CI <ci@example.com>", "ed25519", null);
+
+            String armored;
+            try (BcRunner exporter = new BcRunner(store, null, null)) {
+                armored = exporter.exportSecretKey(fingerprint);
+            }
+
+            assertThat(armored).startsWith("-----BEGIN PGP PRIVATE KEY BLOCK-----");
+            Path tsk = Files.writeString(dir.resolve("key.asc"), armored);
+            BcKeyStore empty = new BcKeyStore(null, dir.resolve("empty-cert-d"), dir.resolve("empty-bc"));
+            try (BcRunner signer = new BcRunner(empty, null, tsk)) {
+                assertThat(signer.signingInfo()).extracting(SigningInfo::fingerprint).containsExactly(fingerprint);
+                Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+                SigningTests.signWithOnlyKey(signer, artifact, dir.resolve("artifact.txt.asc"));
+                assertThat(dir.resolve("artifact.txt.asc")).exists();
+            }
+        }
+
+        @Test
+        void aKeyWithoutASecretInTheStoreIsAnError() {
+            BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc-private"));
+
+            try (BcRunner exporter = new BcRunner(store, null, null)) {
+                assertThatThrownBy(() -> exporter.exportSecretKey("0123456789ABCDEF0123456789ABCDEF01234567"))
+                        .isInstanceOf(ToolExecutionException.class)
+                        .hasMessageContaining("0123456789ABCDEF0123456789ABCDEF01234567");
+            }
+        }
+    }
+
     @Nested
     class MultipleKeys {
 
@@ -488,13 +541,14 @@ class BcRunnerTest {
             BcKeyStore store = store();
             String fp1 = generate(store, "one");
             String fp2 = generate(store, "two");
-            BcRunner runner = runner(store, fp1, fp2);
+            try (BcRunner runner = runner(store, fp1, fp2)) {
 
-            List<SigningInfo> keys = runner.signingInfo();
+                List<SigningInfo> keys = runner.signingInfo();
 
-            assertThat(keys).extracting(SigningInfo::fingerprint).containsExactly(fp1, fp2);
-            for (SigningInfo key : keys) {
-                assertThat(provenBy(runner, key)).contains(KeyCredential.openPgp(key.fingerprint()));
+                assertThat(keys).extracting(SigningInfo::fingerprint).containsExactly(fp1, fp2);
+                for (SigningInfo key : keys) {
+                    assertThat(provenBy(runner, key)).contains(KeyCredential.openPgp(key.fingerprint()));
+                }
             }
         }
 
@@ -503,14 +557,15 @@ class BcRunnerTest {
             BcKeyStore store = store();
             String fp1 = generate(store, "one");
             String outside = generate(store, "outside");
-            BcRunner runner = runner(store, fp1);
-            Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+            try (BcRunner runner = runner(store, fp1)) {
+                Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
 
-            assertThatThrownBy(() -> runner.sign(artifact, dir.resolve("artifact.txt.asc"),
-                    new SigningInfo("bc", outside, null, null, "pgp4")))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("bc")
-                    .hasMessageContaining(outside);
+                assertThatThrownBy(() -> runner.sign(artifact, dir.resolve("artifact.txt.asc"),
+                        new SigningInfo("bc", outside, null, null, "pgp4")))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("bc")
+                        .hasMessageContaining(outside);
+            }
         }
 
         private List<Credential> provenBy(BcRunner runner, SigningInfo key) throws IOException {
@@ -528,8 +583,7 @@ class BcRunnerTest {
         }
 
         private String generate(BcKeyStore store, String name) {
-            return new BcRunner(store, null, null)
-                    .generateKey("Test <" + name + "@example.com>", "ed25519", null);
+            return BcTestKeys.generate(store, "Test <" + name + "@example.com>", "ed25519", null);
         }
 
         private BcKeyStore store() {
@@ -540,8 +594,7 @@ class BcRunnerTest {
     private BcRunner createSigningRunner(Path tempDir) {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"),
                 tempDir.resolve("bc-private"));
-        String fingerprint = new BcRunner(store, null, null)
-                .generateKey("Test <test@example.com>", "ed25519", null);
+        String fingerprint = BcTestKeys.generate(store, "Test <test@example.com>", "ed25519", null);
         return new BcRunner(store, fingerprint, null);
     }
 
@@ -552,90 +605,103 @@ class BcRunnerTest {
 
     @Test
     void nameReturnsBc() {
-        BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")));
-        assertThat(runner.name()).isEqualTo("bc");
+        try (BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")))) {
+            assertThat(runner.name()).isEqualTo("bc");
+        }
     }
 
     @Test
     void isAvailableAlwaysTrue() {
-        BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")));
-        assertThat(runner.isAvailable()).isTrue();
+        try (BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")))) {
+            assertThat(runner.isAvailable()).isTrue();
+        }
     }
 
     @Test
     void canSignFalseWhenNoFingerprint() {
-        BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")));
-        assertThat(runner.canSign()).isFalse();
+        try (BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")))) {
+            assertThat(runner.canSign()).isFalse();
+        }
     }
 
     @Test
     void supportedCredentialTypesBothV4AndV6() {
-        BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")));
-        assertThat(runner.supportedCredentialTypes()).isEqualTo(Set.of("pgp4", "pgp6"));
+        try (BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")))) {
+            assertThat(runner.supportedCredentialTypes()).isEqualTo(Set.of("pgp4", "pgp6"));
+        }
     }
 
     @Test
     void canVerifyAcceptsAnyOpenPgpClaim() {
-        BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")));
-        assertThat(runner.canVerify(new OpenPgpClaim("block", 4, "FP", 27, null))).isTrue();
-        assertThat(runner.canVerify(new OpenPgpClaim("block", 6, "FP", 27, null))).isTrue();
+        try (BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")))) {
+            assertThat(runner.canVerify(new OpenPgpClaim("block", 4, "FP", 27, null))).isTrue();
+            assertThat(runner.canVerify(new OpenPgpClaim("block", 6, "FP", 27, null))).isTrue();
+        }
     }
 
     @Test
     void canVerifyRejectsSigstoreClaim() {
-        BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")));
-        assertThat(runner.canVerify(new SigstoreClaim("{}", null))).isFalse();
+        try (BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")))) {
+            assertThat(runner.canVerify(new SigstoreClaim("{}", null))).isFalse();
+        }
     }
 
     @Test
     void extractCredentialsV4ProducesOpenpgp4(@TempDir Path tempDir) {
-        BcRunner runner = createVerifyOnly(tempDir);
-        OpenPgpVerifyResult result = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>", "Ed25519",
-                4, "AABBCCDD", "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD");
-        var creds = runner.extractCredentials(result);
-        assertThat(creds).containsExactly(
-                new KeyCredential("pgp4", "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD"));
+        try (BcRunner runner = createVerifyOnly(tempDir)) {
+            OpenPgpVerifyResult result = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
+                    "Ed25519",
+                    4, "AABBCCDD", "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD");
+            var creds = runner.extractCredentials(result);
+            assertThat(creds).containsExactly(
+                    new KeyCredential("pgp4", "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD"));
+        }
     }
 
     @Test
     void extractCredentialsV6ProducesOpenpgp6(@TempDir Path tempDir) {
-        BcRunner runner = createVerifyOnly(tempDir);
-        OpenPgpVerifyResult result = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>", "Ed25519",
-                6, null, "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD");
-        var creds = runner.extractCredentials(result);
-        assertThat(creds).hasSize(1);
-        assertThat(creds.get(0).type()).isEqualTo("pgp6");
+        try (BcRunner runner = createVerifyOnly(tempDir)) {
+            OpenPgpVerifyResult result = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
+                    "Ed25519",
+                    6, null, "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD");
+            var creds = runner.extractCredentials(result);
+            assertThat(creds).hasSize(1);
+            assertThat(creds.get(0).type()).isEqualTo("pgp6");
+        }
     }
 
     @Test
     void extractCredentialsFailReturnsEmpty(@TempDir Path tempDir) {
-        BcRunner runner = createVerifyOnly(tempDir);
-        OpenPgpVerifyResult result = new OpenPgpVerifyResult(ClaimOutcome.FAILED, null, null, null, 4, null, null);
-        assertThat(runner.extractCredentials(result).isEmpty()).isTrue();
+        try (BcRunner runner = createVerifyOnly(tempDir)) {
+            OpenPgpVerifyResult result = new OpenPgpVerifyResult(ClaimOutcome.FAILED, null, null, null, 4, null, null);
+            assertThat(runner.extractCredentials(result).isEmpty()).isTrue();
+        }
     }
 
     @Test
     void signAndVerifyRoundTripEd25519(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        BcRunner runner = new BcRunner(store, null, null);
+        try (BcRunner runner = new BcRunner(store, null, null)) {
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
-        BcRunner signer = new BcRunner(store, fingerprint, null);
+            String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
+            try (BcRunner signer = new BcRunner(store, fingerprint, null)) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "test content");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "test content");
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
 
-        SignResult signResult = SigningTests.signWithOnlyKey(signer, artifact, sigFile);
-        assertThat(signResult.algorithm()).isNotNull();
+                SignResult signResult = SigningTests.signWithOnlyKey(signer, artifact, sigFile);
+                assertThat(signResult.algorithm()).isNotNull();
 
-        String armored = Files.readString(sigFile);
-        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-        OpenPgpClaim claim = new OpenPgpClaim(
-                armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
+                String armored = Files.readString(sigFile);
+                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+                OpenPgpClaim claim = new OpenPgpClaim(
+                        armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
 
-        VerifyResult result = signer.verify(artifact, claim);
-        assertThat(result.isVerified()).isTrue();
+                VerifyResult result = signer.verify(artifact, claim);
+                assertThat(result.isVerified()).isTrue();
+            }
+        }
     }
 
     @Test
@@ -643,33 +709,35 @@ class BcRunnerTest {
         // Use ECDSA P-256 which produces v4 keys — the real scenario where
         // Issuer Fingerprint subpackets (type 33) are often absent
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        BcRunner runner = new BcRunner(store, null, null);
+        try (BcRunner runner = new BcRunner(store, null, null)) {
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "nistp256", null);
-        BcRunner signer = new BcRunner(store, fingerprint, null);
+            String fingerprint = runner.generateKey("Test <test@example.com>", "nistp256", null);
+            try (BcRunner signer = new BcRunner(store, fingerprint, null)) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "test content");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
-        SigningTests.signWithOnlyKey(signer, artifact, sigFile);
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "test content");
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
+                SigningTests.signWithOnlyKey(signer, artifact, sigFile);
 
-        String armored = Files.readString(sigFile);
-        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+                String armored = Files.readString(sigFile);
+                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
 
-        // Create a claim with null fingerprint, simulating a v4 signature
-        // without Issuer Fingerprint subpacket (type 33)
-        OpenPgpClaim claimNoFp = new OpenPgpClaim(
-                armored, info.version(), null, info.algorithmId(), null);
+                // Create a claim with null fingerprint, simulating a v4 signature
+                // without Issuer Fingerprint subpacket (type 33)
+                OpenPgpClaim claimNoFp = new OpenPgpClaim(
+                        armored, info.version(), null, info.algorithmId(), null);
 
-        // BC should extract the key ID from the signature bytes and find the key
-        VerifyResult result = runner.verify(artifact, claimNoFp);
-        assertThat(result.isVerified()).isTrue();
+                // BC should extract the key ID from the signature bytes and find the key
+                VerifyResult result = runner.verify(artifact, claimNoFp);
+                assertThat(result.isVerified()).isTrue();
 
-        // a 64-bit key ID proves nothing, so what is proven is the verifying key by its full
-        // fingerprint, and the primary key it belongs to
-        assertThat(runner.extractCredentials(result)).contains(KeyCredential.openPgp(fingerprint));
-        assertThat(((OpenPgpVerifyResult) result).keySource().kind())
-                .isEqualTo(TrustRootRef.KIND_OPENPGP_CERT_D);
+                // a 64-bit key ID proves nothing, so what is proven is the verifying key by its full
+                // fingerprint, and the primary key it belongs to
+                assertThat(runner.extractCredentials(result)).contains(KeyCredential.openPgp(fingerprint));
+                assertThat(((OpenPgpVerifyResult) result).keySource().kind())
+                        .isEqualTo(TrustRootRef.KIND_OPENPGP_CERT_D);
+            }
+        }
     }
 
     @Test
@@ -677,30 +745,33 @@ class BcRunnerTest {
         // Use an empty key store — no keys available
         BcKeyStore emptyStore = new BcKeyStore(null, tempDir.resolve("empty-cert-d"),
                 tempDir.resolve("empty-bc-private"));
-        BcRunner runner = new BcRunner(emptyStore, null, null);
+        try (BcRunner runner = new BcRunner(emptyStore, null, null)) {
 
-        // Generate a key in a separate store just to produce a valid signature
-        BcKeyStore signerStore = new BcKeyStore(null, tempDir.resolve("signer-cert-d"),
-                tempDir.resolve("signer-bc-private"));
-        BcRunner signerRunner = new BcRunner(signerStore, null, null);
-        String fp = signerRunner.generateKey("Signer <signer@example.com>", "nistp256", null);
-        BcRunner signer = new BcRunner(signerStore, fp, null);
+            // Generate a key in a separate store just to produce a valid signature
+            BcKeyStore signerStore = new BcKeyStore(null, tempDir.resolve("signer-cert-d"),
+                    tempDir.resolve("signer-bc-private"));
+            try (BcRunner signerRunner = new BcRunner(signerStore, null, null)) {
+                String fp = signerRunner.generateKey("Signer <signer@example.com>", "nistp256", null);
+                try (BcRunner signer = new BcRunner(signerStore, fp, null)) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "test content");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
-        SigningTests.signWithOnlyKey(signer, artifact, sigFile);
+                    Path artifact = tempDir.resolve("artifact.txt");
+                    Files.writeString(artifact, "test content");
+                    Path sigFile = tempDir.resolve("artifact.txt.asc");
+                    SigningTests.signWithOnlyKey(signer, artifact, sigFile);
 
-        String armored = Files.readString(sigFile);
-        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+                    String armored = Files.readString(sigFile);
+                    OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
 
-        // Verify with null fingerprint against the empty store
-        OpenPgpClaim claimNoFp = new OpenPgpClaim(
-                armored, info.version(), null, info.algorithmId(), null);
+                    // Verify with null fingerprint against the empty store
+                    OpenPgpClaim claimNoFp = new OpenPgpClaim(
+                            armored, info.version(), null, info.algorithmId(), null);
 
-        VerifyResult result = runner.verify(artifact, claimNoFp);
-        assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
-        assertThat(((OpenPgpVerifyResult) result).fingerprint()).isNotNull();
+                    VerifyResult result = runner.verify(artifact, claimNoFp);
+                    assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+                    assertThat(((OpenPgpVerifyResult) result).fingerprint()).isNotNull();
+                }
+            }
+        }
     }
 
     /**
@@ -716,44 +787,48 @@ class BcRunnerTest {
     void ephemeralKeyCacheVerifiesWithoutPersisting(@TempDir Path tempDir) throws Exception {
         // Signer store: generate key and sign
         BcKeyStore signerStore = new BcKeyStore(null, tempDir.resolve("signer-cd"), tempDir.resolve("signer-bp"));
-        BcRunner signerRunner = new BcRunner(signerStore, null, null);
-        String fp = signerRunner.generateKey("Eph <eph@example.com>", "nistp256", null);
-        BcRunner signer = new BcRunner(signerStore, fp, null);
+        try (BcRunner signerRunner = new BcRunner(signerStore, null, null)) {
+            String fp = signerRunner.generateKey("Eph <eph@example.com>", "nistp256", null);
+            try (BcRunner signer = new BcRunner(signerStore, fp, null)) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "ephemeral test");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
-        SigningTests.signWithOnlyKey(signer, artifact, sigFile);
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "ephemeral test");
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
+                SigningTests.signWithOnlyKey(signer, artifact, sigFile);
 
-        // Verifier store: empty, isolated from signer
-        Path verifierCertD = tempDir.resolve("verifier-cd");
-        BcKeyStore verifierStore = new BcKeyStore(null, verifierCertD, tempDir.resolve("verifier-bp"));
-        BcRunner verifier = new BcRunner(verifierStore, null, null);
+                // Verifier store: empty, isolated from signer
+                Path verifierCertD = tempDir.resolve("verifier-cd");
+                BcKeyStore verifierStore = new BcKeyStore(null, verifierCertD, tempDir.resolve("verifier-bp"));
+                try (BcRunner verifier = new BcRunner(verifierStore, null, null)) {
 
-        // Export the key, then simulate ephemeral fetch by calling cacheEphemeral directly
-        // (fetchKey would call fetchKeyFromHkp which needs a real keyserver)
-        var pubRing = signerStore.findPublicKey(fp).ring();
-        verifierStore.addFetched(pubRing, "hkps://keys.example.org");
+                    // Export the key, then simulate ephemeral fetch by calling cacheEphemeral directly
+                    // (fetchKey would call fetchKeyFromHkp which needs a real keyserver)
+                    var pubRing = signerStore.findPublicKey(fp).ring();
+                    verifierStore.addFetched(pubRing, "hkps://keys.example.org");
 
-        String armored = Files.readString(sigFile);
-        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-        OpenPgpClaim claim = new OpenPgpClaim(
-                armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
+                    String armored = Files.readString(sigFile);
+                    OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+                    OpenPgpClaim claim = new OpenPgpClaim(
+                            armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
 
-        VerifyResult result = verifier.verify(artifact, claim);
-        assertThat(result.isVerified()).isTrue();
-        assertThat(Files.exists(verifierCertD)).as("cert-d should not exist — key was ephemeral").isFalse();
+                    VerifyResult result = verifier.verify(artifact, claim);
+                    assertThat(result.isVerified()).isTrue();
+                    assertThat(Files.exists(verifierCertD)).as("cert-d should not exist — key was ephemeral").isFalse();
+                }
+            }
+        }
     }
 
     @Test
     void verifyNoKeyReturnsNoKeyVerdict(@TempDir Path tempDir) throws Exception {
-        BcRunner runner = createVerifyOnly(tempDir);
-        OpenPgpClaim claim = new OpenPgpClaim(
-                "-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n",
-                4, "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF", 27, null);
+        try (BcRunner runner = createVerifyOnly(tempDir)) {
+            OpenPgpClaim claim = new OpenPgpClaim(
+                    "-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n",
+                    4, "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF", 27, null);
 
-        VerifyResult result = runner.verify(tempDir.resolve("nonexistent"), claim);
-        assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+            VerifyResult result = runner.verify(tempDir.resolve("nonexistent"), claim);
+            assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+        }
     }
 
     // --- Passphrase-protected key tests ---
@@ -767,16 +842,17 @@ class BcRunnerTest {
     @Test
     void generateKeyWithPassphraseStoresEncrypted(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        BcRunner runner = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
+        try (BcRunner runner = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE))) {
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
-        PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
-        assertThat(ring).isNotNull();
+            String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
+            PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
+            assertThat(ring).isNotNull();
 
-        for (var keys = ring.getSecretKeys(); keys.hasNext();) {
-            PGPSecretKey sk = keys.next();
-            assertThat(sk.getKeyEncryptionAlgorithm()).as("Secret key should be encrypted")
-                    .isNotEqualTo(SymmetricKeyAlgorithmTags.NULL);
+            for (var keys = ring.getSecretKeys(); keys.hasNext();) {
+                PGPSecretKey sk = keys.next();
+                assertThat(sk.getKeyEncryptionAlgorithm()).as("Secret key should be encrypted")
+                        .isNotEqualTo(SymmetricKeyAlgorithmTags.NULL);
+            }
         }
     }
 
@@ -784,146 +860,160 @@ class BcRunnerTest {
     void signAndVerifyWithEncryptedKey(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
-        BcRunner runner = new BcRunner(store, null, null, provider);
+        try (BcRunner runner = new BcRunner(store, null, null, provider)) {
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
-        BcRunner signer = new BcRunner(store, fingerprint, null, provider);
+            String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
+            try (BcRunner signer = new BcRunner(store, fingerprint, null, provider)) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "encrypted key content");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "encrypted key content");
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
 
-        SignResult signResult = SigningTests.signWithOnlyKey(signer, artifact, sigFile);
-        assertThat(signResult.algorithm()).isNotNull();
+                SignResult signResult = SigningTests.signWithOnlyKey(signer, artifact, sigFile);
+                assertThat(signResult.algorithm()).isNotNull();
 
-        String armored = Files.readString(sigFile);
-        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-        OpenPgpClaim claim = new OpenPgpClaim(
-                armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
+                String armored = Files.readString(sigFile);
+                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+                OpenPgpClaim claim = new OpenPgpClaim(
+                        armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
 
-        VerifyResult result = signer.verify(artifact, claim);
-        assertThat(result.isVerified()).isTrue();
+                VerifyResult result = signer.verify(artifact, claim);
+                assertThat(result.isVerified()).isTrue();
+            }
+        }
     }
 
     @Test
     void signWithEncryptedKeyNoProviderThrows(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
-        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
+        try (BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE))) {
+            String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
 
-        // signer has no passphrase provider
-        BcRunner signer = new BcRunner(store, fingerprint, null);
+            // signer has no passphrase provider
+            try (BcRunner signer = new BcRunner(store, fingerprint, null)) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "content");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "content");
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
 
-        assertThatThrownBy(() -> SigningTests.signWithOnlyKey(signer, artifact, sigFile))
-                .isInstanceOf(ToolExecutionException.class)
-                .hasMessageContaining("passphrase");
+                assertThatThrownBy(() -> SigningTests.signWithOnlyKey(signer, artifact, sigFile))
+                        .isInstanceOf(ToolExecutionException.class)
+                        .hasMessageContaining("passphrase");
+            }
+        }
     }
 
     @Test
     void signWithWrongPassphraseThrows(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
-        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
+        try (BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE))) {
+            String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
 
-        BcRunner signer = new BcRunner(store, fingerprint, null,
-                fixedPassphrase("wrong-passphrase".toCharArray()));
+            try (BcRunner signer = new BcRunner(store, fingerprint, null,
+                    fixedPassphrase("wrong-passphrase".toCharArray()))) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "content");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "content");
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
 
-        assertThatThrownBy(() -> SigningTests.signWithOnlyKey(signer, artifact, sigFile))
-                .isInstanceOf(ToolExecutionException.class);
+                assertThatThrownBy(() -> SigningTests.signWithOnlyKey(signer, artifact, sigFile))
+                        .isInstanceOf(ToolExecutionException.class);
+            }
+        }
     }
 
     @Test
     void signWithNullPassphraseFromProviderThrows(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE));
-        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
+        try (BcRunner generator = new BcRunner(store, null, null, fixedPassphrase(TEST_PASSPHRASE))) {
+            String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
 
-        BcRunner signer = new BcRunner(store, fingerprint, null, fp -> null);
+            try (BcRunner signer = new BcRunner(store, fingerprint, null, fp -> null)) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "content");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "content");
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
 
-        assertThatThrownBy(() -> SigningTests.signWithOnlyKey(signer, artifact, sigFile))
-                .isInstanceOf(ToolExecutionException.class)
-                .hasMessageContaining("passphrase");
+                assertThatThrownBy(() -> SigningTests.signWithOnlyKey(signer, artifact, sigFile))
+                        .isInstanceOf(ToolExecutionException.class)
+                        .hasMessageContaining("passphrase");
+            }
+        }
     }
 
     @Test
     void generateKeyNullPassphraseFromProviderStoresUnencrypted(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        BcRunner runner = new BcRunner(store, null, null, fp -> null);
+        try (BcRunner runner = new BcRunner(store, null, null, fp -> null)) {
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
-        PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
-        assertThat(ring).isNotNull();
+            String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
+            PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
+            assertThat(ring).isNotNull();
 
-        PGPSecretKey primary = ring.getSecretKey();
-        assertThat(primary.getKeyEncryptionAlgorithm()).isEqualTo(SymmetricKeyAlgorithmTags.NULL);
+            PGPSecretKey primary = ring.getSecretKey();
+            assertThat(primary.getKeyEncryptionAlgorithm()).isEqualTo(SymmetricKeyAlgorithmTags.NULL);
+        }
     }
 
     @Test
     void generateKeyEmptyPassphraseStoresUnencrypted(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        BcRunner runner = new BcRunner(store, null, null, fp -> new char[0]);
+        try (BcRunner runner = new BcRunner(store, null, null, fp -> new char[0])) {
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
-        PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
+            String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
+            PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
 
-        PGPSecretKey primary = ring.getSecretKey();
-        assertThat(primary.getKeyEncryptionAlgorithm()).isEqualTo(SymmetricKeyAlgorithmTags.NULL);
+            PGPSecretKey primary = ring.getSecretKey();
+            assertThat(primary.getKeyEncryptionAlgorithm()).isEqualTo(SymmetricKeyAlgorithmTags.NULL);
+        }
     }
 
     @Test
     void signAndVerifyEncryptedKeyRsa(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
-        BcRunner runner = new BcRunner(store, null, null, provider);
+        try (BcRunner runner = new BcRunner(store, null, null, provider)) {
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "rsa4096", null);
-        BcRunner signer = new BcRunner(store, fingerprint, null, provider);
+            String fingerprint = runner.generateKey("Test <test@example.com>", "rsa4096", null);
+            try (BcRunner signer = new BcRunner(store, fingerprint, null, provider)) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "rsa encrypted key");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
-        SigningTests.signWithOnlyKey(signer, artifact, sigFile);
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "rsa encrypted key");
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
+                SigningTests.signWithOnlyKey(signer, artifact, sigFile);
 
-        String armored = Files.readString(sigFile);
-        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-        OpenPgpClaim claim = new OpenPgpClaim(
-                armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
+                String armored = Files.readString(sigFile);
+                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+                OpenPgpClaim claim = new OpenPgpClaim(
+                        armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
 
-        assertThat(signer.verify(artifact, claim).isVerified()).isTrue();
+                assertThat(signer.verify(artifact, claim).isVerified()).isTrue();
+            }
+        }
     }
 
     @Test
     void signAndVerifyEncryptedKeyEcdsaV4(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
-        BcRunner runner = new BcRunner(store, null, null, provider);
+        try (BcRunner runner = new BcRunner(store, null, null, provider)) {
 
-        String fingerprint = runner.generateKey("Test <test@example.com>", "nistp256", null);
-        BcRunner signer = new BcRunner(store, fingerprint, null, provider);
+            String fingerprint = runner.generateKey("Test <test@example.com>", "nistp256", null);
+            try (BcRunner signer = new BcRunner(store, fingerprint, null, provider)) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "ecdsa v4 encrypted key");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
-        SigningTests.signWithOnlyKey(signer, artifact, sigFile);
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "ecdsa v4 encrypted key");
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
+                SigningTests.signWithOnlyKey(signer, artifact, sigFile);
 
-        String armored = Files.readString(sigFile);
-        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-        OpenPgpClaim claim = new OpenPgpClaim(
-                armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
+                String armored = Files.readString(sigFile);
+                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+                OpenPgpClaim claim = new OpenPgpClaim(
+                        armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
 
-        assertThat(signer.verify(artifact, claim).isVerified()).isTrue();
+                assertThat(signer.verify(artifact, claim).isVerified()).isTrue();
+            }
+        }
     }
 
     @Test
@@ -935,23 +1025,24 @@ class BcRunnerTest {
 
         // Generate an encrypted key via direct BcRunner
         BcKeyStore store = new BcKeyStore(null, Path.of(certD), Path.of(bcPrivate));
-        BcRunner generator = new BcRunner(store, null, null, provider);
-        String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
+        try (BcRunner generator = new BcRunner(store, null, null, provider)) {
+            String fingerprint = generator.generateKey("Test <test@example.com>", "ed25519", null);
 
-        // Sign via Sigmund builder with bcPassphraseProvider — point to same key store
-        try (Sigmund sigmund = Sigmund.builder()
-                .bcPassphraseProvider(provider)
-                .addSigningTool("bc", Map.of(
-                        "signing-fingerprint", fingerprint,
-                        "cert-d-home", certD,
-                        "bc-private-home", bcPrivate))
-                .build()) {
+            // Sign via Sigmund builder with bcPassphraseProvider — point to same key store
+            try (Sigmund sigmund = Sigmund.builder()
+                    .bcPassphraseProvider(provider)
+                    .addSigningTool("bc", Map.of(
+                            "signing-fingerprint", fingerprint,
+                            "cert-d-home", certD,
+                            "bc-private-home", bcPrivate))
+                    .build()) {
 
-            Path artifact = tempDir.resolve("artifact.txt");
-            Files.writeString(artifact, "builder test");
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "builder test");
 
-            SigningOutput output = sigmund.signer().sign(artifact, tempDir);
-            assertThat(output.files().isEmpty()).isFalse();
+                SigningOutput output = sigmund.signer().sign(artifact, tempDir);
+                assertThat(output.files().isEmpty()).isFalse();
+            }
         }
     }
 }

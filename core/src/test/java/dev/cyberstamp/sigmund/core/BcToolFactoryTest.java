@@ -30,19 +30,21 @@ class BcToolFactoryTest {
 
     @Test
     void createVerifyOnlyIsAvailable() {
-        SignatureTool tool = new BcToolFactory().createVerifyOnly(Map.of());
-        assertThat(tool.isAvailable()).isTrue();
-        assertThat(tool.canSign()).isFalse();
-        assertThat(tool.name()).isEqualTo("bc");
+        try (BcRunner tool = (BcRunner) new BcToolFactory().createVerifyOnly(Map.of())) {
+            assertThat(tool.isAvailable()).isTrue();
+            assertThat(tool.canSign()).isFalse();
+            assertThat(tool.name()).isEqualTo("bc");
+        }
     }
 
     @Test
     void createVerifyOnlyWithCustomPaths() {
-        SignatureTool tool = new BcToolFactory().createVerifyOnly(Map.of(
+        try (BcRunner tool = (BcRunner) new BcToolFactory().createVerifyOnly(Map.of(
                 "gnupg-home", "/tmp/gnupg",
                 "cert-d-home", "/tmp/cert-d",
-                "bc-private-home", "/tmp/bc-private"));
-        assertThat(tool.isAvailable()).isTrue();
+                "bc-private-home", "/tmp/bc-private"))) {
+            assertThat(tool.isAvailable()).isTrue();
+        }
     }
 
     @Test
@@ -83,9 +85,10 @@ class BcToolFactoryTest {
 
     @Test
     void createWithSigningFingerprint() {
-        SignatureTool tool = new BcToolFactory().createSigning(Map.of(
-                "signing-fingerprint", "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD"), null);
-        assertThat(tool.canSign()).isTrue();
+        try (BcRunner tool = (BcRunner) new BcToolFactory().createSigning(Map.of(
+                "signing-fingerprint", "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD"), null)) {
+            assertThat(tool.canSign()).isTrue();
+        }
     }
 
     // --- resolveSigningKeyBytes (custom env var path) ---
@@ -162,17 +165,18 @@ class BcToolFactoryTest {
         PGPSecretKeyRing ring = store.findSecretKey(fingerprint);
         byte[] armoredKey = armorSecretKey(ring);
 
-        BcRunner bcSigner = new BcRunner(store, null, null,
-                armoredKey, null, null);
+        try (BcRunner bcSigner = new BcRunner(store, null, null,
+                armoredKey, null, null)) {
 
-        Signer signer = new Signer(List.of(bcSigner), List.of(), null);
+            Signer signer = new Signer(List.of(bcSigner), List.of(), null);
 
-        Path artifact = tempDir.resolve("artifact.jar");
-        Files.writeString(artifact, "signer test");
+            Path artifact = tempDir.resolve("artifact.jar");
+            Files.writeString(artifact, "signer test");
 
-        SigningOutput output = signer.sign(artifact, tempDir);
-        assertThat(output.files().size()).isEqualTo(1);
-        assertThat(output.files().get(0).toolName()).isEqualTo("bc");
+            SigningOutput output = signer.sign(artifact, tempDir);
+            assertThat(output.files().size()).isEqualTo(1);
+            assertThat(output.files().get(0).toolName()).isEqualTo("bc");
+        }
     }
 
     private static byte[] armorSecretKey(PGPSecretKeyRing ring) throws Exception {

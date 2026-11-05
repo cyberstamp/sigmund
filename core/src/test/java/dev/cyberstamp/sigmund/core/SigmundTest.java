@@ -596,7 +596,7 @@ class SigmundTest {
         void rejectsUnavailableExplicitTool() {
             var available = mockTool("gpg", true, false, Set.of("pgp4"));
             var unavailable = mockTool("sq", false, false, Set.of("pgp6"));
-            assertThatThrownBy(() -> Sigmund.builder().addTool(available).addTool(unavailable).build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(Sigmund.builder().addTool(available).addTool(unavailable)))
                     .isInstanceOf(SigmundException.class)
                     .hasMessageContaining("sq")
                     .hasMessageContaining("not available");
@@ -608,8 +608,8 @@ class SigmundTest {
             var verificationConfig = new VerificationConfig(false, false, List.of(),
                     List.of("nonexistent", "gpg"));
 
-            assertThatThrownBy(() -> Sigmund.builder().addTool(tool)
-                    .verificationConfig(verificationConfig).build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(Sigmund.builder().addTool(tool)
+                    .verificationConfig(verificationConfig)))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining("verification.toolchain: unknown tool 'nonexistent'");
         }
@@ -703,14 +703,14 @@ class SigmundTest {
 
         @Test
         void anUnknownToolIsErrorWithTheNearestName() {
-            assertThatThrownBy(() -> builderFor("tools: { sqq: { home: /tmp/sq } }").build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(builderFor("tools: { sqq: { home: /tmp/sq } }")))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining("tools: unknown tool 'sqq' — did you mean 'sq'?");
         }
 
         @Test
         void anUnknownToolNamesTheToolsAvailable() {
-            assertThatThrownBy(() -> builderFor("tools: { cosign: {} }").build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(builderFor("tools: { cosign: {} }")))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining("tools: unknown tool 'cosign'")
                     .hasMessageContaining("tools available: bc, gpg, sq");
@@ -718,42 +718,43 @@ class SigmundTest {
 
         @Test
         void anUnknownSettingIsErrorWithTheNearestName() {
-            assertThatThrownBy(() -> builderFor("tools: { bc: { gnupg-hom: /tmp/gnupg } }").build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(builderFor("tools: { bc: { gnupg-hom: /tmp/gnupg } }")))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining("tools.bc: unknown setting 'gnupg-hom' — did you mean 'gnupg-home'?");
         }
 
         @Test
         void credentialsIsNotAToolSetting() {
-            assertThatThrownBy(() -> builderFor("tools: { bc: { credentials: pgp4 } }").build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(builderFor("tools: { bc: { credentials: pgp4 } }")))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining("tools.bc: unknown setting 'credentials'");
         }
 
         @Test
         void aSettingAnotherToolAcceptsIsStillUnknownHere() {
-            assertThatThrownBy(() -> builderFor("tools: { sq: { gnupg-home: /tmp/gnupg } }").build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(builderFor("tools: { sq: { gnupg-home: /tmp/gnupg } }")))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining("tools.sq: unknown setting 'gnupg-home'");
         }
 
         @Test
         void anUnknownToolInTheVerificationToolchainIsError() {
-            assertThatThrownBy(() -> builderFor("verification: { toolchain: [bcc] }").build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(builderFor("verification: { toolchain: [bcc] }")))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining("verification.toolchain: unknown tool 'bcc' — did you mean 'bc'?");
         }
 
         @Test
         void anUnknownToolInTheSigningToolchainIsError() {
-            assertThatThrownBy(() -> builderFor("signing: { toolchain: [gpgg] }").build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(builderFor("signing: { toolchain: [gpgg] }")))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining("signing.toolchain: unknown tool 'gpgg' — did you mean 'gpg'?");
         }
 
         @Test
         void aSigningFingerprintThatIsNotFullIsErrorEvenForAToolNoToolchainNames() {
-            assertThatThrownBy(() -> builderFor("tools: { gpg: { signing-fingerprint: \"0xDEADBEEF\" } }").build())
+            assertThatThrownBy(
+                    () -> SigmundTests.buildAndClose(builderFor("tools: { gpg: { signing-fingerprint: \"0xDEADBEEF\" } }")))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining("tools.gpg.signing-fingerprint")
                     .hasMessageContaining("not a full fingerprint");
@@ -761,14 +762,14 @@ class SigmundTest {
 
         @Test
         void aListForASettingThatTakesOneValueIsError() {
-            assertThatThrownBy(() -> builderFor("tools: { bc: { gnupg-home: [/a, /b] } }").build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(builderFor("tools: { bc: { gnupg-home: [/a, /b] } }")))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining("tools.bc.gnupg-home must be a single value, not a list");
         }
 
         @Test
         void aScalarHoldingSeveralValuesForAListSettingIsError() {
-            assertThatThrownBy(() -> builderFor("tools: { sq: { signing-fingerprint: \"A,B\" } }").build())
+            assertThatThrownBy(() -> SigmundTests.buildAndClose(builderFor("tools: { sq: { signing-fingerprint: \"A,B\" } }")))
                     .isInstanceOf(PolicyConfigException.class)
                     .hasMessageContaining(
                             "tools.sq.signing-fingerprint: 'A,B' holds more than one value; write them as a list");

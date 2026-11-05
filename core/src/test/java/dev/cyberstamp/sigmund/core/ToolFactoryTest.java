@@ -350,7 +350,10 @@ class ToolFactoryTest {
                     "bc-private-home", dir.resolve("bc-private").toString());
             new BcToolFactory().checkSettingValues(settings);
 
-            List<SigningInfo> keys = new BcToolFactory().createSigning(settings, null).signingInfo();
+            List<SigningInfo> keys;
+            try (BcRunner bc = (BcRunner) new BcToolFactory().createSigning(settings, null)) {
+                keys = bc.signingInfo();
+            }
 
             assertThat(keys).extracting(SigningInfo::fingerprint).containsExactly(V4);
         }

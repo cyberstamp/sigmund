@@ -124,6 +124,11 @@ Rules the code relies on; breaking one is a defect even if tests pass.
 - Write tests for every change. TDD where practical.
 - JUnit with nested test classes organized by concern.
 - Use `@TempDir` for file-system tests.
+- Close what a test opens: anything `AutoCloseable` — a `BcRunner`, a `KeyserverFetcher`, a `Sigmund` — goes in
+  try-with-resources, including a runner a factory returns as a `SignatureTool`, which is not itself
+  `AutoCloseable`.
+  Key generation that needs no runner afterwards goes through `BcTestKeys.generate`, and gpg keys through
+  `GpgTestKeys`.
 - Mock tools for unit tests; integration tests use the real tools and fail when one is missing.
   `gpg` and a post-quantum `sq` (1.4.0+) are required to build, as CI installs them. A test that
   needs a tool carries `@DisabledIfSystemProperty(named = "sigmund.test.skip-<gpg|sq>",

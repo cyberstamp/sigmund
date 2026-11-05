@@ -107,10 +107,11 @@ class AssertedSignerSigningTest {
                       toolchain: [bc]
                       resolve-signers: false
                     """.formatted(String.join(", ", pinned))));
-            BcRunner runner = new BcRunner(store(), List.of(fp1, fp2), null, null, null, null,
-                    BcRunner.DEFAULT_CIPHER_SUITE);
-            try (Sigmund sigmund = Sigmund.builder().config(config).addTool(runner).build()) {
-                sigmund.signer().sign(artifact, out);
+            try (BcRunner runner = new BcRunner(store(), List.of(fp1, fp2), null, null, null, null,
+                    BcRunner.DEFAULT_CIPHER_SUITE)) {
+                try (Sigmund sigmund = Sigmund.builder().config(config).addTool(runner).build()) {
+                    sigmund.signer().sign(artifact, out);
+                }
             }
         }
 
@@ -129,17 +130,18 @@ class AssertedSignerSigningTest {
          */
         private List<Credential> provenByEachBlock(Path certD) throws IOException {
             Path artifact = dir.resolve("lib-1.0.jar");
-            BcRunner verifier = new BcRunner(new BcKeyStore(null, certD, dir.resolve("verify-bc-private")),
-                    null, null);
-            List<Claim> claims = new OpenPgpSignatureFormat()
-                    .parse(Evidence.read(dir.resolve("out/lib-1.0.jar.asc"), Evidence.SOURCE_SIDECAR));
-            List<Credential> proven = new ArrayList<>();
-            for (Claim claim : claims) {
-                VerifyResult result = verifier.verify(artifact, claim);
-                assertThat(result.isVerified()).as("block verifies").isTrue();
-                proven.addAll(verifier.extractCredentials(result));
+            try (BcRunner verifier = new BcRunner(new BcKeyStore(null, certD, dir.resolve("verify-bc-private")),
+                    null, null)) {
+                List<Claim> claims = new OpenPgpSignatureFormat()
+                        .parse(Evidence.read(dir.resolve("out/lib-1.0.jar.asc"), Evidence.SOURCE_SIDECAR));
+                List<Credential> proven = new ArrayList<>();
+                for (Claim claim : claims) {
+                    VerifyResult result = verifier.verify(artifact, claim);
+                    assertThat(result.isVerified()).as("block verifies").isTrue();
+                    proven.addAll(verifier.extractCredentials(result));
+                }
+                return proven;
             }
-            return proven;
         }
 
         private Path exportSecretKey(String fp) throws IOException {
@@ -151,7 +153,7 @@ class AssertedSignerSigningTest {
         }
 
         private String generate() {
-            return new BcRunner(store(), null, null).generateKey("Alice <alice@example.com>",
+            return BcTestKeys.generate(store(), "Alice <alice@example.com>",
                     "ed25519", null);
         }
 

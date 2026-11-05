@@ -41,42 +41,45 @@ class BcSqCrossToolTest {
         BcKeyStore bcStore = createBcKeyStore(tempDir);
         importKeyIntoBcStore(bcStore, sqCert);
 
-        BcRunner bcRunner = new BcRunner(bcStore, null, null);
-        VerifyResult result = verifyWithBc(bcRunner, artifact, sigFile);
-        assertThat(result.isVerified())
-                .as("BC verification of SQ Ed25519 signature failed").isTrue();
+        try (BcRunner bcRunner = new BcRunner(bcStore, null, null)) {
+            VerifyResult result = verifyWithBc(bcRunner, artifact, sigFile);
+            assertThat(result.isVerified())
+                    .as("BC verification of SQ Ed25519 signature failed").isTrue();
+        }
     }
 
     @Test
     void bcSignSqVerifyEd25519(@TempDir Path tempDir) throws Exception {
         BcKeyStore bcStore = createBcKeyStore(tempDir);
-        BcRunner bcRunner = new BcRunner(bcStore, null, null);
+        try (BcRunner bcRunner = new BcRunner(bcStore, null, null)) {
 
-        String bcFp = bcRunner.generateKey("BC Test <bc@test.example>", "ed25519", Credential.TYPE_PGP6);
-        BcRunner bcSigner = new BcRunner(bcStore, bcFp, null);
+            String bcFp = bcRunner.generateKey("BC Test <bc@test.example>", "ed25519", Credential.TYPE_PGP6);
+            try (BcRunner bcSigner = new BcRunner(bcStore, bcFp, null)) {
 
-        Path artifact = tempDir.resolve("artifact.txt");
-        Files.writeString(artifact, "cross-tool test BC→SQ ed25519");
-        Path sigFile = tempDir.resolve("artifact.txt.asc");
-        SigningTests.signWithOnlyKey(bcSigner, artifact, sigFile);
+                Path artifact = tempDir.resolve("artifact.txt");
+                Files.writeString(artifact, "cross-tool test BC→SQ ed25519");
+                Path sigFile = tempDir.resolve("artifact.txt.asc");
+                SigningTests.signWithOnlyKey(bcSigner, artifact, sigFile);
 
-        String bcCert = bcRunner.exportCert(bcFp);
-        Path sqHome = tempDir.resolve("sq-home");
-        importCertIntoSq(sqHome, bcCert, tempDir);
+                String bcCert = bcRunner.exportCert(bcFp);
+                Path sqHome = tempDir.resolve("sq-home");
+                importCertIntoSq(sqHome, bcCert, tempDir);
 
-        SqRunner sq = new SqRunner("sq", sqHome);
-        Path certFile = sq.findCertFile(bcFp);
-        assertThat(certFile).as("SQ did not find the imported BC cert").isNotNull();
+                SqRunner sq = new SqRunner("sq", sqHome);
+                Path certFile = sq.findCertFile(bcFp);
+                assertThat(certFile).as("SQ did not find the imported BC cert").isNotNull();
 
-        // Debug: try sq verify directly and capture stderr
-        CliTool.Result sqVerifyResult = CliTool.run(
-                Map.of("SEQUOIA_HOME", sqHome.toString()),
-                "sq", "--overwrite", "verify",
-                "--signer-file", certFile.toString(),
-                "--signature-file", sigFile.toString(),
-                artifact.toString());
-        assertThat(sqVerifyResult.exitCode())
-                .as("SQ verification of BC Ed25519 signature failed: " + sqVerifyResult.stderr()).isEqualTo(0);
+                // Debug: try sq verify directly and capture stderr
+                CliTool.Result sqVerifyResult = CliTool.run(
+                        Map.of("SEQUOIA_HOME", sqHome.toString()),
+                        "sq", "--overwrite", "verify",
+                        "--signer-file", certFile.toString(),
+                        "--signature-file", sigFile.toString(),
+                        artifact.toString());
+                assertThat(sqVerifyResult.exitCode())
+                        .as("SQ verification of BC Ed25519 signature failed: " + sqVerifyResult.stderr()).isEqualTo(0);
+            }
+        }
     }
 
     /**

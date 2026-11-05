@@ -84,34 +84,35 @@ class RoundTripIntegrationTest {
         Path artifact = createTestArtifact(tempDir, "test-artifact.jar");
 
         // Arrange: Create Sigmund facade and signer
-        Sigmund sigmund = createSigningSigmund();
-        Signer signer = sigmund.signer();
+        try (Sigmund sigmund = createSigningSigmund()) {
+            Signer signer = sigmund.signer();
 
-        // Act: Sign the artifact
-        SigningOutput output = signer.sign(artifact, tempDir);
+            // Act: Sign the artifact
+            SigningOutput output = signer.sign(artifact, tempDir);
 
-        // Assert: Algorithms are detected correctly from the produced signatures
-        assertThat(output.files().size()).isEqualTo(1);
-        assertThat(output.files().get(0).algorithm()).isEqualTo("RSA+ML-DSA-87+Ed448");
+            // Assert: Algorithms are detected correctly from the produced signatures
+            assertThat(output.files().size()).isEqualTo(1);
+            assertThat(output.files().get(0).algorithm()).isEqualTo("RSA+ML-DSA-87+Ed448");
 
-        Path signature = output.files().get(0).path();
+            Path signature = output.files().get(0).path();
 
-        // Act: Verify the signature
-        SignatureVerificationReport report = sigmund.verify(artifact, signature);
+            // Act: Verify the signature
+            SignatureVerificationReport report = sigmund.verify(artifact, signature);
 
-        // Assert: All signatures should pass
-        assertThat(report.files().get(0).results().size())
-                .as("Should have classic and PQC signatures").isEqualTo(2);
-        assertThat(report.isPass())
-                .as("Strict verification (all signatures) should pass").isTrue();
-        for (VerifyResult r : report.files().get(0).results()) {
-            assertThat(r.isVerified())
-                    .as("Signature (" + r.algorithm() + ") should be valid").isTrue();
+            // Assert: All signatures should pass
+            assertThat(report.files().get(0).results().size())
+                    .as("Should have classic and PQC signatures").isEqualTo(2);
+            assertThat(report.isPass())
+                    .as("Strict verification (all signatures) should pass").isTrue();
+            for (VerifyResult r : report.files().get(0).results()) {
+                assertThat(r.isVerified())
+                        .as("Signature (" + r.algorithm() + ") should be valid").isTrue();
+            }
+
+            // Print the report for manual inspection
+            System.out.println("=== Full Round-Trip Verification Report ===");
+            System.out.println(report.format());
         }
-
-        // Print the report for manual inspection
-        System.out.println("=== Full Round-Trip Verification Report ===");
-        System.out.println(report.format());
     }
 
     /**
@@ -137,31 +138,33 @@ class RoundTripIntegrationTest {
     void backwardCompatGpgVerifiesCombinedAsc(@TempDir Path tempDir) throws Exception {
         // Arrange: Create and sign test artifact
         Path artifact = createTestArtifact(tempDir, "compat-test.jar");
-        Signer signer = createSigningSigmund().signer();
-        SigningOutput output = signer.sign(artifact, tempDir);
-        Path signature = output.files().get(0).path();
+        try (Sigmund signing = createSigningSigmund()) {
+            Signer signer = signing.signer();
+            SigningOutput output = signer.sign(artifact, tempDir);
+            Path signature = output.files().get(0).path();
 
-        // Act: Verify with GPG command-line tool directly
-        CliTool.Result result = CliTool.run(
-                "gpg",
-                "--verify",
-                signature.toString(),
-                artifact.toString());
+            // Act: Verify with GPG command-line tool directly
+            CliTool.Result result = CliTool.run(
+                    "gpg",
+                    "--verify",
+                    signature.toString(),
+                    artifact.toString());
 
-        // Assert: GPG should successfully verify despite v6 PQC packet.
-        // GPG may return exit code 2 (warnings) due to the unknown v6 packet,
-        // but the classic signature is still verified ("Good signature").
-        assertThat(result.exitCode() == 0
-                || (result.exitCode() == 2 && result.stderr().contains("Good signature")))
-                .as("GPG should verify the combined .asc file (backward compatible). "
-                        + "Exit: " + result.exitCode() + " stderr: " + result.stderr())
-                .isTrue();
+            // Assert: GPG should successfully verify despite v6 PQC packet.
+            // GPG may return exit code 2 (warnings) due to the unknown v6 packet,
+            // but the classic signature is still verified ("Good signature").
+            assertThat(result.exitCode() == 0
+                    || (result.exitCode() == 2 && result.stderr().contains("Good signature")))
+                    .as("GPG should verify the combined .asc file (backward compatible). "
+                            + "Exit: " + result.exitCode() + " stderr: " + result.stderr())
+                    .isTrue();
 
-        System.out.println("=== Backward Compatibility Test ===");
-        System.out.println("GPG verified hybrid signature successfully");
-        if (!result.stderr().isEmpty()) {
-            System.out.println("GPG output:");
-            System.out.println(result.stderr());
+            System.out.println("=== Backward Compatibility Test ===");
+            System.out.println("GPG verified hybrid signature successfully");
+            if (!result.stderr().isEmpty()) {
+                System.out.println("GPG output:");
+                System.out.println(result.stderr());
+            }
         }
     }
 
@@ -188,26 +191,29 @@ class RoundTripIntegrationTest {
     void tamperedArtifactVerificationFails(@TempDir Path tempDir) throws Exception {
         // Arrange: Create and sign test artifact
         Path artifact = createTestArtifact(tempDir, "tamper-test.jar");
-        Signer signer = createSigningSigmund().signer();
-        SigningOutput output = signer.sign(artifact, tempDir);
-        Path signature = output.files().get(0).path();
+        try (Sigmund signing = createSigningSigmund()) {
+            Signer signer = signing.signer();
+            SigningOutput output = signer.sign(artifact, tempDir);
+            Path signature = output.files().get(0).path();
 
-        // Act: Tamper with the artifact after signing
-        Files.writeString(artifact, "TAMPERED CONTENT - THIS SHOULD FAIL VERIFICATION");
+            // Act: Tamper with the artifact after signing
+            Files.writeString(artifact, "TAMPERED CONTENT - THIS SHOULD FAIL VERIFICATION");
 
-        // Act: Verify the signature
-        Sigmund sigmund = createVerifySigmund();
-        SignatureVerificationReport report = sigmund.verify(artifact, signature);
+            // Act: Verify the signature
+            try (Sigmund sigmund = createVerifySigmund()) {
+                SignatureVerificationReport report = sigmund.verify(artifact, signature);
 
-        // Assert: All signatures should fail due to tampering
-        for (VerifyResult r : report.files().get(0).results()) {
-            assertThat(r.isFailed())
-                    .as("Signature (" + r.algorithm() + ") should fail for tampered artifact")
-                    .isTrue();
+                // Assert: All signatures should fail due to tampering
+                for (VerifyResult r : report.files().get(0).results()) {
+                    assertThat(r.isFailed())
+                            .as("Signature (" + r.algorithm() + ") should fail for tampered artifact")
+                            .isTrue();
+                }
+
+                System.out.println("=== Tampered Artifact Verification Report ===");
+                System.out.println(report.format());
+            }
         }
-
-        System.out.println("=== Tampered Artifact Verification Report ===");
-        System.out.println(report.format());
     }
 
     /**
