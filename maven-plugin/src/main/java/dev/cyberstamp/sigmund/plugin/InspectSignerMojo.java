@@ -30,7 +30,7 @@ import org.apache.maven.plugins.annotations.Parameter;
  * @see SignerInspectionReportFormatter
  */
 @Mojo(name = "inspect-signer", requiresProject = false, threadSafe = true)
-public class InspectSignerMojo extends AbstractSigmundMojo {
+public class InspectSignerMojo extends AbstractConfigLookupMojo {
 
     @Parameter(property = "sigmund.fingerprint")
     String fingerprint;

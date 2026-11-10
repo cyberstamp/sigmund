@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -280,7 +282,7 @@ class SigmundTest {
         }
 
         @Test
-        void verifyFallsThroughOnFail() throws IOException {
+        void aFailedAnswerIsNotOverruledByALaterTool() throws IOException {
             Path artifact = createTempFile("fail.jar");
             Path sigFile = createTempFile("fail.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
@@ -295,8 +297,8 @@ class SigmundTest {
 
                 SignatureVerificationReport report = sigmund.verify(artifact, sigFile);
 
-                assertThat(report.isPass()).isTrue();
-                assertThat(report.files().get(0).results().get(0).isVerified()).isTrue();
+                assertThat(report.isLenientPass()).isFalse();
+                assertThat(report.files().get(0).results().get(0).isFailed()).isTrue();
             }
         }
 
@@ -346,7 +348,7 @@ class SigmundTest {
         }
 
         @Test
-        void verifyAllToolsSkipReturnsEmpty() throws IOException {
+        void aClaimEveryToolCallsUnsupportedIsReportedAsUnsupported() {
             Path artifact = createTempFile("allskip.jar");
             Path sigFile = createTempFile("allskip.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
@@ -359,16 +361,69 @@ class SigmundTest {
             var tool2 = mockVerifyingTool("gpg", format, true,
                     new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.UNSUPPORTED_ALGORITHM, null, null,
                             4, null, null));
-            // only the two tools above: an installed sq would otherwise join the toolchain
-            VerificationConfig onlyTheseTools = new VerificationConfig(false, false, List.of(),
-                    List.of("bc", "gpg"));
-            try (var sigmund = Sigmund.builder().verificationConfig(onlyTheseTools)
+            try (var sigmund = Sigmund.builder().verificationConfig(onlyTools("bc", "gpg"))
                     .addTool(tool1).addTool(tool2).build()) {
 
                 SignatureVerificationReport report = sigmund.verify(artifact, sigFile);
 
                 assertThat(report.isLenientPass()).isFalse();
-                assertThat(report.files().get(0).results().isEmpty()).isTrue();
+                assertThat(report.files().get(0).results()).singleElement()
+                        .satisfies(r -> assertThat(r.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue());
+            }
+        }
+
+        /**
+         * A hybrid signature checked by a toolchain that cannot read its PQC block: the block
+         * stays in the report, so strict mode does not pass on the classic block alone.
+         */
+        @Test
+        void aBlockNoToolAcceptsStaysInTheReportAndFailsStrictMode() throws IOException {
+            Path artifact = createTempFile("hybrid.jar");
+            Path sigFile = createTempFile("hybrid.jar.asc",
+                    "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
+
+            var classic = new OpenPgpClaim("classic", 4, "FP4", 1, null);
+            var pqc = new OpenPgpClaim("pqc", 6, "FP6", 31, null);
+            var format = mockFormat("openpgp", ".asc", true, List.of(classic, pqc));
+            var v4Only = mockVerifyingTool("gpg", format,
+                    c -> c instanceof OpenPgpClaim openPgp && openPgp.packetVersion() == 4,
+                    () -> new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "Alice", "RSA", 4, "FP4", "FP4"));
+            try (var sigmund = Sigmund.builder().verificationConfig(onlyTools("gpg"))
+                    .addTool(v4Only).build()) {
+
+                SignatureVerificationReport report = sigmund.verify(artifact, sigFile);
+
+                assertThat(report.files().get(0).results()).hasSize(2);
+                VerifyResult unchecked = report.files().get(0).results().get(1);
+                assertThat(unchecked.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue();
+                assertThat(unchecked.algorithm()).isEqualTo("ML-DSA-87+Ed448");
+                assertThat(((OpenPgpVerifyResult) unchecked).keyId()).isEqualTo("FP6");
+                assertThat(report.format()).contains(
+                        "[2] INDETERMINATE [UNSUPPORTED_ALGORITHM] (ML-DSA-87+Ed448) [key: FP6]");
+                assertThat(report.isPass()).isFalse();
+                assertThat(report.isLenientPass()).isTrue();
+            }
+        }
+
+        @Test
+        void aToolThatThrowsIsReportedAsUnavailableAndTheNextToolStillVerifies() throws IOException {
+            Path artifact = createTempFile("broken.jar");
+            Path sigFile = createTempFile("broken.jar.asc",
+                    "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
+
+            var claim = new OpenPgpClaim("armored", 4, "FP", 1, null);
+            var format = mockFormat("openpgp", ".asc", true, List.of(claim));
+            try (var alone = Sigmund.builder().verificationConfig(onlyTools("sq"))
+                    .addTool(brokenVerifyingTool("sq", format)).build();
+                    var withAnother = Sigmund.builder().verificationConfig(onlyTools("sq", "gpg"))
+                            .addTool(brokenVerifyingTool("sq", format))
+                            .addTool(mockVerifyingTool("gpg", format, true,
+                                    new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "Alice", "RSA", 4, "KEY", "FP")))
+                            .build()) {
+
+                assertThat(alone.verify(artifact, sigFile).files().get(0).results()).singleElement()
+                        .satisfies(r -> assertThat(r.isIndeterminate(IndeterminateReason.TOOL_UNAVAILABLE)).isTrue());
+                assertThat(withAnother.verify(artifact, sigFile).isPass()).isTrue();
             }
         }
 
@@ -1364,6 +1419,18 @@ class SigmundTest {
 
     private static SignatureTool mockVerifyingTool(String name, SignatureFormat format,
             boolean canVerify, VerifyResult result) {
+        return mockVerifyingTool(name, format, c -> canVerify, () -> result);
+    }
+
+    /** A tool that breaks the way a misconfigured backend does, with an unchecked exception. */
+    private static SignatureTool brokenVerifyingTool(String name, SignatureFormat format) {
+        return mockVerifyingTool(name, format, c -> true, () -> {
+            throw new IllegalStateException(name + " exited with code 70");
+        });
+    }
+
+    private static SignatureTool mockVerifyingTool(String name, SignatureFormat format,
+            Predicate<Claim> canVerify, Supplier<VerifyResult> result) {
         return new SignatureTool() {
             @Override
             public String name() {
@@ -1392,7 +1459,7 @@ class SigmundTest {
 
             @Override
             public boolean canVerify(Claim u) {
-                return canVerify;
+                return canVerify.test(u);
             }
 
             @Override
@@ -1402,7 +1469,7 @@ class SigmundTest {
 
             @Override
             public VerifyResult verify(Path a, Claim u) {
-                return result;
+                return result.get();
             }
 
             @Override

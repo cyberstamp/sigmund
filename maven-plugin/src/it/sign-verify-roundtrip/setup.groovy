@@ -45,6 +45,12 @@ tools:
     signing-fingerprint: "${fingerprint}"
 """
 
+new File(basedir, "gpg-only.yaml").text = """\
+verification:
+  toolchain: [gpg]
+  resolve-signers: false
+"""
+
 def props = new File(basedir, "test.properties")
 props.text = "sigmund.sqHome=${sqHome.absolutePath}\n"
 return true

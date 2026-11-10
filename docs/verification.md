@@ -31,8 +31,9 @@ This guide covers how to verify artifact signatures using Sigmund. Signature ver
   - [How Key Fetching Works](#how-key-fetching-works)
   - [Keys Served Without User IDs](#keys-served-without-user-ids)
 - [Verification Report Format](#verification-report-format)
-  - [Example: All Signatures Pass](#example-all-signatures-verify)
+  - [Example: All Signatures Verify](#example-all-signatures-verify)
   - [Example: Missing Key](#example-missing-key)
+  - [Example: A Block No Tool Can Check](#example-a-block-no-tool-can-check)
   - [Example: Failed Signature](#example-failed-signature)
 - [Troubleshooting](#troubleshooting)
 
@@ -77,20 +78,23 @@ sigmund verify-signature --file artifact.jar --signature artifact.jar.asc
 
 ### Example Output
 
+A hybrid `.asc` — a classic block and a post-quantum one — whose PQC key is in no local key
+store and on no keyserver:
+
 ```
 Signature Verification Report:
-  [1] VERIFIED (RSA) [key: 41A21977...] [signer: Alice <alice@example.com>]
-  [2] INDETERMINATE [KEY_UNAVAILABLE] (ML-DSA-87+Ed448) [key: D62AAB33...]
+  [1] VERIFIED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org>]
+  [2] INDETERMINATE [KEY_UNAVAILABLE: no local key store or configured keyserver has it] (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA]
   Overall: 1 VERIFIED, 1 INDETERMINATE
 ```
 
 Each line shows:
 - **Index** — signature block number
 - **Outcome** — `VERIFIED`, `FAILED`, or `INDETERMINATE`, the last followed by the
-  reason it could not be decided
-- **Algorithm** — the signature algorithm (e.g., `RSA`, `ML-DSA-87+Ed448`, `Ed25519`)
-- **Key ID** — the signing key's fingerprint (when available)
-- **Signer** — the signer's display name (when available)
+  reason it could not be decided and, when the tool says, why
+- **Algorithm** — the signing key's algorithm (e.g., `RSA`, `EdDSA`, `ML-DSA-65+Ed25519`)
+- **Key** — the fingerprint of the key the signature names (when it names one)
+- **Signer** — the signer's user ID, when a tool found the key; display text only, never an identity
 
 **Overall** counts the outcomes rather than naming a verdict of its own: a
 hybrid signature whose PQC block could not be checked reads as
@@ -116,7 +120,10 @@ mvn sigmund:verify-signature \
   -Dsignature=artifact.jar.asc
 ```
 
-This goal does not require a Maven project — it can be run standalone.
+This goal does not require a Maven project — it can be run standalone. Like the CLI command, it
+reads the toolchain, key fetching and tool settings from `sigmund.yaml`: the file
+`sigmund.trustConfig` names, else the project directory's — the directory Maven was started from,
+when run without a project — else `~/.config/sigmund/sigmund.yaml`.
 
 ### Maven Plugin Properties
 
@@ -124,6 +131,7 @@ This goal does not require a Maven project — it can be run standalone.
 |----------|----------|---------|-------------|
 | `file` | Yes | — | Artifact file to verify |
 | `signature` | Yes | — | Signature `.asc` file |
+| `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml`, else `~/.config/sigmund/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
 | `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
 | `sigmund.lenient` | No | `false` | Pass if at least one signature is valid and none failed |
 
@@ -181,11 +189,16 @@ When verifying a signature file:
 2. **Inspect each block** to extract packet version, algorithm ID, and issuer fingerprint
 3. **Try each tool** in priority order
    - Each tool's `canVerify()` method checks whether it can handle the signature
-   - If a tool returns `VERIFIED`, it is used immediately
-   - Any other outcome falls through to the next tool — a different tool may have the key in its local keyring or support the algorithm
-   - If no tool verifies the block, the most conclusive result seen is kept
+   - A conclusive answer — `VERIFIED` or `FAILED` — is used immediately, and no later tool is
+     asked to overrule it: whether the bytes match does not depend on the tool, so the toolchain
+     order decides only which tool answers, and a `FAILED` cannot be outvoted
+   - An `INDETERMINATE` answer falls through to the next tool — a different tool may have the key in its local keyring or support the algorithm
+   - A tool that answers `KEY_UNAVAILABLE` and can fetch keys fetches it and verifies again (see [Key Discovery](#key-discovery))
+   - If no tool decides the block, the most conclusive `INDETERMINATE` result seen is kept
    - A tool that throws is recorded as `INDETERMINATE [TOOL_UNAVAILABLE]` and the remaining tools still get their turn
-4. **Retry with key fetching** when the result is `INDETERMINATE [KEY_UNAVAILABLE]` (see [Key Discovery](#key-discovery))
+4. **Report every block.** A block no tool in the toolchain can check — a PQC block with
+   `toolchain: [gpg]`, or a v5 signature — is reported as `INDETERMINATE [UNSUPPORTED_ALGORITHM]`,
+   never left out, so strict mode cannot pass on the blocks that were checked alone
 
 This fallthrough is important because each tool has access to different key stores. For example, BC checks its ephemeral cache and cert-d, GPG reads `pubring.kbx`, and Sequoia reads its own cert store. A key missing from one tool's store may be present in another's.
 
@@ -393,8 +406,8 @@ them in its last line.
 
 ```
 Signature Verification Report:
-  [1] VERIFIED (RSA) [key: 41A21977...]
-  [2] VERIFIED (ML-DSA-87+Ed448) [key: D62AAB33...]
+  [1] VERIFIED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org>]
+  [2] VERIFIED (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA] [signer: <alice@example.org>]
   Overall: 2 VERIFIED
 ```
 
@@ -402,8 +415,8 @@ Signature Verification Report:
 
 ```
 Signature Verification Report:
-  [1] VERIFIED (RSA) [key: 41A21977...]
-  [2] INDETERMINATE [KEY_UNAVAILABLE] (ML-DSA-87+Ed448) [key: D62AAB33...]
+  [1] VERIFIED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org>]
+  [2] INDETERMINATE [KEY_UNAVAILABLE: no local key store or configured keyserver has it] (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA]
   Overall: 1 VERIFIED, 1 INDETERMINATE
 ```
 
@@ -411,12 +424,29 @@ In strict mode (default), this fails: a block nobody could check is not a pass.
 In lenient mode (`--lenient`), it passes because at least one signature is valid
 and none failed.
 
-### Example: Failed Signature
+### Example: A Block No Tool Can Check
+
+The same file verified with `toolchain: [gpg]`, which does not read the PQC block:
 
 ```
 Signature Verification Report:
-  [1] FAILED (RSA) [key: 41A21977...]
-  Overall: 1 FAILED
+  [1] VERIFIED (EDDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org>]
+  [2] INDETERMINATE [UNSUPPORTED_ALGORITHM] (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA]
+  Overall: 1 VERIFIED, 1 INDETERMINATE
+```
+
+The unchecked block is reported rather than left out, so strict mode fails here too; lenient mode
+passes.
+
+### Example: Failed Signature
+
+The artifact changed after it was signed:
+
+```
+Signature Verification Report:
+  [1] FAILED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org>]
+  [2] FAILED (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA] [signer: <alice@example.org>]
+  Overall: 2 FAILED
 ```
 
 This fails in both strict and lenient modes: a `FAILED` block is an attack

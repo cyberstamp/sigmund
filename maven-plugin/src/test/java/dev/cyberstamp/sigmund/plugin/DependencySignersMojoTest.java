@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.maven.plugin.MojoExecutionException;
+import org.apache.maven.project.MavenProject;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -37,6 +38,36 @@ class DependencySignersMojoTest {
     private static final String FULL_FP = "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12";
     private static final String FP4 = FULL_FP;
     private static final String FP6 = "CB186C4F0609A697E4D52DFA6C722B0C1F1E27C18A56708F6525EC27BAD9ACC9";
+
+    @Nested
+    class ConfigLoading {
+
+        @TempDir
+        Path basedir;
+
+        private DependencySignersMojo mojoWithConfigAt(Path config) {
+            DependencySignersMojo mojo = new DependencySignersMojo();
+            MavenProject project = new MavenProject();
+            project.setFile(basedir.resolve("pom.xml").toFile());
+            mojo.project = project;
+            mojo.trustConfigFile = config.toFile();
+            return mojo;
+        }
+
+        @Test
+        void missingConfigAtTheDefaultLocationIsNoConfig() throws Exception {
+            assertThat(mojoWithConfigAt(basedir.resolve("sigmund.yaml")).loadConfig()).isNull();
+        }
+
+        @Test
+        void missingConfigAtAnExplicitLocationIsAnError() {
+            DependencySignersMojo mojo = mojoWithConfigAt(basedir.resolve("policies/typo.yaml"));
+
+            assertThatThrownBy(mojo::loadConfig)
+                    .isInstanceOf(MojoExecutionException.class)
+                    .hasMessageContaining("typo.yaml");
+        }
+    }
 
     @Test
     void signedArtifactV4WithSigner() {

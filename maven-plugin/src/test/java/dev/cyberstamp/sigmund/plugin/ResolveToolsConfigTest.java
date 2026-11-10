@@ -2,6 +2,7 @@ package dev.cyberstamp.sigmund.plugin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.VerificationConfig;
 import java.util.List;
 import org.junit.jupiter.api.Nested;
@@ -160,6 +161,11 @@ class ResolveToolsConfigTest {
     private static class TestMojo extends AbstractSigmundMojo {
         @Override
         public void execute() {
+        }
+
+        @Override
+        protected SigmundConfig loadConfig() {
+            return SigmundConfig.EMPTY;
         }
     }
 }

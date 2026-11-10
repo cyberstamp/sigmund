@@ -236,7 +236,7 @@ class SignatureEvidenceAdapterTest {
         }
 
         @Test
-        void failContinuesToNextTool() {
+        void aFailedAnswerIsNotOverruledByALaterTool() {
             var failTool = mockTool("bc", true, true, failVerifyResult(), List.of());
             var passingTool = mockTool("gpg", true, true, passVerifyResult(),
                     List.of(new KeyCredential("pgp4", FP)));
@@ -244,7 +244,8 @@ class SignatureEvidenceAdapterTest {
 
             List<ClaimResult> results = adapter.verify(ARTIFACT, Evidence.read(EVIDENCE, Evidence.SOURCE_SIDECAR));
 
-            assertThat((results.get(0).outcome() == ClaimOutcome.VERIFIED)).isTrue();
+            assertThat(results.get(0).outcome()).isEqualTo(ClaimOutcome.FAILED);
+            assertThat(results.get(0).verifiedBy()).isEqualTo("bc");
         }
 
         @Test

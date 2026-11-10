@@ -11,8 +11,6 @@ import dev.cyberstamp.sigmund.core.TrustPolicy;
 import dev.cyberstamp.sigmund.core.TrustVerifier;
 import dev.cyberstamp.sigmund.core.VerificationConfig;
 import dev.cyberstamp.sigmund.core.VerificationReport;
-import java.io.File;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -226,11 +224,6 @@ public class VerifyMojo extends AbstractDependencyMojo {
     SigmundConfig loadAndValidateConfig() throws MojoExecutionException {
         SigmundConfig config = super.loadConfig();
         if (config == null) {
-            if (!isDefaultConfigLocation()) {
-                throw new MojoExecutionException("Config file not found at "
-                        + Path.of("").toAbsolutePath()
-                                .relativize(trustConfigFile.toPath().toAbsolutePath()));
-            }
             getLog().info("No sigmund.yaml found; " + OBSERVING);
             return SigmundConfig.EMPTY;
         }
@@ -243,14 +236,6 @@ public class VerifyMojo extends AbstractDependencyMojo {
 
     private static final String OBSERVING = "observing only — every dependency is verified and "
             + "reported, and only a signature that fails verification blocks the build";
-
-    private boolean isDefaultConfigLocation() {
-        if (trustConfigFile == null || project == null || project.getBasedir() == null) {
-            return true;
-        }
-        File defaultLocation = new File(project.getBasedir(), "sigmund.yaml");
-        return trustConfigFile.getAbsoluteFile().equals(defaultLocation.getAbsoluteFile());
-    }
 
     private static final int LOG_DEBUG = 0;
     private static final int LOG_INFO = 1;

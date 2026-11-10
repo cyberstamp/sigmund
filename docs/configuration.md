@@ -38,11 +38,17 @@ Sigmund uses a `sigmund.yaml` file for configuration. This reference documents e
 
 ## File Location
 
-**Maven plugin.** The goals read `${project.basedir}/sigmund.yaml`, or the file given with
-`-Dsigmund.trustConfig=<path>`. When the default file does not exist, `sigmund:verify` runs
-without a policy and says so — it verifies and reports everything, failing only on a signature
-that does not verify. A file given explicitly that does not exist is an error, so a mistyped
-path cannot turn enforcement off.
+**Maven plugin.** Every goal reads the file given with `-Dsigmund.trustConfig=<path>`; a file
+given explicitly that does not exist is an error, so a mistyped path cannot turn enforcement off.
+Without it:
+
+- **`verify` and `dependency-signers`** read `${project.basedir}/sigmund.yaml` only, since what a
+  build accepts belongs to the project. When it does not exist, `sigmund:verify` runs without a
+  policy and says so — it verifies and reports everything, failing only on a signature that does
+  not verify.
+- **The signing goals, `verify-signature` and `inspect-signer`** read
+  `${project.basedir}/sigmund.yaml`, else `~/.config/sigmund/sigmund.yaml`, else run without
+  configuration. Run without a project, the project directory is the one Maven was started from.
 
 **CLI.** Commands search, in order:
 

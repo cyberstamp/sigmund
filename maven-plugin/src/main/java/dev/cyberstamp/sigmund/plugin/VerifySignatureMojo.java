@@ -2,9 +2,8 @@ package dev.cyberstamp.sigmund.plugin;
 
 import dev.cyberstamp.sigmund.core.ClaimOutcome;
 import dev.cyberstamp.sigmund.core.Sigmund;
+import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.SignatureVerificationReport;
-import dev.cyberstamp.sigmund.core.ToolsConfig;
-import dev.cyberstamp.sigmund.core.VerificationConfig;
 import java.io.File;
 import java.util.Map;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -14,6 +13,9 @@ import org.apache.maven.plugins.annotations.Parameter;
 /**
  * Maven plugin goal that verifies all signatures in an ASC file.
  * <p>
+ * The toolchain, key fetching and tool settings come from {@code sigmund.yaml}, looked up as
+ * {@link AbstractConfigLookupMojo} describes, as the CLI's {@code verify-signature} reads them.
+ * <p>
  * By default all signatures must pass. In lenient mode
  * at least one signature must pass and none may fail.
  *
@@ -21,7 +23,7 @@ import org.apache.maven.plugins.annotations.Parameter;
  * @see SignatureVerificationReport
  */
 @Mojo(name = "verify-signature", requiresProject = false, threadSafe = true)
-public class VerifySignatureMojo extends AbstractSigmundMojo {
+public class VerifySignatureMojo extends AbstractConfigLookupMojo {
 
     @Parameter(property = "file", required = true)
     private File file;
@@ -63,10 +65,11 @@ public class VerifySignatureMojo extends AbstractSigmundMojo {
     }
 
     private Sigmund createSigmund() throws MojoExecutionException {
+        SigmundConfig config = loadConfig();
         try {
             return buildSigmund(
-                    new VerificationConfig(true, false, null, null),
-                    mergeToolOverrides(ToolsConfig.EMPTY));
+                    resolveVerificationConfig(config.verificationConfig(), null, null, null),
+                    mergeToolOverrides(config.toolsConfig()));
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to create verifier", e);
         }

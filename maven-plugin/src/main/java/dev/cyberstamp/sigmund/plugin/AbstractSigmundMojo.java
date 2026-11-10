@@ -1,6 +1,5 @@
 package dev.cyberstamp.sigmund.plugin;
 
-import dev.cyberstamp.sigmund.core.ConfigLoader;
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.ToolsConfig;
@@ -14,15 +13,13 @@ import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Parameter;
 
 /**
- * Base class for mojos that need a configured {@link Sigmund} instance but do
- * not require Maven dependency resolution.
+ * Base class for mojos that need a configured {@link Sigmund} instance.
  *
  * <p>
- * Provides shared parameter handling (Sequoia home, GPG home, skip flag),
- * configuration loading, tool-override merging, and {@link Sigmund} builder
- * construction. Subclasses like {@link InspectSignerMojo} extend this directly;
- * mojos that also need dependency resolution extend {@link AbstractDependencyMojo}
- * instead.
+ * Provides shared parameter handling (Sequoia home, GPG home, skip flag), tool-override
+ * merging, and {@link Sigmund} builder construction. Where the configuration comes from is the
+ * subclass's: goals that look it up extend {@link AbstractConfigLookupMojo}, and goals that read
+ * the project's policy and resolve dependencies extend {@link AbstractDependencyMojo}.
  */
 abstract class AbstractSigmundMojo extends AbstractMojo {
 
@@ -36,18 +33,12 @@ abstract class AbstractSigmundMojo extends AbstractMojo {
     protected boolean skip;
 
     /**
-     * Loads the sigmund configuration from the default location.
+     * Loads the configuration this goal runs with, from where the goal's kind looks for it.
      *
-     * @return the parsed configuration
+     * @return the parsed configuration, empty when there is none
      * @throws MojoExecutionException if the configuration cannot be loaded
      */
-    protected SigmundConfig loadConfig() throws MojoExecutionException {
-        try {
-            return ConfigLoader.load(null);
-        } catch (Exception e) {
-            throw new MojoExecutionException("Failed to load config", e);
-        }
-    }
+    protected abstract SigmundConfig loadConfig() throws MojoExecutionException;
 
     /**
      * Builds tool-specific configuration overrides from Maven properties.

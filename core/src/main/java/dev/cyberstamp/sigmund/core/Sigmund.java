@@ -57,6 +57,7 @@ import java.util.Set;
 public class Sigmund implements AutoCloseable {
 
     private final List<SignatureTool> tools;
+    private final ClaimRouter router;
     private final List<EvidenceProvider> evidenceProviders;
     private final SigningConfig signingConfig;
     private final List<SignatureFormat> formats;
@@ -73,6 +74,7 @@ public class Sigmund implements AutoCloseable {
             throw new SigmundException("No tools available");
         }
         this.tools = tools;
+        this.router = new ClaimRouter(tools);
         this.formats = formats;
         this.evidenceProviders = evidenceProviders;
         this.signingConfig = signingConfig;
@@ -407,12 +409,9 @@ public class Sigmund implements AutoCloseable {
             return new FileSignatureReport(signatureFile, "unknown", List.of());
         }
         List<Claim> claims = format.parse(evidence);
-        List<VerifyResult> results = new ArrayList<>();
+        List<VerifyResult> results = new ArrayList<>(claims.size());
         for (Claim claim : claims) {
-            VerifyResult result = verifyClaim(artifactFile, claim);
-            if (result != null) {
-                results.add(result);
-            }
+            results.add(router.route(artifactFile, claim, RESULT_ONLY));
         }
         return new FileSignatureReport(signatureFile, format.name(), results);
     }
@@ -427,36 +426,25 @@ public class Sigmund implements AutoCloseable {
     }
 
     /**
-     * Verifies a single claim against the artifact file.
-     * <p>
-     * Tries each tool in priority order. Only {@link ClaimOutcome#VERIFIED} stops
-     * iteration immediately; a claim no tool supports falls through to the next tool, and
-     * the most conclusive answer seen so far is kept
-     * ({@link VerifyResult#isMoreConclusiveThan}). This
-     * allows tools with different key stores (BC ephemeral cache, GPG
-     * {@code pubring.kbx}, Sequoia cert store) to complement each other.
-     *
-     * @return the best result, or {@code null} if all tools returned {@code SKIPPED}
+     * Keeps only the answer itself: direct verification reports what each claim's signature
+     * established, without the credentials or trust root trust verification records.
      */
-    private VerifyResult verifyClaim(Path artifactFile, Claim claim) {
-        VerifyResult best = null;
-        for (SignatureTool tool : tools) {
-            if (!tool.canVerify(claim)) {
-                continue;
-            }
-            VerifyResult result = tool.verify(artifactFile, claim);
-            if (result.isVerified()) {
-                return result;
-            }
-            if (result.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)) {
-                continue;
-            }
-            if (result.isMoreConclusiveThan(best)) {
-                best = result;
-            }
+    private static final ClaimRouter.Recorder<VerifyResult> RESULT_ONLY = new ClaimRouter.Recorder<>() {
+        @Override
+        public VerifyResult answered(SignatureTool tool, VerifyResult result) {
+            return result;
         }
-        return best;
-    }
+
+        @Override
+        public VerifyResult broke(SignatureTool tool, VerifyResult result) {
+            return result;
+        }
+
+        @Override
+        public VerifyResult unanswered(VerifyResult result) {
+            return result;
+        }
+    };
 
     /**
      * Builder for constructing a {@link Sigmund} instance.
