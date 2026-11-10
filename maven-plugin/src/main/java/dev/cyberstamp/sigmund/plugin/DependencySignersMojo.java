@@ -18,6 +18,7 @@ import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.SigmundSchema;
 import dev.cyberstamp.sigmund.core.SignerIdentity;
 import dev.cyberstamp.sigmund.core.SigstoreVerifyResult;
+import dev.cyberstamp.sigmund.core.ToolsConfig;
 import dev.cyberstamp.sigmund.core.TrustPolicy;
 import dev.cyberstamp.sigmund.core.VerificationConfig;
 import dev.cyberstamp.sigmund.core.VerifyResult;
@@ -112,7 +113,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                 config != null ? config.verificationConfig() : VerificationConfig.DEFAULT);
         try (SignatureInspector inspector = buildInspector(verificationConfig,
                 mergeToolOverrides(config != null ? config.toolsConfig()
-                        : dev.cyberstamp.sigmund.core.ToolsConfig.EMPTY))) {
+                        : ToolsConfig.EMPTY))) {
 
             List<ArtifactCoords> artifacts = resolveDependencies();
             getLog().info("Inspecting signatures for " + artifacts.size() + " dependency(ies)...");

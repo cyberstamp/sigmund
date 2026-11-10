@@ -61,16 +61,17 @@ Claims are routed to tools based on a configurable toolchain. The default toolch
 [bc, sq, gpg]
 ```
 
-BC attempts verification first. If BC cannot fully verify a signature (missing key, unsupported algorithm, or verification failure), the next tool in the toolchain is tried. This ensures that each tool's strengths are leveraged — BC's zero-dependency backend, GPG's local keyring (`pubring.kbx`), and Sequoia's PQC support and cert store.
+BC attempts verification first. If BC cannot decide a signature (missing key, unsupported algorithm), the next tool in the toolchain is tried; a signature BC verifies or fails is not passed on. This ensures that each tool's strengths are leveraged — BC's zero-dependency backend, GPG's local keyring (`pubring.kbx`), and Sequoia's PQC support and cert store.
 
-The routing mechanism works as follows:
+The routing mechanism, `ClaimRouter`, is shared by trust verification and by `verify-signature`, so the two cannot disagree about a claim:
 
 1. Each signature file is parsed into one or more `Claim`s by its `SignatureFormat`
-2. For each unit, tools are checked in toolchain order
-3. Each tool where `canVerify(unit)` returns true attempts verification
-4. If a tool returns `VERIFIED`, it is used immediately
-5. If a tool does not verify the block, the next tool is tried — a different tool may have the key in its local keyring or support the algorithm
-6. If no tool verifies it, the most conclusive result seen is kept (`FAILED` over an undecided one, and among undecided ones a transient reason over a permanent one)
+2. For each claim, tools are checked in toolchain order
+3. Each tool where `canVerify(claim)` returns true attempts verification
+4. If a tool returns `VERIFIED` or `FAILED`, that answer stands and no later tool is asked — the toolchain order decides which tool answers, never what the answer is, so a `FAILED` cannot be outvoted
+5. If a tool leaves the claim `INDETERMINATE`, the next tool is tried — a different tool may have the key in its local keyring or support the algorithm; a tool that throws is recorded as `TOOL_UNAVAILABLE` and the next tool still gets its turn
+6. If no tool decides it, the most conclusive result seen is kept (a transient reason over a permanent one)
+7. A claim no tool answered is `INDETERMINATE [UNSUPPORTED_ALGORITHM]`; it is never left out, so a block nobody could check cannot pass strict verification
 
 For example, a hybrid `.asc` with both a PGP4 (RSA) and PGP6 (ML-DSA) signature:
 - **PGP4 block:** BC may return `KEY_UNAVAILABLE` if the key is not in its stores, but GPG finds it in `pubring.kbx` and verifies it

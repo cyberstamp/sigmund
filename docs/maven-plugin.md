@@ -158,7 +158,7 @@ The report groups results by outcome, then by who attested them. Each artifact l
 
 | Property | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml` | Path to the trust configuration file |
+| `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
 | `sigmund.resolveSigners` | No | `true` | Fetch unknown keys from keyservers, and ask directories named in `issuers` for verified addresses. Overrides config file setting. |
 | `sigmund.keyservers` | No | `hkps://keys.openpgp.org` | Comma-separated keyserver list. Used when `resolveSigners` is enabled. |
 | `sigmund.verifyPomFiles` | No | `false` | Also verify signatures on POM files for each dependency |
@@ -232,12 +232,15 @@ See [Trust Verification](trust-verification.md) for details on the `sigmund.yaml
 
 Verifies a single signed artifact without requiring a project. This is a standalone verification tool that can be used to verify any artifact/signature pair.
 
+The toolchain, key fetching and tool settings come from `sigmund.yaml`, found as for the signing goals — the file `sigmund.trustConfig` names, else the project directory's, else `~/.config/sigmund/sigmund.yaml`; run without a project, the project directory is the one Maven was started from. Its `rules` play no part: this goal checks signatures, not who made them, which is what [`sigmund:verify`](#sigmundverify) is for.
+
 **Parameters:**
 
 | Property | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `file` | Yes | — | Artifact file to verify |
 | `signature` | Yes | — | Signature `.asc` file |
+| `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml`, else `~/.config/sigmund/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
 | `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 | `sigmund.gpgHome` | No | — | GnuPG home directory: overrides `tools.gpg.home`, which BC also reads public keys from unless `tools.bc.gnupg-home` is set |
 | `sigmund.lenient` | No | `false` | Pass if at least one signature is valid and none failed |
@@ -265,7 +268,7 @@ Dependencies are grouped by signer, sorted alphabetically. Unsigned artifacts an
 
 | Property | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml` | Path to the trust configuration file |
+| `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
 | `sigmund.resolveSigners` | No | `true` | Fetch unknown GPG keys from keyservers to resolve signer identities |
 | `sigmund.keyservers` | No | `hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
 | `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
@@ -329,7 +332,7 @@ Use `-Dsigmund.updateTrustConfig=true` to add what an existing `sigmund.yaml` do
 
 **Default Phase:** none (standalone goal)
 
-Inspects a signer identity across all available sources (local keystores and keyservers). Does not require a project — only needs tool configuration and a signer credential.
+Inspects a signer identity across all available sources (local keystores and keyservers). Does not require a project — only needs tool configuration and a signer credential. The tool configuration is read from `sigmund.yaml`, found as for [`sigmund:verify-signature`](#sigmundverify-signature).
 
 **Parameters:**
 
@@ -338,8 +341,9 @@ Inspects a signer identity across all available sources (local keystores and key
 | `sigmund.fingerprint` | No | — | Full signer fingerprint to inspect |
 | `sigmund.email` | No | — | Signer email to inspect |
 | `sigmund.tool` | No | all | Restrict inspection to a specific tool (`bc`, `sq`, `gpg`) |
-| `sigmund.keyservers` | No | `hkps://keys.openpgp.org` | Comma-separated keyserver list |
-| `sigmund.resolveSigners` | No | `true` | Fetch keys from keyservers |
+| `sigmund.keyservers` | No | `verification.keyservers`, else `hkps://keys.openpgp.org` | Comma-separated keyserver list |
+| `sigmund.resolveSigners` | No | `verification.resolve-signers`, else `true` | Fetch keys from keyservers |
+| `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml`, else `~/.config/sigmund/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
 | `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 | `sigmund.gpgHome` | No | — | GnuPG home directory: overrides `tools.gpg.home`, which BC also reads public keys from unless `tools.bc.gnupg-home` is set |
 | `sigmund.skip` | No | `false` | Skip this goal |

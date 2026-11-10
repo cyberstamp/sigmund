@@ -6,6 +6,7 @@ import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.ToolsConfig;
 import dev.cyberstamp.sigmund.core.VerificationConfig;
 import java.io.File;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
@@ -121,9 +122,27 @@ abstract class AbstractDependencyMojo extends AbstractSigmundMojo {
         return new Dependency(artifact, dep.getScope(), "true".equals(dep.getOptional()), exclusions);
     }
 
+    /**
+     * Loads the project's policy file: the file {@link #trustConfigFile} names, or
+     * {@code sigmund.yaml} in the project directory.
+     *
+     * <p>
+     * A missing file at the default location means the project has not written one. A missing
+     * file at a location given explicitly is an error instead: a mistyped path must not quietly
+     * run the goal as if the project had no configuration.
+     *
+     * @return the configuration, or {@code null} when there is no file at the default location
+     * @throws MojoExecutionException when an explicitly given file does not exist or does not
+     *         parse
+     */
     @Override
     protected SigmundConfig loadConfig() throws MojoExecutionException {
         if (trustConfigFile == null || !trustConfigFile.exists()) {
+            if (!isDefaultConfigLocation()) {
+                throw new MojoExecutionException("Config file not found at "
+                        + Path.of("").toAbsolutePath()
+                                .relativize(trustConfigFile.toPath().toAbsolutePath()));
+            }
             return null;
         }
         try {
@@ -131,6 +150,14 @@ abstract class AbstractDependencyMojo extends AbstractSigmundMojo {
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to parse config: " + trustConfigFile, e);
         }
+    }
+
+    private boolean isDefaultConfigLocation() {
+        if (trustConfigFile == null || project == null || project.getBasedir() == null) {
+            return true;
+        }
+        File defaultLocation = new File(project.getBasedir(), "sigmund.yaml");
+        return trustConfigFile.getAbsoluteFile().equals(defaultLocation.getAbsoluteFile());
     }
 
     /**
