@@ -104,7 +104,7 @@ class ClaimResultTest {
         void aDetailNeedsAReasonToExplain() {
             assertThatThrownBy(() -> new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null,
                     List.of(), null, TrustRootRef.unknown(), REF, null,
-                    ClaimTimeSource.SIGNER, Instant.EPOCH, "RSA", "bc", null, "no keyserver has it"))
+                    ClaimTimeSource.SIGNER, Instant.EPOCH, "RSA", "bc", null, "no keyserver has it", null))
                     .isInstanceOf(IllegalArgumentException.class);
         }
 

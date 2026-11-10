@@ -1,7 +1,6 @@
 package dev.cyberstamp.sigmund.core;
 
 import java.nio.file.Path;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -17,10 +16,8 @@ import java.util.List;
  * <ol>
  * <li>{@link SignatureFormat#canHandle(Evidence)} → detection</li>
  * <li>{@link SignatureFormat#parse(Evidence)} → {@link Claim}s</li>
- * <li>Each claim routed through the tools by {@link ClaimRouter} → the {@link VerifyResult}
- * that counts</li>
- * <li>{@link SignatureTool#extractCredentials(VerifyResult)} → proven credentials</li>
- * <li>Wrap into {@link ClaimResult}</li>
+ * <li>Each claim routed through the tools by {@link ClaimRouter} → the {@link ClaimResult} of
+ * the answer that counts, with the credentials its tool says it proved</li>
  * </ol>
  *
  * <h2>Key fetching</h2>
@@ -95,7 +92,7 @@ class SignatureEvidenceAdapter implements EvidenceProvider {
         List<Claim> claims = parseClaims(evidence);
         List<ClaimResult> results = new ArrayList<>(claims.size());
         for (Claim claim : claims) {
-            results.add(verifyClaim(artifactFile, claim, ref));
+            results.add(router.route(artifactFile, claim, name(), ref));
         }
         return results;
     }
@@ -108,61 +105,5 @@ class SignatureEvidenceAdapter implements EvidenceProvider {
      */
     private List<Claim> parseClaims(Evidence evidence) {
         return format.parse(evidence);
-    }
-
-    /**
-     * Verifies a single claim against the artifact file.
-     * <p>
-     * The toolchain is asked as {@link ClaimRouter} describes; the answer that counts is
-     * recorded with the credentials its tool says it proved, and a tool that broke or a claim no
-     * tool could check is recorded with none.
-     *
-     * @param artifactFile the artifact whose signature is being verified
-     * @param claim the claim to verify
-     * @return the evidence result for this claim
-     */
-    private ClaimResult verifyClaim(Path artifactFile, Claim claim, EvidenceRef ref) {
-        return router.route(artifactFile, claim, new ClaimRouter.Recorder<>() {
-            @Override
-            public ClaimResult answered(SignatureTool tool, VerifyResult result) {
-                return asClaimResult(tool, claim, result, ref);
-            }
-
-            @Override
-            public ClaimResult broke(SignatureTool tool, VerifyResult result) {
-                return ClaimResult.of(claim, name(), result, List.of(), ref,
-                        TrustRootRef.unknown(), tool.name(), Instant.now());
-            }
-
-            @Override
-            public ClaimResult unanswered(VerifyResult result) {
-                return ClaimResult.of(claim, name(), result, List.of(), ref,
-                        TrustRootRef.unknown(), null, Instant.now());
-            }
-        });
-    }
-
-    /**
-     * Wraps a verification result into an {@link ClaimResult} by extracting
-     * proven credentials from the tool.
-     *
-     * @param tool the tool that performed the verification
-     * @param result the verification result to wrap
-     * @return the evidence result containing the verification outcome and extracted credentials
-     */
-    private ClaimResult asClaimResult(SignatureTool tool, Claim claim, VerifyResult result,
-            EvidenceRef ref) {
-        return ClaimResult.of(claim, name(), result, tool.extractCredentials(result), ref,
-                trustRootOf(tool, result), tool.name(), Instant.now());
-    }
-
-    /**
-     * Names the trust root a claim was verified against: the source of the very key when the
-     * tool reports it, otherwise the tool's own trust root.
-     */
-    private static TrustRootRef trustRootOf(SignatureTool tool, VerifyResult result) {
-        return result instanceof OpenPgpVerifyResult openPgp && openPgp.keySource() != null
-                ? openPgp.keySource()
-                : tool.trustRoot();
     }
 }

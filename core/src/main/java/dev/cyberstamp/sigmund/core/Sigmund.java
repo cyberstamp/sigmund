@@ -409,9 +409,9 @@ public class Sigmund implements AutoCloseable {
             return new FileSignatureReport(signatureFile, "unknown", List.of());
         }
         List<Claim> claims = format.parse(evidence);
-        List<VerifyResult> results = new ArrayList<>(claims.size());
+        List<ClaimResult> results = new ArrayList<>(claims.size());
         for (Claim claim : claims) {
-            results.add(router.route(artifactFile, claim, RESULT_ONLY));
+            results.add(router.route(artifactFile, claim, format.name(), evidence.ref()));
         }
         return new FileSignatureReport(signatureFile, format.name(), results);
     }
@@ -424,27 +424,6 @@ public class Sigmund implements AutoCloseable {
         }
         return null;
     }
-
-    /**
-     * Keeps only the answer itself: direct verification reports what each claim's signature
-     * established, without the credentials or trust root trust verification records.
-     */
-    private static final ClaimRouter.Recorder<VerifyResult> RESULT_ONLY = new ClaimRouter.Recorder<>() {
-        @Override
-        public VerifyResult answered(SignatureTool tool, VerifyResult result) {
-            return result;
-        }
-
-        @Override
-        public VerifyResult broke(SignatureTool tool, VerifyResult result) {
-            return result;
-        }
-
-        @Override
-        public VerifyResult unanswered(VerifyResult result) {
-            return result;
-        }
-    };
 
     /**
      * Builder for constructing a {@link Sigmund} instance.

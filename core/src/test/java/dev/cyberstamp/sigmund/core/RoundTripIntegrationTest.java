@@ -104,8 +104,8 @@ class RoundTripIntegrationTest {
                     .as("Should have classic and PQC signatures").isEqualTo(2);
             assertThat(report.isPass())
                     .as("Strict verification (all signatures) should pass").isTrue();
-            for (VerifyResult r : report.files().get(0).results()) {
-                assertThat(r.isVerified())
+            for (ClaimResult r : report.files().get(0).results()) {
+                assertThat(r.outcome() == ClaimOutcome.VERIFIED)
                         .as("Signature (" + r.algorithm() + ") should be valid").isTrue();
             }
 
@@ -204,8 +204,8 @@ class RoundTripIntegrationTest {
                 SignatureVerificationReport report = sigmund.verify(artifact, signature);
 
                 // Assert: All signatures should fail due to tampering
-                for (VerifyResult r : report.files().get(0).results()) {
-                    assertThat(r.isFailed())
+                for (ClaimResult r : report.files().get(0).results()) {
+                    assertThat(r.outcome() == ClaimOutcome.FAILED)
                             .as("Signature (" + r.algorithm() + ") should fail for tampered artifact")
                             .isTrue();
                 }

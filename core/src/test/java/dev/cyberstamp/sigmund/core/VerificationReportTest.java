@@ -274,7 +274,7 @@ class VerificationReportTest {
             ClaimResult unresolved = new ClaimResult("openpgp", ClaimOutcome.INDETERMINATE,
                     IndeterminateReason.KEY_UNAVAILABLE, List.of(), null,
                     TrustRootRef.unknown(), REF, null, ClaimTimeSource.SIGNER, Instant.EPOCH,
-                    null, "bc", null, "no local key store or configured keyserver has it");
+                    null, "bc", null, "no local key store or configured keyserver has it", null);
 
             List<VerificationReport.AttesterGroup> groups = VerificationReport.groupByAttester(
                     List.of(result("lib", ArtifactOutcome.INDETERMINATE,
@@ -291,7 +291,7 @@ class VerificationReportTest {
             ClaimResult uncheckable = new ClaimResult("openpgp", ClaimOutcome.INDETERMINATE,
                     IndeterminateReason.UNSUPPORTED_ALGORITHM, List.of(), null,
                     TrustRootRef.unknown(), REF, null, ClaimTimeSource.SIGNER, Instant.EPOCH,
-                    "ML-DSA-87+Ed448", null, KeyCredential.openPgp(pqc), null);
+                    "ML-DSA-87+Ed448", null, KeyCredential.openPgp(pqc), null, null);
 
             List<VerificationReport.AttesterGroup> groups = VerificationReport.groupByAttester(
                     List.of(result("lib", ArtifactOutcome.UNSATISFIED, null, uncheckable)));
@@ -305,7 +305,7 @@ class VerificationReportTest {
             ClaimResult verified = new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null,
                     List.of(KeyCredential.openPgp(FP)), "Alice", TrustRootRef.unknown(), REF,
                     null, ClaimTimeSource.SIGNER, Instant.EPOCH, "Ed25519", "bc",
-                    KeyCredential.openPgp(FP), null);
+                    KeyCredential.openPgp(FP), null, null);
 
             List<VerificationReport.AttesterGroup> groups = VerificationReport.groupByAttester(
                     List.of(result("lib", ArtifactOutcome.SATISFIED, null, verified)));

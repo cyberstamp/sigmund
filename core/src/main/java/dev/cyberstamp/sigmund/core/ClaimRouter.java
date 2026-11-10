@@ -1,10 +1,12 @@
 package dev.cyberstamp.sigmund.core;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 
 /**
- * Routes a {@link Claim} through the toolchain and keeps the answer that counts.
+ * Routes a {@link Claim} through the toolchain and records the answer that counts as its
+ * {@link ClaimResult}.
  *
  * <p>
  * The one place that decides which tool's answer stands for a claim, used both by trust
@@ -33,43 +35,6 @@ import java.util.List;
  */
 final class ClaimRouter {
 
-    /**
-     * Turns the answer for a claim into what the caller keeps.
-     *
-     * @param <T> what the caller records per claim
-     */
-    interface Recorder<T> {
-
-        /**
-         * Records a tool's answer. Runs while the tool still has its turn: if it throws, the
-         * tool is treated as having broken, as if {@link SignatureTool#verify} had thrown.
-         *
-         * @param tool the tool that answered
-         * @param result its answer
-         * @return the record
-         */
-        T answered(SignatureTool tool, VerifyResult result);
-
-        /**
-         * Records a tool that threw.
-         *
-         * @param tool the tool that threw
-         * @param result the answer standing for it, citing
-         *        {@link IndeterminateReason#TOOL_UNAVAILABLE}
-         * @return the record
-         */
-        T broke(SignatureTool tool, VerifyResult result);
-
-        /**
-         * Records a claim no tool answered.
-         *
-         * @param result the answer standing for it, citing
-         *        {@link IndeterminateReason#UNSUPPORTED_ALGORITHM}
-         * @return the record
-         */
-        T unanswered(VerifyResult result);
-    }
-
     private final List<SignatureTool> tools;
 
     /**
@@ -82,62 +47,77 @@ final class ClaimRouter {
     }
 
     /**
-     * Routes a claim through the toolchain.
+     * Routes a claim through the toolchain and records what it established.
+     *
+     * <p>
+     * Everything asked of a tool happens during its turn: verifying, fetching a missing key,
+     * and naming the credentials and trust root of its result. A tool that throws at any of
+     * these steps is recorded as having broken, and the next tool gets its turn.
      *
      * @param artifactFile the artifact the claim is about
      * @param claim the claim
-     * @param recorder how the caller records the answer
-     * @param <T> what the caller records
+     * @param kind the format that produced the claim
+     * @param evidence the evidence the claim was parsed from
      * @return the record of the answer that counts; never {@code null}
      */
-    <T> T route(Path artifactFile, Claim claim, Recorder<T> recorder) {
-        T best = null;
-        VerifyResult bestResult = null;
+    ClaimResult route(Path artifactFile, Claim claim, String kind, EvidenceRef evidence) {
+        ClaimResult best = null;
         for (SignatureTool tool : tools) {
-            VerifyResult result;
-            T record;
+            ClaimResult record;
             try {
                 if (!tool.canVerify(claim)) {
                     continue;
                 }
-                result = tool.verify(artifactFile, claim);
+                VerifyResult result = tool.verify(artifactFile, claim);
                 if (result.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)) {
                     continue;
                 }
                 if (result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)) {
                     result = fetchKeyAndRetry(artifactFile, claim, tool, result);
                 }
-                record = recorder.answered(tool, result);
+                record = ClaimResult.of(claim, kind, result, tool.extractCredentials(result),
+                        evidence, trustRootOf(tool, result), tool.name(), Instant.now());
             } catch (RuntimeException e) {
                 // A tool that breaks is one tool's failure, not the run's: the claim records
                 // that nothing could check it, the remaining tools still get their turn, and
                 // an operator reads the reason from the report rather than a stack trace.
-                result = toolFailure(tool, e);
-                record = recorder.broke(tool, result);
+                record = ClaimResult.of(claim, kind, toolFailure(tool, e), List.of(), evidence,
+                        TrustRootRef.unknown(), tool.name(), Instant.now());
             }
+            VerifyResult result = record.verifyResult();
             if (result.isVerified() || result.isFailed()) {
                 return record;
             }
-            if (bestResult == null || result.isMoreConclusiveThan(bestResult)) {
-                bestResult = result;
+            if (best == null || result.isMoreConclusiveThan(best.verifyResult())) {
                 best = record;
             }
         }
         if (best != null) {
             return best;
         }
-        return recorder.unanswered(unanswered(claim));
+        return ClaimResult.of(claim, kind, noToolAnswered(claim), List.of(), evidence,
+                TrustRootRef.unknown(), null, Instant.now());
     }
 
     /**
-     * The answer standing for a claim no tool answered, keeping what the claim itself reveals:
+     * Names the trust root a claim was verified against: the source of the very key when the
+     * tool reports it, otherwise the tool's own trust root.
+     */
+    private static TrustRootRef trustRootOf(SignatureTool tool, VerifyResult result) {
+        return result instanceof OpenPgpVerifyResult openPgp && openPgp.keySource() != null
+                ? openPgp.keySource()
+                : tool.trustRoot();
+    }
+
+    /**
+     * The result standing for a claim no tool answered, keeping what the claim itself reveals:
      * for an OpenPGP signature, its algorithm and the key it names, so the report says which
      * block went unchecked and whose key it would need. The key stays unproven.
      *
      * @param claim the claim no tool answered
      * @return an indeterminate result citing {@link IndeterminateReason#UNSUPPORTED_ALGORITHM}
      */
-    private static VerifyResult unanswered(Claim claim) {
+    private static VerifyResult noToolAnswered(Claim claim) {
         if (claim instanceof OpenPgpClaim openPgp) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM,
                     null, Algorithms.algorithmName(openPgp.algorithmId()),

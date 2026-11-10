@@ -41,6 +41,10 @@ import java.util.List;
  * @param reasonDetail why the reason applies, in the verifying tool's words — a key no keyserver
  *        has, or one served without the self-signature that binds it — or {@code null}; it
  *        explains the reason and never changes the outcome
+ * @param verifyResult the verifying tool's own result this record was built from, for format
+ *        details such as an OpenPGP key ID or packet version; {@code null} when it was not built
+ *        from one. It is what the tool said, not what the claim established: {@code outcome} can
+ *        differ, as when a verified signature's signer could not be resolved
  */
 public record ClaimResult(
         String kind,
@@ -56,7 +60,8 @@ public record ClaimResult(
         String algorithm,
         String verifiedBy,
         Credential declaredIssuer,
-        String reasonDetail) {
+        String reasonDetail,
+        VerifyResult verifyResult) {
 
     /**
      * Creates a result for a claim whose evidence names no issuer by full fingerprint.
@@ -80,7 +85,7 @@ public record ClaimResult(
             ClaimTimeSource claimTimeSource, Instant verifiedAt, String algorithm,
             String verifiedBy) {
         this(kind, outcome, reason, attesterCredentials, attesterDisplayName, trustRoot, evidence,
-                claimTime, claimTimeSource, verifiedAt, algorithm, verifiedBy, null, null);
+                claimTime, claimTimeSource, verifiedAt, algorithm, verifiedBy, null, null, null);
     }
 
     /**
@@ -140,7 +145,7 @@ public record ClaimResult(
         return new ClaimResult(kind, result.outcome(), result.reason(), provenCredentials,
                 result.signerDisplayName(), trustRoot, evidence,
                 claim.claimTime(), claim.claimTimeSource(), verifiedAt, result.algorithm(),
-                verifiedBy, declaredIssuerOf(claim), result.reasonDetail());
+                verifiedBy, declaredIssuerOf(claim), result.reasonDetail(), result);
     }
 
     /**
@@ -170,7 +175,7 @@ public record ClaimResult(
         }
         return new ClaimResult(kind, ClaimOutcome.VERIFIED, null, List.of(declaredIssuer),
                 attesterDisplayName, trustRoot, evidence, claimTime, claimTimeSource, verifiedAt,
-                algorithm, verifiedBy, declaredIssuer, null);
+                algorithm, verifiedBy, declaredIssuer, null, null);
     }
 
     /**
@@ -185,7 +190,7 @@ public record ClaimResult(
         credentials.addAll(additional);
         return new ClaimResult(kind, outcome, reason, credentials, attesterDisplayName,
                 trustRoot, evidence, claimTime, claimTimeSource, verifiedAt, algorithm,
-                verifiedBy, declaredIssuer, reasonDetail);
+                verifiedBy, declaredIssuer, reasonDetail, verifyResult);
     }
 
     /**
@@ -198,7 +203,8 @@ public record ClaimResult(
     public ClaimResult unresolved(IndeterminateReason unresolvedReason) {
         return new ClaimResult(kind, ClaimOutcome.INDETERMINATE, unresolvedReason,
                 attesterCredentials, attesterDisplayName, trustRoot, evidence, claimTime,
-                claimTimeSource, verifiedAt, algorithm, verifiedBy, declaredIssuer, null);
+                claimTimeSource, verifiedAt, algorithm, verifiedBy, declaredIssuer, null,
+                verifyResult);
     }
 
     /**

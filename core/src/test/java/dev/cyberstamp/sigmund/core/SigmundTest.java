@@ -254,7 +254,7 @@ class SigmundTest {
                 assertThat(report.isPass()).isTrue();
                 assertThat(report.files().size()).isEqualTo(1);
                 assertThat(report.files().get(0).results().size()).isEqualTo(1);
-                assertThat(report.files().get(0).results().get(0).isVerified()).isTrue();
+                assertThat(report.files().get(0).results().get(0).outcome()).isEqualTo(ClaimOutcome.VERIFIED);
             }
         }
 
@@ -276,8 +276,8 @@ class SigmundTest {
                 SignatureVerificationReport report = sigmund.verify(artifact, sigFile);
 
                 assertThat(report.isPass()).isTrue();
-                assertThat(report.files().get(0).results().get(0).isVerified()).isTrue();
-                assertThat(report.files().get(0).results().get(0).signerDisplayName()).isEqualTo("Alice");
+                assertThat(report.files().get(0).results().get(0).outcome()).isEqualTo(ClaimOutcome.VERIFIED);
+                assertThat(report.files().get(0).results().get(0).attesterDisplayName()).isEqualTo("Alice");
             }
         }
 
@@ -298,7 +298,7 @@ class SigmundTest {
                 SignatureVerificationReport report = sigmund.verify(artifact, sigFile);
 
                 assertThat(report.isLenientPass()).isFalse();
-                assertThat(report.files().get(0).results().get(0).isFailed()).isTrue();
+                assertThat(report.files().get(0).results().get(0).outcome()).isEqualTo(ClaimOutcome.FAILED);
             }
         }
 
@@ -319,7 +319,7 @@ class SigmundTest {
 
                 SignatureVerificationReport report = sigmund.verify(artifact, sigFile);
 
-                assertThat(report.files().get(0).results().get(0).isFailed()).isTrue();
+                assertThat(report.files().get(0).results().get(0).outcome()).isEqualTo(ClaimOutcome.FAILED);
             }
         }
 
@@ -342,7 +342,7 @@ class SigmundTest {
                 SignatureVerificationReport report = sigmund.verify(artifact, sigFile);
 
                 assertThat(report.files().get(0).results().size()).isEqualTo(1);
-                assertThat(report.files().get(0).results().get(0).isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE))
+                assertThat(report.files().get(0).results().get(0).isIndeterminateBecause(IndeterminateReason.KEY_UNAVAILABLE))
                         .isTrue();
             }
         }
@@ -368,7 +368,8 @@ class SigmundTest {
 
                 assertThat(report.isLenientPass()).isFalse();
                 assertThat(report.files().get(0).results()).singleElement()
-                        .satisfies(r -> assertThat(r.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue());
+                        .satisfies(
+                                r -> assertThat(r.isIndeterminateBecause(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue());
             }
         }
 
@@ -394,10 +395,11 @@ class SigmundTest {
                 SignatureVerificationReport report = sigmund.verify(artifact, sigFile);
 
                 assertThat(report.files().get(0).results()).hasSize(2);
-                VerifyResult unchecked = report.files().get(0).results().get(1);
-                assertThat(unchecked.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue();
+                ClaimResult unchecked = report.files().get(0).results().get(1);
+                assertThat(unchecked.isIndeterminateBecause(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue();
                 assertThat(unchecked.algorithm()).isEqualTo("ML-DSA-87+Ed448");
-                assertThat(((OpenPgpVerifyResult) unchecked).keyId()).isEqualTo("FP6");
+                assertThat(unchecked.verifiedBy()).isNull();
+                assertThat(((OpenPgpVerifyResult) unchecked.verifyResult()).keyId()).isEqualTo("FP6");
                 assertThat(report.format()).contains(
                         "[2] INDETERMINATE [UNSUPPORTED_ALGORITHM] (ML-DSA-87+Ed448) [key: FP6]");
                 assertThat(report.isPass()).isFalse();
@@ -422,7 +424,7 @@ class SigmundTest {
                             .build()) {
 
                 assertThat(alone.verify(artifact, sigFile).files().get(0).results()).singleElement()
-                        .satisfies(r -> assertThat(r.isIndeterminate(IndeterminateReason.TOOL_UNAVAILABLE)).isTrue());
+                        .satisfies(r -> assertThat(r.isIndeterminateBecause(IndeterminateReason.TOOL_UNAVAILABLE)).isTrue());
                 assertThat(withAnother.verify(artifact, sigFile).isPass()).isTrue();
             }
         }
@@ -1474,10 +1476,7 @@ class SigmundTest {
 
             @Override
             public List<Credential> extractCredentials(VerifyResult r) {
-                if (r instanceof OpenPgpVerifyResult opvr && opvr.fingerprint() != null) {
-                    return List.of(new KeyCredential(Credential.TYPE_PGP4, opvr.fingerprint()));
-                }
-                return List.of();
+                return OpenPgpCredentials.from(r);
             }
         };
     }

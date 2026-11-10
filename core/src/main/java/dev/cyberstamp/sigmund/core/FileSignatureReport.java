@@ -8,12 +8,12 @@ import java.util.List;
  *
  * @param signatureFile the signature file that was verified
  * @param format the signature format name (e.g., {@code "openpgp"})
- * @param results the typed per-backend verification results
+ * @param results what each claim in the file established, in the order the file holds them
  */
 public record FileSignatureReport(
         Path signatureFile,
         String format,
-        List<VerifyResult> results) {
+        List<ClaimResult> results) {
 
     /**
      * Creates a report with a defensive copy.
