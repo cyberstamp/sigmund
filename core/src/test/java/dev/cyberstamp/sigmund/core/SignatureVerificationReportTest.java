@@ -111,6 +111,17 @@ class SignatureVerificationReportTest {
         }
 
         @Test
+        void formatNamesAFileThatHoldsNoSignature() {
+            var report = new SignatureVerificationReport(
+                    List.of(new FileSignatureReport(Path.of("test.asc"), "openpgp", List.of())));
+
+            assertThat(report.format()).isEqualTo("""
+                    Signature Verification Report:
+                      no signature found in test.asc
+                      Overall: no claims found""");
+        }
+
+        @Test
         void formatIncludesAlgorithm() {
             var result = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                     "Alice", "RSA", 4, "ABCD1234", "FULL_FP");

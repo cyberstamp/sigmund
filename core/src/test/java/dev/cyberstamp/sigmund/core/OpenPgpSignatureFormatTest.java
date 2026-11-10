@@ -112,6 +112,13 @@ class OpenPgpSignatureFormatTest {
         }
 
         @Test
+        void anEmptyFileHoldsNoClaim(@TempDir Path tmp) throws IOException {
+            Path file = Files.writeString(tmp.resolve("empty.asc"), "");
+
+            assertThat(format.parse(Evidence.read(file, Evidence.SOURCE_SIDECAR))).isEmpty();
+        }
+
+        @Test
         void parsedClaimRetainsArmoredBlock(@TempDir Path tmp) throws IOException {
             String block = "-----BEGIN PGP SIGNATURE-----\n\niQEzBAABCgAdFiEE\n=test\n-----END PGP SIGNATURE-----\n";
             Path file = tmp.resolve("sig.asc");
