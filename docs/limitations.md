@@ -32,9 +32,9 @@ A v4 Ed25519 key is written in the legacy EdDSA encoding: GnuPG 2.4 reads Ed2551
 
 ## PQC signature verification requires Sequoia
 
-Bouncy Castle (1.86) does not recognize post-quantum composite signature algorithm IDs (30-36, defined in RFC 9980). Attempting to verify a PQC signature with BC produces `INDETERMINATE [UNSUPPORTED_ALGORITHM]`, which sets that claim aside rather than failing the artifact.
+Bouncy Castle (1.86) does not recognize post-quantum composite signature algorithm IDs (30-36, defined in RFC 9980): it cannot even read a certificate holding such a key. BC therefore does not take post-quantum signatures, and a PQC block no other tool in the toolchain reads is `INDETERMINATE [UNSUPPORTED_ALGORITHM]`, which sets that claim aside rather than failing the artifact.
 
-**What this means:** PQC signature verification currently requires Sequoia `sq` 1.4.0+. If Sequoia is not installed, PQC signature blocks in hybrid `.asc` files will be skipped — the classical signature block is still verified normally.
+**What this means:** PQC signature verification currently requires Sequoia `sq` 1.4.0+. Without it, the PQC block of a hybrid `.asc` is reported `INDETERMINATE [UNSUPPORTED_ALGORITHM]` — so strict verification of the file does not pass, and lenient verification does when the classic block verifies.
 
 BC support for PQC verification (ML-DSA-87+Ed448 and ML-DSA-65+Ed25519) is planned for a future release.
 

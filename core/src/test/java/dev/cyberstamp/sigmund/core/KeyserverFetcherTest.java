@@ -3,6 +3,8 @@ package dev.cyberstamp.sigmund.core;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -230,6 +232,63 @@ class KeyserverFetcherTest {
                     assertThat(fetcher.queriedServers).isEmpty();
                 }
             }
+        }
+    }
+
+    @Nested
+    class ACopyThatCannotBeRead {
+
+        private static final String FP = "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD";
+
+        @Test
+        void isKeptAsServedButUnreadableRatherThanMissing() {
+            try (JunkServingFetcher fetcher = new JunkServingFetcher(createStore())) {
+
+                assertThat(fetcher.fetch(FP)).as("verifying again reports the copy").isTrue();
+
+                UnreadableCertificate copy = fetcher.unreadableCopyOf(FP);
+                assertThat(copy.source()).isEqualTo(TrustRootRef.keyserver("hkps://server1"));
+                assertThat(copy.cause()).isEqualTo(UnreadableCertificate.Cause.DAMAGED);
+            }
+        }
+
+        @Test
+        void isNotAskedForAgain() {
+            try (JunkServingFetcher fetcher = new JunkServingFetcher(createStore())) {
+                fetcher.fetch(FP);
+                fetcher.fetch(FP);
+
+                assertThat(fetcher.downloads).isEqualTo(1);
+            }
+        }
+
+        @Test
+        void isReportedByBcAsTheCopyFromTheKeyserver(@TempDir Path dir) throws Exception {
+            BcKeyStore store = createStore();
+            JunkServingFetcher fetcher = new JunkServingFetcher(store);
+            try (BcRunner runner = new BcRunner(store, null, null, null, null, fetcher)) {
+                fetcher.fetch(FP);
+                Path artifact = Files.writeString(dir.resolve("a.txt"), "a");
+                VerifyResult result = runner.verify(artifact, new OpenPgpClaim("armored", 4, FP, 22, null));
+
+                assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+                assertThat(result.reasonDetail()).startsWith("the copy from hkps://server1 cannot be read: ");
+            }
+        }
+    }
+
+    /** A keyserver returning something that is not a certificate. */
+    private static class JunkServingFetcher extends KeyserverFetcher {
+        int downloads;
+
+        JunkServingFetcher(BcKeyStore store) {
+            super(store, List.of("hkps://server1"));
+        }
+
+        @Override
+        PGPPublicKeyRing download(String keyId, String keyserver) {
+            downloads++;
+            return readServedCopy("<html>not a key</html>".getBytes(StandardCharsets.US_ASCII), keyId, keyserver);
         }
     }
 

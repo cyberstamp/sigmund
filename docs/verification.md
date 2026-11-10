@@ -9,9 +9,7 @@ This guide covers how to verify artifact signatures using Sigmund. Signature ver
 - [Overview](#overview)
 - [Verifying with the CLI](#verifying-with-the-cli)
   - [Example Output](#example-output)
-  - [CLI Options](#cli-options)
 - [Verifying with the Maven Plugin](#verifying-with-the-maven-plugin)
-  - [Maven Plugin Properties](#maven-plugin-properties)
 - [Verification Modes](#verification-modes)
   - [Strict Mode (Default)](#strict-mode-default)
   - [Lenient Mode](#lenient-mode)
@@ -101,14 +99,9 @@ hybrid signature whose PQC block could not be checked reads as
 `1 VERIFIED, 1 INDETERMINATE`, which says what happened, where a single verdict
 would have to choose between "passed" and "not fully checked".
 
-### CLI Options
-
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--file` | Yes | — | Artifact file to verify |
-| `--signature` | Yes | — | Signature `.asc` file |
-| `--sq-home` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
-| `--lenient` | No | `false` | Pass if at least one signature is valid and none failed |
+`--lenient` passes when at least one block verified and none failed (see
+[Verification Modes](#verification-modes)). For every option, see
+[`sigmund verify-signature`](cli-reference.md#sigmund-verify-signature) in the CLI reference.
 
 ## Verifying with the Maven Plugin
 
@@ -125,15 +118,8 @@ reads the toolchain, key fetching and tool settings from `sigmund.yaml`: the fil
 `sigmund.trustConfig` names, else the project directory's — the directory Maven was started from,
 when run without a project — else `~/.config/sigmund/sigmund.yaml`.
 
-### Maven Plugin Properties
-
-| Property | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `file` | Yes | — | Artifact file to verify |
-| `signature` | Yes | — | Signature `.asc` file |
-| `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml`, else `~/.config/sigmund/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
-| `sigmund.sqHome` | No | `~/.local/share/sequoia` | Sequoia keystore directory |
-| `sigmund.lenient` | No | `false` | Pass if at least one signature is valid and none failed |
+`-Dsigmund.lenient=true` is the goal's lenient mode. For every parameter, see
+[`sigmund:verify-signature`](maven-plugin.md#sigmundverify-signature) in the plugin reference.
 
 ## Verification Modes
 
@@ -174,7 +160,7 @@ Sigmund supports four verification backends:
 
 | Tool | Availability | Format | v4 Support | v6 Support | PQC Support |
 |------|--------------|--------|------------|------------|-------------|
-| **BC** | Always (pure Java) | OpenPGP | Yes | Yes (classic algorithms) | Planned |
+| **BC** | Always (pure Java) | OpenPGP | Yes | Yes (classic algorithms) | No — Bouncy Castle 1.86 cannot read ML-DSA keys |
 | **sq** | Optional (requires Sequoia CLI) | OpenPGP | Yes | Yes | Yes (RFC 9980) |
 | **gpg** | Optional (requires GnuPG) | OpenPGP | Yes | No | No |
 | **sigstore** | Optional (`sigmund-sigstore` module) | Sigstore | N/A | N/A | N/A |
@@ -204,12 +190,17 @@ This fallthrough is important because each tool has access to different key stor
 
 ### Tool Capabilities
 
-**BC (Bouncy Castle)** handles any OpenPGP signature with classical algorithms (RSA, EdDSA, ECDSA). It searches for the signing key in:
+**BC (Bouncy Castle)** handles any OpenPGP signature with classical algorithms (RSA, EdDSA, ECDSA). It does not take post-quantum signatures: Bouncy Castle 1.86 cannot read an ML-DSA key, so such a block goes to `sq`, or is `INDETERMINATE [UNSUPPORTED_ALGORITHM]` when no tool in the toolchain reads it. It searches for the signing key in:
 - GnuPG pubring (`~/.gnupg/pubring.kbx`)
 - Shared certificate directory (`~/.local/share/pgp.cert.d`), the store `sq` also uses
 - Keys fetched in this session (in memory)
 
-BC returns `INDETERMINATE [KEY_UNAVAILABLE]` if the signing key is not found in any of these locations.
+BC returns `INDETERMINATE [KEY_UNAVAILABLE]` if the signing key is not found in any of these locations. A stored certificate BC cannot read is never taken for a missing one, and does not hide the keys stored next to it:
+
+- the keys a certificate holds are read from its packets even when Bouncy Castle cannot parse it, so an unreadable certificate concerns only its own keys — an `sq` post-quantum certificate in the shared cert-d does not affect other keys;
+- a copy of the signing key with an algorithm Bouncy Castle does not know is `UNSUPPORTED_ALGORITHM` with the detail "Bouncy Castle cannot read the copy from …", so the next tool, such as `sq`, still answers; a subkey of an unknown algorithm is dropped and the rest of its certificate used;
+- a damaged copy of the signing key is `KEY_UNAVAILABLE` with the detail "the copy from … cannot be read: …", and so is a copy a keyserver served that does not parse;
+- a damaged file whose keys cannot be told apart concerns no key in particular: it is logged once as a warning naming the file, not reported with each signature.
 
 BC verifies with Bouncy Castle's high-level OpenPGP API, which judges a signature in the context of its whole certificate, as GnuPG and Sequoia do. A signature verifies only if the key that made it was, at the signature's creation time, the primary key or a subkey validly bound to it: a binding signature by the primary that verifies, the signing flag, a back-signature (cross-certification) by a signing subkey, and neither revoked nor expired, with the primary key's expiry applying to the whole certificate. A subkey attached to someone else's certificate therefore proves nothing about that certificate's primary key. Algorithm acceptance is unchanged: SHA-1 and RIPEMD-160 signatures, and RSA and DSA keys from 1024 bits, still verify, since rejecting weak algorithms is a policy decision rather than a failed signature.
 
@@ -232,7 +223,7 @@ third outcome: only `FAILED` is an attack signal. The reasons are:
 
 | Reason | Meaning | Transient |
 |--------|---------|-----------|
-| `KEY_UNAVAILABLE` | The signing key is in no keyring and could not be fetched, or the copy found cannot be used — such as a certificate served without the self-signatures that bind the key | yes |
+| `KEY_UNAVAILABLE` | The signing key is in no keyring and could not be fetched, or the copy found cannot be used — a certificate served without the self-signatures that bind the key, or a damaged one | yes |
 | `TRUST_ROOT_UNAVAILABLE` | Sigstore TUF metadata missing or too stale | yes |
 | `DISCOVERY_UNAVAILABLE` | Evidence might exist but the source could not be queried | yes |
 | `TOOL_UNAVAILABLE` | The verification tool could not be run, or broke while running | yes |

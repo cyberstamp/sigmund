@@ -224,8 +224,8 @@ Signature Verification Report:
 Blocks are listed in file order, classic first. `key` is the key that verified the block — often a signing subkey, so it can differ from the primary fingerprint your key is known by.
 
 The last line counts outcomes rather than naming a verdict of its own. A block
-left undecided reads as `INDETERMINATE` followed by the reason, for example
-`INDETERMINATE [KEY_UNAVAILABLE]`.
+left undecided reads as `INDETERMINATE` followed by the reason and, when the tool says, why —
+for example `INDETERMINATE [KEY_UNAVAILABLE: no local key store or configured keyserver has it]`.
 
 Exit codes:
 - `0` — Verification passed
