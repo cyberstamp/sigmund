@@ -3,6 +3,7 @@ package dev.cyberstamp.sigmund.plugin;
 import dev.cyberstamp.sigmund.core.Algorithms;
 import dev.cyberstamp.sigmund.core.ArtifactCoords;
 import dev.cyberstamp.sigmund.core.ClaimOutcome;
+import dev.cyberstamp.sigmund.core.ClaimResult;
 import dev.cyberstamp.sigmund.core.FileSignatureReport;
 import dev.cyberstamp.sigmund.core.IdentityCredential;
 import dev.cyberstamp.sigmund.core.IndeterminateReason;
@@ -149,8 +150,8 @@ class SignatureInspector implements AutoCloseable {
                     entries.add(SignedArtifact.noClaim(coords, repoId));
                     continue;
                 }
-                for (VerifyResult vr : fileReport.results()) {
-                    SignedArtifact entry = new SignedArtifact(coords, repoId, vr,
+                for (ClaimResult claim : fileReport.results()) {
+                    SignedArtifact entry = new SignedArtifact(coords, repoId, claim.verifyResult(),
                             resolved.artifactFile(), sigFile);
                     SignedArtifact fetched;
                     try {
@@ -204,7 +205,8 @@ class SignatureInspector implements AutoCloseable {
             }
             String entryId = entry.verifyResult().signerIdentifier();
             FileSignatureReport fileReport = report.files().get(0);
-            for (VerifyResult vr : fileReport.results()) {
+            for (ClaimResult claim : fileReport.results()) {
+                VerifyResult vr = claim.verifyResult();
                 String id = vr.signerIdentifier();
                 if (id != null && id.equalsIgnoreCase(entryId)) {
                     return new SignedArtifact(entry.coords(), entry.repoId(),

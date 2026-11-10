@@ -39,7 +39,7 @@ public class SignatureVerificationReport {
     public Map<ClaimOutcome, Integer> counts() {
         Map<ClaimOutcome, Integer> counts = new EnumMap<>(ClaimOutcome.class);
         for (FileSignatureReport file : files) {
-            for (VerifyResult result : file.results()) {
+            for (ClaimResult result : file.results()) {
                 counts.merge(result.outcome(), 1, Integer::sum);
             }
         }
@@ -105,7 +105,7 @@ public class SignatureVerificationReport {
         sb.append("Signature Verification Report:\n");
         int idx = 1;
         for (FileSignatureReport file : files) {
-            for (VerifyResult r : file.results()) {
+            for (ClaimResult r : file.results()) {
                 sb.append("  [").append(idx++).append("] ");
                 formatResult(sb, r);
                 sb.append('\n');
@@ -115,7 +115,7 @@ public class SignatureVerificationReport {
         return sb.toString();
     }
 
-    private void formatResult(StringBuilder sb, VerifyResult r) {
+    private void formatResult(StringBuilder sb, ClaimResult r) {
         sb.append(r.outcome());
         if (r.reason() != null) {
             sb.append(" [").append(r.reason());
@@ -127,13 +127,11 @@ public class SignatureVerificationReport {
         if (r.algorithm() != null) {
             sb.append(" (").append(r.algorithm()).append(')');
         }
-        if (r instanceof OpenPgpVerifyResult opvr) {
-            if (opvr.keyId() != null) {
-                sb.append(" [key: ").append(opvr.keyId()).append(']');
-            }
+        if (r.verifyResult() instanceof OpenPgpVerifyResult openPgp && openPgp.keyId() != null) {
+            sb.append(" [key: ").append(openPgp.keyId()).append(']');
         }
-        if (r.signerDisplayName() != null) {
-            sb.append(" [signer: ").append(r.signerDisplayName()).append(']');
+        if (r.attesterDisplayName() != null) {
+            sb.append(" [signer: ").append(r.attesterDisplayName()).append(']');
         }
     }
 }

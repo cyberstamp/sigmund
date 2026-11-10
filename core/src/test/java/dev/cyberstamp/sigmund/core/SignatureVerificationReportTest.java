@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -81,8 +83,8 @@ class SignatureVerificationReportTest {
 
         @Test
         void aggregatesAcrossFiles() {
-            var file1 = new FileSignatureReport(Path.of("a.asc"), "openpgp", List.of(passResult()));
-            var file2 = new FileSignatureReport(Path.of("b.asc"), "openpgp", List.of(failResult()));
+            var file1 = new FileSignatureReport(Path.of("a.asc"), "openpgp", List.of(claimOf(passResult())));
+            var file2 = new FileSignatureReport(Path.of("b.asc"), "openpgp", List.of(claimOf(failResult())));
             var report = new SignatureVerificationReport(List.of(file1, file2));
             assertThat(report.counts()).containsEntry(ClaimOutcome.FAILED, 1);
         }
@@ -139,8 +141,17 @@ class SignatureVerificationReportTest {
     // --- Helpers ---
 
     private static SignatureVerificationReport reportWith(VerifyResult... results) {
-        return new SignatureVerificationReport(
-                List.of(new FileSignatureReport(Path.of("test.asc"), "openpgp", List.of(results))));
+        return new SignatureVerificationReport(List.of(new FileSignatureReport(Path.of("test.asc"),
+                "openpgp", Stream.of(results).map(SignatureVerificationReportTest::claimOf).toList())));
+    }
+
+    /** What a claim established when a bc answer is the one that counts. */
+    private static ClaimResult claimOf(VerifyResult result) {
+        return ClaimResult.of(new OpenPgpClaim("armored", 4, null, 1, null), "openpgp", result,
+                List.of(), new EvidenceRef(Path.of("test.asc"),
+                        DigestSet.sha256("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+                        Evidence.SOURCE_SIDECAR),
+                TrustRootRef.unknown(), "bc", Instant.EPOCH);
     }
 
     private static OpenPgpVerifyResult passResult() {

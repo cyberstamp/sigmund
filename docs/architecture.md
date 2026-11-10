@@ -233,14 +233,15 @@ artifact.jar + artifact.jar.asc
     |
     +-- extract all armored blocks
     |
-    +-- for each block:
-    |     route to tool based on priority and canVerify()
+    +-- for each block (a Claim):
+    |     ClaimRouter: tools in toolchain order, those whose canVerify() accepts it
     |     bc / sq / gpg verify --> VerifyResult (VERIFIED/FAILED/INDETERMINATE + reason)
+    |     the answer that counts --> ClaimResult
     |
-    +-- SignatureVerificationReport (all results)
+    +-- SignatureVerificationReport (one ClaimResult per block)
 ```
 
-Each armored block is parsed into a `Claim` and routed to the first available tool in the priority list that can handle it (via `canVerify()`).
+Each armored block is parsed into a `Claim` and routed by `ClaimRouter` through the tools in the toolchain that can handle it (via `canVerify()`); the answer that counts becomes the block's `ClaimResult`. `verify-signature` reports these directly; trust verification evaluates the same records against the policy.
 
 ### BC Verification
 
@@ -310,12 +311,13 @@ Layer 1 is the `EvidenceProvider` interface, bridged from Layer 2 via `Signature
 
 1. Delegates `canHandle(Path)` to `SignatureFormat`
 2. Parses signature files into `Claim`s
-3. Routes each unit to the appropriate `SignatureTool`
-4. Handles key fetching when a claim is left undecided by `KEY_UNAVAILABLE` (if `resolve-signers` is enabled)
-5. Records a tool that throws as `INDETERMINATE [TOOL_UNAVAILABLE]` rather than letting it end the run
-6. Wraps `VerifyResult` + the credentials the tool extracted into a `ClaimResult`, which also
-   carries the evidence it was read from, the trust root it was checked against, the tool that
-   checked it, and when the claim was made
+3. Routes each claim through `ClaimRouter`, which asks the tools in toolchain order, has a tool
+   fetch a key it reports `KEY_UNAVAILABLE` for (if `resolve-signers` is enabled), and records a
+   tool that throws as `INDETERMINATE [TOOL_UNAVAILABLE]` rather than letting it end the run
+4. Receives a `ClaimResult` per claim: the outcome and the credentials the answering tool
+   extracted, the evidence it was read from, the trust root it was checked against, the tool
+   that checked it, when the claim was made, and the tool's own `VerifyResult` for format
+   details such as an OpenPGP key ID
 
 The `TrustVerifier` consumes `ClaimResult`s and produces one `ArtifactResult` per artifact:
 
