@@ -303,11 +303,17 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * {@inheritDoc}
      *
      * <p>
-     * Accepts any {@link OpenPgpClaim} — handles all packet versions.
+     * Accepts an {@link OpenPgpClaim} of any packet version, except a post-quantum signature
+     * ({@link Algorithms#isPqcAlgorithm(int)}): Bouncy Castle 1.86 cannot read an ML-DSA or
+     * SLH-DSA key at all — parsing the certificate fails with "unknown signature key algorithm" —
+     * so it could only report such a key as missing, and would look for it on keyservers. Declining
+     * passes the claim to a tool that reads it, or leaves it {@code UNSUPPORTED_ALGORITHM} when
+     * none does. {@code BcPostQuantumTest} fails once a Bouncy Castle upgrade reads these keys.
      */
     @Override
     public boolean canVerify(Claim claim) {
-        return claim instanceof OpenPgpClaim;
+        return claim instanceof OpenPgpClaim openPgp
+                && !Algorithms.isPqcAlgorithm(openPgp.algorithmId());
     }
 
     /**
@@ -598,14 +604,63 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
                     null);
         }
 
-        BcKeyStore.KeyLookup found = certificateFor(fingerprint);
+        BcKeyStore.PublicKeySearch search = certificateFor(fingerprint);
+        BcKeyStore.KeyLookup found = search.found();
         if (found == null) {
-            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, null, algorithm, version, fingerprint,
-                    fingerprint).withReasonDetail(notFoundDetail(opgu));
+            return keyNotFound(opgu, fingerprint, algorithm, version, unreadableCopy(search, fingerprint));
         }
 
         return verifySignature(artifactFile, opgu, found, version, fingerprint, algorithm,
                 keyStore.primaryUserIdOf(found.ring()));
+    }
+
+    /**
+     * The copy of a key that could not be read: one in a store, else one a keyserver served.
+     */
+    private UnreadableCertificate unreadableCopy(BcKeyStore.PublicKeySearch search, String fingerprint) {
+        if (search.unreadable() != null) {
+            return search.unreadable();
+        }
+        return fetcher != null ? fetcher.unreadableCopyOf(fingerprint) : null;
+    }
+
+    /**
+     * Reports a key no store holds a readable copy of.
+     *
+     * <p>
+     * A copy of the key that could not be read decides the reason: one using an algorithm
+     * Bouncy Castle does not implement is {@link IndeterminateReason#UNSUPPORTED_ALGORITHM}, so
+     * that a tool implementing it can still answer; a damaged one is
+     * {@link IndeterminateReason#KEY_UNAVAILABLE}, as another copy may serve. Without one, the
+     * key is missing.
+     *
+     * @param unreadable a copy of the key that could not be read, or {@code null}
+     */
+    private OpenPgpVerifyResult keyNotFound(OpenPgpClaim opgu, String fingerprint, String algorithm,
+            int version, UnreadableCertificate unreadable) {
+        if (unreadable == null) {
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, null,
+                    algorithm, version, fingerprint, fingerprint).withReasonDetail(notFoundDetail(opgu));
+        }
+        return switch (unreadable.cause()) {
+            case UNKNOWN_ALGORITHM -> OpenPgpVerifyResult.indeterminate(
+                    IndeterminateReason.UNSUPPORTED_ALGORITHM, null, algorithm, version, fingerprint,
+                    fingerprint)
+                    .withReasonDetail("Bouncy Castle cannot read the copy from "
+                            + where(unreadable.source()) + ": " + unreadable.message());
+            case DAMAGED -> OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, null,
+                    algorithm, version, fingerprint, fingerprint)
+                    .withReasonDetail("the copy from " + where(unreadable.source()) + " cannot be read: "
+                            + unreadable.message());
+        };
+    }
+
+    /**
+     * Names where a copy of a key came from, for a reason detail: the store's location or the
+     * keyserver's URL, else the kind of source.
+     */
+    private static String where(TrustRootRef source) {
+        return source.identifier() != null ? source.identifier() : source.kind();
     }
 
     /**
@@ -708,9 +763,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         if (selfSignatures.isEmpty()) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId,
                     algorithm, version, fingerprint, fingerprint)
-                    .withReasonDetail("the copy from "
-                            + (source.identifier() != null ? source.identifier() : source.kind())
-                            + " carries no self-signature binding the key");
+                    .withReasonDetail("the copy from " + where(source) + " carries no self-signature binding the key");
         }
         if (selfSignatures.stream().anyMatch(BcRunner::rejectedByPolicy)) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM, userId,
@@ -885,19 +938,20 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * verified cryptographically against it. Its source is unknown, since no store holds it.
      *
      * @param fingerprint the fingerprint or key ID the signature names
-     * @return the certificate and its source, or {@code null} when neither holds it
+     * @return the certificate and its source, or, when neither holds it, the copies that could
+     *         not be read
      */
-    private BcKeyStore.KeyLookup certificateFor(String fingerprint) {
-        BcKeyStore.KeyLookup found = keyStore.findPublicKey(fingerprint);
-        if (found != null) {
-            return found;
+    private BcKeyStore.PublicKeySearch certificateFor(String fingerprint) {
+        BcKeyStore.PublicKeySearch search = keyStore.searchPublicKey(fingerprint);
+        if (search.found() != null) {
+            return search;
         }
         for (PGPPublicKeyRing own : signingCertificates.values()) {
             if (BcKeyStore.matchesFingerprint(own, fingerprint)) {
-                return new BcKeyStore.KeyLookup(TrustRootRef.unknown(), own);
+                return new BcKeyStore.PublicKeySearch(new BcKeyStore.KeyLookup(TrustRootRef.unknown(), own), null);
             }
         }
-        return null;
+        return search;
     }
 
     /**

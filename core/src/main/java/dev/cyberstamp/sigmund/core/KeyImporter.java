@@ -16,14 +16,16 @@ public interface KeyImporter {
     /**
      * Attempts to fetch a public key from the configured keyservers.
      * <p>
-     * Returns {@code true} if the key was fetched and is now available for
-     * verification. Returns {@code false} if fetching is disabled
+     * Returns {@code true} if a copy of the key was fetched, so that verifying again may give a
+     * different answer: usually the key is now available, but a copy the tool cannot read counts
+     * too, so that verifying again reports why the key cannot be used rather than that it is
+     * missing. Returns {@code false} if fetching is disabled
      * ({@code resolveSigners=false}), the tool cannot fetch in its current
      * mode (e.g., GPG with {@code importToKeyring=false}), the key was not
      * found, or a connection failure occurred.
      *
      * @param keyId the key ID or fingerprint to fetch
-     * @return {@code true} if the key was fetched successfully
+     * @return {@code true} if a copy of the key was fetched
      */
     boolean fetchKey(String keyId);
 

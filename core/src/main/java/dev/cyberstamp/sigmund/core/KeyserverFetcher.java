@@ -1,7 +1,5 @@
 package dev.cyberstamp.sigmund.core;
 
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -10,9 +8,8 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
-import org.bouncycastle.openpgp.PGPUtil;
-import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 
 /**
  * Fetches OpenPGP keys from HKP keyservers into a {@link BcKeyStore}.
@@ -37,6 +34,7 @@ class KeyserverFetcher implements AutoCloseable {
     private final List<String> keyservers;
     private final KeyFetchCache fetchCache = new KeyFetchCache();
     private final HttpClient httpClient;
+    private final List<UnreadableCertificate> unreadableServed = new CopyOnWriteArrayList<>();
 
     /**
      * Creates a fetcher.
@@ -72,14 +70,20 @@ class KeyserverFetcher implements AutoCloseable {
      * claims to belong to: keys.openpgp.org serves keys whose owners have not verified an
      * address without any. That preference is safe because user IDs are display text only —
      * identities come only from directories the policy names. A key no healthy server has is
-     * remembered as missing for the rest of the build.
+     * remembered as missing for the rest of the build. A copy a server serves that cannot be
+     * read is not a missing key: it is kept ({@link #unreadableCopyOf(String)}), so the key is
+     * reported as served but unreadable, and the key is not asked for again.
      *
      * @param keyId the key ID or fingerprint
-     * @return {@code true} if the store now holds the key
+     * @return {@code true} if a copy of the key was obtained — one that could not be read
+     *         included, so that verifying again reports it
      */
     boolean fetch(String keyId) {
         if (!fetchCache.shouldAttemptKey(keyId)) {
             return false;
+        }
+        if (unreadableCopyOf(keyId) != null) {
+            return true;
         }
         BcKeyStore.KeyLookup existing = keyStore.findPublicKey(keyId);
         if (existing != null && hasUserIds(existing.ring())) {
@@ -97,6 +101,9 @@ class KeyserverFetcher implements AutoCloseable {
                     return true;
                 }
             }
+        }
+        if (!fetched && unreadableCopyOf(keyId) != null) {
+            return true;
         }
         if (!fetched) {
             fetchCache.recordKeyNotFound(keyId);
@@ -119,7 +126,9 @@ class KeyserverFetcher implements AutoCloseable {
      *
      * <p>
      * Distinguishes connection-level failures, which trip the server's circuit breaker,
-     * from HTTP-level errors, which mean a healthy server does not have the key.
+     * from HTTP-level errors, which mean a healthy server does not have the key. A copy the
+     * server returns that cannot be read is recorded in the store as such, not taken for a key
+     * the server does not have.
      *
      * @param keyId the key ID or fingerprint
      * @param keyserver the keyserver URL
@@ -137,10 +146,7 @@ class KeyserverFetcher implements AutoCloseable {
             if (response.statusCode() != OK) {
                 return null;
             }
-            try (InputStream in = PGPUtil.getDecoderStream(
-                    new ByteArrayInputStream(response.body()))) {
-                return new PGPPublicKeyRing(in, new BcKeyFingerprintCalculator());
-            }
+            return readServedCopy(response.body(), keyId, keyserver);
         } catch (HttpTimeoutException | ConnectException e) {
             fetchCache.recordConnectionFailure(keyserver);
             return null;
@@ -150,6 +156,32 @@ class KeyserverFetcher implements AutoCloseable {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * Reads the copy of a key a keyserver returned, keeping one that cannot be read rather than
+     * discarding it.
+     *
+     * @param body what the keyserver returned
+     * @param keyId the key ID or fingerprint it was asked for
+     * @param keyserver the keyserver URL
+     * @return the key ring, or {@code null} when the copy cannot be read
+     */
+    PGPPublicKeyRing readServedCopy(byte[] body, String keyId, String keyserver) {
+        return KeyRingFiles.readServed(body, keyserver, keyId, unreadableServed);
+    }
+
+    /**
+     * Returns the copy of a key a keyserver served this session that could not be read.
+     *
+     * @param fingerprint the key's fingerprint or key ID
+     * @return the copy, or {@code null} when none was served unreadable
+     */
+    UnreadableCertificate unreadableCopyOf(String fingerprint) {
+        return unreadableServed.stream()
+                .filter(certificate -> certificate.holds(fingerprint))
+                .findFirst()
+                .orElse(null);
     }
 
     /**

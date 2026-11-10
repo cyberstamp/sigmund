@@ -18,16 +18,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import org.bouncycastle.gpg.keybox.KeyBlob;
-import org.bouncycastle.gpg.keybox.PublicKeyRingBlob;
-import org.bouncycastle.gpg.keybox.bc.BcKeyBox;
 import org.bouncycastle.openpgp.PGPException;
 import org.bouncycastle.openpgp.PGPPublicKey;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
-import org.bouncycastle.openpgp.PGPPublicKeyRingCollection;
 import org.bouncycastle.openpgp.PGPSecretKeyRing;
 import org.bouncycastle.openpgp.PGPUtil;
-import org.bouncycastle.openpgp.bc.BcPGPPublicKeyRingCollection;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 
 /**
@@ -59,11 +54,23 @@ class BcKeyStore {
     record KeyLookup(TrustRootRef source, PGPPublicKeyRing ring) {
     }
 
+    /**
+     * The result of searching every store for a key: a readable copy, or one that could not be
+     * read.
+     *
+     * @param found the key and its source, or {@code null} when no store holds a readable copy
+     * @param unreadable when nothing was found, a copy of this very key that could not be read;
+     *        {@code null} when something was found, or no copy at all
+     */
+    record PublicKeySearch(KeyLookup found, UnreadableCertificate unreadable) {
+    }
+
     private final Path gnupgHome;
     private final Path certDHome;
     private final Path bcPrivateHome;
     private final Map<String, PGPPublicKeyRing> ephemeralKeys = new ConcurrentHashMap<>();
     private final Map<String, String> fetchedFrom = new ConcurrentHashMap<>();
+    private final Set<String> warnedUnreadable = ConcurrentHashMap.newKeySet();
     private final boolean persistFetched;
 
     /**
@@ -114,18 +121,69 @@ class BcKeyStore {
      * signature proves the key whoever served it.
      *
      * @param fingerprint the fingerprint of the primary key or a subkey
-     * @return the key and its source, or {@code null} when no store holds it
+     * @return the key and its source, or {@code null} when no store holds a readable copy
+     * @see #searchPublicKey(String)
      */
     KeyLookup findPublicKey(String fingerprint) {
+        return searchPublicKey(fingerprint).found();
+    }
+
+    /**
+     * Searches every store for a key, as {@link #findPublicKey(String)} does, and when no store
+     * holds a readable copy says which copies could not be read.
+     *
+     * <p>
+     * A certificate Bouncy Castle cannot read — an algorithm it does not know, a damaged file —
+     * is never taken for an absent one, and the search goes on past it. When nothing usable is
+     * found, a copy of this very key that could not be read is returned, so that the key is
+     * reported as unreadable rather than missing. A copy whose keys cannot be told apart
+     * concerns no key in particular: it is a damaged store, warned about once rather than
+     * reported with every key.
+     *
+     * @param fingerprint the fingerprint of the primary key or a subkey, or a 64-bit key ID
+     * @return the key found, or a copy of it that could not be read
+     */
+    PublicKeySearch searchPublicKey(String fingerprint) {
+        List<UnreadableCertificate> unreadable = new ArrayList<>();
+        KeyLookup found = findInStores(fingerprint, unreadable);
+        if (found != null) {
+            return new PublicKeySearch(found, null);
+        }
+        unreadable.stream().filter(certificate -> certificate.keys().isEmpty()).forEach(this::warnOnce);
+        return new PublicKeySearch(null, unreadable.stream()
+                .filter(certificate -> certificate.holds(fingerprint))
+                .findFirst()
+                .orElse(null));
+    }
+
+    /**
+     * Whether two key designations name the same key: equal fingerprints, or a fingerprint and
+     * the 64-bit key ID it ends with.
+     */
+    static boolean sameKey(String one, String other) {
+        String a = one.toUpperCase();
+        String b = other.toUpperCase();
+        return a.equals(b) || a.endsWith(b) || b.endsWith(a);
+    }
+
+    private void warnOnce(UnreadableCertificate certificate) {
+        if (warnedUnreadable.add(certificate.file() + " " + certificate.message())) {
+            System.getLogger(BcKeyStore.class.getName()).log(System.Logger.Level.WARNING,
+                    certificate.file() + " in " + certificate.source().displayName() + " cannot be read ("
+                            + certificate.message() + "); keys it holds are not available to Bouncy Castle");
+        }
+    }
+
+    private KeyLookup findInStores(String fingerprint, List<UnreadableCertificate> unreadable) {
         PGPPublicKeyRing ring = findInEphemeral(fingerprint);
         if (ring != null) {
             return new KeyLookup(fetchedFromSource(ring), ring);
         }
-        ring = findInGnupgPubring(fingerprint);
+        ring = findInGnupgPubring(fingerprint, unreadable);
         if (ring != null) {
             return found(ring, TrustRootRef.gnupgKeyring(gnupgHome));
         }
-        ring = findInCertD(fingerprint);
+        ring = findInCertD(fingerprint, unreadable);
         if (ring != null) {
             return found(ring, TrustRootRef.certD(certDHome));
         }
@@ -288,17 +346,8 @@ class BcKeyStore {
         Path pubringGpg = gnupgHome.resolve("pubring.gpg");
         if (!Files.isRegularFile(pubringGpg))
             return null;
-        try (InputStream in = new BufferedInputStream(Files.newInputStream(pubringGpg));
-                InputStream decoded = PGPUtil.getDecoderStream(in)) {
-            PGPPublicKeyRingCollection collection = new BcPGPPublicKeyRingCollection(decoded);
-            for (PGPPublicKeyRing ring : collection) {
-                if (uidContainsEmail(ring, lowerEmail))
-                    return ring;
-            }
-        } catch (IOException | PGPException e) {
-            // pubring not readable
-        }
-        return null;
+        return KeyRingFiles.findInKeyRingFile(pubringGpg, ring -> uidContainsEmail(ring, lowerEmail),
+                TrustRootRef.gnupgKeyring(gnupgHome), new ArrayList<>());
     }
 
     /**
@@ -311,7 +360,7 @@ class BcKeyStore {
             for (Path dir : dirs) {
                 try (DirectoryStream<Path> files = Files.newDirectoryStream(dir, Files::isRegularFile)) {
                     for (Path file : files) {
-                        PGPPublicKeyRing ring = readPublicKeyRing(file);
+                        PGPPublicKeyRing ring = readCertDFile(file, new ArrayList<>());
                         if (ring != null && uidContainsEmail(ring, lowerEmail))
                             return ring;
                     }
@@ -345,12 +394,12 @@ class BcKeyStore {
         List<KeyLookup> lookups = new ArrayList<>(3);
         if (hasGnupgPubring()) {
             lookups.add(new KeyLookup(TrustRootRef.gnupgKeyring(gnupgHome), fingerprint != null
-                    ? findInGnupgPubring(fingerprint)
+                    ? findInGnupgPubring(fingerprint, new ArrayList<>())
                     : findByEmailInPubring(lowerEmail)));
         }
         if (hasCertD()) {
             lookups.add(new KeyLookup(TrustRootRef.certD(certDHome), fingerprint != null
-                    ? findInCertD(fingerprint)
+                    ? findInCertD(fingerprint, new ArrayList<>())
                     : findByEmailInCertD(lowerEmail)));
         }
         PGPPublicKeyRing fetched = fingerprint != null
@@ -391,60 +440,25 @@ class BcKeyStore {
     /**
      * Searches the GnuPG pubring for a key matching the fingerprint.
      * Tries {@code pubring.kbx} (modern GnuPG 2.1+) first, then falls back
-     * to the legacy {@code pubring.gpg}.
+     * to the legacy {@code pubring.gpg}; a key that cannot be read is recorded and skipped.
      */
-    private PGPPublicKeyRing findInGnupgPubring(String fingerprint) {
+    private PGPPublicKeyRing findInGnupgPubring(String fingerprint, List<UnreadableCertificate> unreadable) {
         if (gnupgHome == null) {
             return null;
         }
+        TrustRootRef source = TrustRootRef.gnupgKeyring(gnupgHome);
         Path pubringKbx = gnupgHome.resolve("pubring.kbx");
         if (Files.isRegularFile(pubringKbx)) {
-            PGPPublicKeyRing result = findInKeyBox(pubringKbx, fingerprint);
+            PGPPublicKeyRing result = KeyRingFiles.findInKeyBox(pubringKbx,
+                    ring -> matchesFingerprint(ring, fingerprint), source, unreadable);
             if (result != null) {
                 return result;
             }
         }
         Path pubringGpg = gnupgHome.resolve("pubring.gpg");
         if (Files.isRegularFile(pubringGpg)) {
-            return findInKeyRingCollection(pubringGpg, fingerprint);
-        }
-        return null;
-    }
-
-    /**
-     * Searches a PGP keyring file for a key matching the fingerprint.
-     */
-    private static PGPPublicKeyRing findInKeyRingCollection(Path keyringFile, String fingerprint) {
-        try (InputStream in = new BufferedInputStream(Files.newInputStream(keyringFile));
-                InputStream decoded = PGPUtil.getDecoderStream(in)) {
-            PGPPublicKeyRingCollection collection = new BcPGPPublicKeyRingCollection(decoded);
-            for (PGPPublicKeyRing ring : collection) {
-                if (matchesFingerprint(ring, fingerprint)) {
-                    return ring;
-                }
-            }
-        } catch (IOException | PGPException e) {
-            // pubring not readable — skip
-        }
-        return null;
-    }
-
-    /**
-     * Searches a GnuPG keybox ({@code .kbx}) file for a key matching the fingerprint.
-     */
-    private static PGPPublicKeyRing findInKeyBox(Path kbxFile, String fingerprint) {
-        try (InputStream in = new BufferedInputStream(Files.newInputStream(kbxFile))) {
-            BcKeyBox keyBox = new BcKeyBox(in);
-            for (KeyBlob blob : keyBox.getKeyBlobs()) {
-                if (blob instanceof PublicKeyRingBlob pkrBlob) {
-                    PGPPublicKeyRing ring = pkrBlob.getPGPPublicKeyRing();
-                    if (ring != null && matchesFingerprint(ring, fingerprint)) {
-                        return ring;
-                    }
-                }
-            }
-        } catch (IOException e) {
-            // kbx not readable — skip
+            return KeyRingFiles.findInKeyRingFile(pubringGpg,
+                    ring -> matchesFingerprint(ring, fingerprint), source, unreadable);
         }
         return null;
     }
@@ -454,41 +468,39 @@ class BcKeyStore {
      * contains the given email.
      */
     private PGPPublicKeyRing findByEmailInKeyBox(Path kbxFile, String lowerEmail) {
-        try (InputStream in = new BufferedInputStream(Files.newInputStream(kbxFile))) {
-            BcKeyBox keyBox = new BcKeyBox(in);
-            for (KeyBlob blob : keyBox.getKeyBlobs()) {
-                if (blob instanceof PublicKeyRingBlob pkrBlob) {
-                    PGPPublicKeyRing ring = pkrBlob.getPGPPublicKeyRing();
-                    if (ring != null && uidContainsEmail(ring, lowerEmail)) {
-                        return ring;
-                    }
-                }
-            }
-        } catch (IOException e) {
-            // kbx not readable — skip
-        }
-        return null;
+        return KeyRingFiles.findInKeyBox(kbxFile, ring -> uidContainsEmail(ring, lowerEmail),
+                TrustRootRef.gnupgKeyring(gnupgHome), new ArrayList<>());
     }
 
     /**
      * Searches the cert-d directory for a cert matching the fingerprint.
      */
-    private PGPPublicKeyRing findInCertD(String fingerprint) {
+    private PGPPublicKeyRing findInCertD(String fingerprint, List<UnreadableCertificate> unreadable) {
         String lower = fingerprint.toLowerCase();
         if (lower.length() < 3) {
             return null;
         }
         Path certFile = certDFile(lower);
         if (Files.isRegularFile(certFile)) {
-            return readPublicKeyRing(certFile);
+            return readCertDFile(certFile, unreadable);
         }
-        return scanCertDForSubkey(fingerprint);
+        return scanCertDForSubkey(fingerprint, unreadable);
+    }
+
+    /**
+     * Reads a cert-d file, which is named after its certificate's primary key: an unreadable one
+     * whose packets cannot be told apart is recorded as a copy of that key.
+     */
+    private PGPPublicKeyRing readCertDFile(Path file, List<UnreadableCertificate> unreadable) {
+        String named = file.getParent().getFileName().toString() + file.getFileName();
+        return KeyRingFiles.readCertificate(file, TrustRootRef.certD(certDHome),
+                named.matches("[0-9a-fA-F]{40}|[0-9a-fA-F]{64}") ? Set.of(named) : Set.of(), unreadable);
     }
 
     /**
      * Scans the cert-d directory for a cert where the fingerprint matches a subkey.
      */
-    private PGPPublicKeyRing scanCertDForSubkey(String fingerprint) {
+    private PGPPublicKeyRing scanCertDForSubkey(String fingerprint, List<UnreadableCertificate> unreadable) {
         if (!Files.isDirectory(certDHome)) {
             return null;
         }
@@ -496,7 +508,7 @@ class BcKeyStore {
             for (Path dir : dirs) {
                 try (DirectoryStream<Path> files = Files.newDirectoryStream(dir, Files::isRegularFile)) {
                     for (Path file : files) {
-                        PGPPublicKeyRing ring = readPublicKeyRing(file);
+                        PGPPublicKeyRing ring = readCertDFile(file, unreadable);
                         if (ring != null && matchesFingerprint(ring, fingerprint)) {
                             return ring;
                         }
@@ -543,15 +555,7 @@ class BcKeyStore {
      * Reads a PGP public key ring from a file.
      */
     static PGPPublicKeyRing readPublicKeyRing(Path file) {
-        try (InputStream in = new BufferedInputStream(Files.newInputStream(file));
-                InputStream decoded = PGPUtil.getDecoderStream(in)) {
-            return new PGPPublicKeyRing(decoded, new BcKeyFingerprintCalculator());
-        } catch (IOException e) {
-            return null;
-        } catch (Exception e) {
-            // Catch any other exceptions from malformed key data
-            return null;
-        }
+        return KeyRingFiles.readCertificate(file, TrustRootRef.unknown(), Set.of(), new ArrayList<>());
     }
 
     /**

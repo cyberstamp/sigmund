@@ -632,10 +632,20 @@ class BcRunnerTest {
     }
 
     @Test
-    void canVerifyAcceptsAnyOpenPgpClaim() {
+    void canVerifyAcceptsClassicSignaturesOfEitherVersion() {
         try (BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")))) {
             assertThat(runner.canVerify(new OpenPgpClaim("block", 4, "FP", 27, null))).isTrue();
             assertThat(runner.canVerify(new OpenPgpClaim("block", 6, "FP", 27, null))).isTrue();
+        }
+    }
+
+    @Test
+    void canVerifyDeclinesPostQuantumSignatures() {
+        try (BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")))) {
+            for (int algorithmId = 30; algorithmId <= 36; algorithmId++) {
+                assertThat(runner.canVerify(new OpenPgpClaim("block", 6, "FP", algorithmId, null)))
+                        .as("algorithm %d", algorithmId).isFalse();
+            }
         }
     }
 
