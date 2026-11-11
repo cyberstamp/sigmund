@@ -105,6 +105,9 @@ public class SignatureVerificationReport {
         sb.append("Signature Verification Report:\n");
         int idx = 1;
         for (FileSignatureReport file : files) {
+            if (file.results().isEmpty()) {
+                sb.append("  no signature found in ").append(file.signatureFile()).append('\n');
+            }
             for (ClaimResult r : file.results()) {
                 sb.append("  [").append(idx++).append("] ");
                 formatResult(sb, r);

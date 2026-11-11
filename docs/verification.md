@@ -445,51 +445,68 @@ signal, and no mode tolerates it.
 
 ## Troubleshooting
 
-### "No signatures found in signature file"
+Each entry is a line the report prints. In strict mode any block that is not `VERIFIED` fails the
+run; in [lenient mode](#lenient-mode) an `INDETERMINATE` block is tolerated when another verified,
+and a `FAILED` one never is.
 
-The `.asc` file contains no valid OpenPGP armored blocks. Check that the file:
-- Contains `-----BEGIN PGP SIGNATURE-----` and `-----END PGP SIGNATURE-----`
-- Was not corrupted during transfer
-- Is an actual signature file (not a public key or encrypted message)
+### `no signature found in <file>`
 
-### "No public key"
+The file is empty, or holds no OpenPGP armored block (`-----BEGIN PGP SIGNATURE-----` …
+`-----END PGP SIGNATURE-----`): it may be a public key, an error page saved under the signature's
+name, or a file cut short in transfer. Fetch the signature again; `Overall: no claims found`
+follows.
 
-The signing key is not in any keyring. Solutions:
+### `INDETERMINATE [KEY_UNAVAILABLE: …]`
 
-1. **Enable automatic key fetching** (default):
-   ```yaml
-   verification:
-     resolve-signers: true
-   ```
+The block was not checked because no usable copy of its key was found. The detail says why:
 
-2. **Import the key manually:**
-   ```bash
-   gpg --recv-keys <FINGERPRINT>
-   # or
-   sq cert import --cert-file signer-cert.asc
-   ```
+| Detail | What to do |
+|---|---|
+| `no local key store or configured keyserver has it` | The key is published nowhere Sigmund looks. Add a keyserver that serves it under [`verification.keyservers`](configuration.md#verification), or import it into a tool's store: `gpg --import`, `sq cert import`. |
+| `no local key store has it, and key fetching is off` | Set `verification.resolve-signers: true` (the default), or import the key. |
+| `the signature names only a key ID, which is not looked up on keyservers` | The signature carries a 64-bit key ID rather than a fingerprint, as older signers wrote. Import the key by hand. |
+| `the copy from <source> carries no self-signature binding the key` | Usually a key from `keys.openpgp.org` whose owner has not verified an address, served without its user IDs; list another keyserver after it — see [Keys Served Without User IDs](#keys-served-without-user-ids). |
+| `its self-signatures do not bind it` | The certificate found holds the key but does not bind it, for example a subkey without a valid binding signature. Get the owner's complete certificate. |
+| `its user ID is not valid UTF-8, which Bouncy Castle cannot read` | A Bouncy Castle limitation; keep `sq` or `gpg` in the toolchain with the key in its store ([Limitations](limitations.md)). |
+| `the certificate found does not contain the signing key` | A certificate matched the key ID the signature names, but none of its keys made it. Get the certificate of the key the signature names. |
+| `the copy from <store> cannot be read: …` | A stored copy, or one a keyserver served, is damaged. Import a fresh copy, or remove the damaged file. |
 
-3. **Use lenient mode** if other signatures are valid:
-   ```bash
-   sigmund verify-signature --file ... --signature ... --lenient
-   ```
+Without a detail, the answer came from `sq` or `gpg`, which do not say why — most often the key is
+not in that tool's own store.
 
-### GPG prints "packet with unknown version 6" but succeeds
+### `INDETERMINATE [UNSUPPORTED_ALGORITHM]`
 
-This is expected when verifying hybrid signatures. GPG processes the v4 classical signature and ignores the v6 PQC signature it doesn't understand. The verification succeeds because the classical signature is valid.
+No tool in the toolchain can check the block. Most often it is a post-quantum block and `sq`
+1.4.0 or later is not installed, or not in `verification.toolchain`; the detail `Bouncy Castle
+cannot read the copy from …` says the same of a certificate. Otherwise the signature uses an
+algorithm weaker than Sigmund [accepts](#accepted-algorithms), which no setting changes. Unlike a
+missing key, this does not resolve on a later run with the same tools.
 
-To verify the PQC signature, ensure Sequoia is installed and appears in the toolchain:
+### `INDETERMINATE [TOOL_UNAVAILABLE]`
 
-```yaml
-verification:
-  toolchain: [bc, sq, gpg]
+A tool could not be run, or broke while running. The log carries a warning naming the tool and
+the cause (`Verification tool 'sq' failed; …`): check that the tool is installed, and that its
+home directory setting points at a directory it can use.
+
+### `INDETERMINATE [EVIDENCE_MALFORMED]`
+
+The signature or Sigstore bundle could not be parsed — a truncated or hand-edited file. Fetch it
+again.
+
+### `FAILED`
+
+The artifact's bytes do not match the signature, or the key that made it had expired when it
+signed, or was revoked. First check that the artifact and signature are the pair that was
+published; if they are, treat it as tampering and do not use the artifact. No mode tolerates it.
+
+### Checking with gpg directly
+
+`gpg --verify` on a hybrid `.asc` checks only the classic block:
+
+```
+gpg: packet(2) with unknown version 6
+gpg: Good signature from "Alice <alice@example.org>" [unknown]
 ```
 
-### "Bad signature"
-
-The signature is invalid. Possible causes:
-- The artifact was modified after signing
-- The wrong artifact or signature file was provided
-- The signature file is corrupted
-
-Ensure you are verifying the correct artifact against the correct signature file.
+and exits with status 2, for the block it could not read. That is GnuPG's view of the file, not a
+problem with it; Sigmund verifies every block, and gives `gpg` only the v4 one.
