@@ -440,6 +440,31 @@ This creates a `sigmund.yaml` in your project root by:
 
 The generated file can be used directly with `mvn sigmund:verify`. It has no catch-all: a
 dependency added later matches no rule and fails as `NOT_CONFIGURED` until an update adds it.
+
+**A key whose signatures could not be checked here is still pinned, and marked.** The signature
+names its key, so the rule requires the key that signed; but when no copy of it could be used —
+such as a key `keys.openpgp.org` serves without the self-signatures that bind it, until its owner
+verifies an address — `verify` reports the artifact `INDETERMINATE` until a usable copy is
+available. The file marks the key, and the run ends with a warning naming each such signer with
+the reason, once:
+
+```yaml
+  signer-2:
+    pgp4: "C7BE5BCC9FEC15518CFDA882B0F3710FA64900E7"  # signature could not be checked here
+```
+
+```
+[WARNING] The signatures of 2 signer(s) written could not be checked here; sigmund:verify reports their artifacts INDETERMINATE until a usable copy of each key is available:
+[WARNING]   signer-2: the copy from hkps://keys.openpgp.org carries no self-signature binding the key
+[WARNING]   signer-3: the copy from hkps://keys.openpgp.org carries no self-signature binding the key
+[WARNING] Import each publisher's key from a source you trust (gpg --import, sq cert import).
+```
+
+Importing the key into GnuPG's or Sequoia's store resolves it: `gpg` verifies from its keyring,
+and Bouncy Castle reads the same keyring. Take the key from where the publisher announces it — its
+project's `KEYS` file or release page — rather than any keyserver: a key from a keyserver that
+does not verify addresses proves the signature as well, but the user ID it carries is the
+publisher's claim alone.
 Trust established this way is trust on first use — the snapshot is accepted as it is, and only
 changes from it are detected — so review it before committing. When any signer is named by an
 address, the file lists `keys.openpgp.org` under `issuers`: the trust is stated in the file, not
