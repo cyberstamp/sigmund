@@ -58,13 +58,14 @@ Trust verification combines signature verification with an identity policy:
 2. **Identity matching** — extracts signer credentials from the verified signature (fingerprints, email addresses, OIDC identities)
 3. **Trust policy evaluation** — checks whether the proven credentials match your expected signers for that artifact
 
-For example, you might trust artifacts from `io.quarkus.*` when signed by the Quarkus team, and artifacts from `com.fasterxml.jackson.*` when signed by Tatu Saloranta. Trust verification enforces these rules automatically during your build.
+For example, you might trust artifacts from `io.quarkus.*` when signed by that project's release key, and artifacts from `com.fasterxml.jackson.*` when signed by the key of the maintainer who releases them. Trust verification enforces these rules automatically during your build.
 
 ### How It Works
 
 Sigmund's `verify` goal:
 1. Resolves your project's dependencies
-2. Downloads signature files (`.asc`) from Maven repositories
+2. Downloads each artifact's signature files — `.asc`, and `.sigstore.json` bundles when the
+   `sigmund-sigstore` module is on the plugin's classpath ([Enabling Sigstore Support](maven-plugin.md#enabling-sigstore-support)) — from the artifact's repositories
 3. Verifies each signature and extracts proven credentials
 4. Finds the most specific rule in `sigmund.yaml` for each artifact and checks the proven credentials against what it requires
 5. Reports each artifact's outcome, grouped by outcome and then by attester
@@ -85,7 +86,7 @@ The `signers` section defines trusted identities. Each signer has a unique ID an
 issuers:
   - keys.openpgp.org
 signers:
-  jackson-dev: "tatu@fasterxml.com"
+  jackson-release: "jackson-release@example.org"
 ```
 
 **Object form** — credential keys; unknown keys are errors:
@@ -278,14 +279,14 @@ signers:
   # Key already seen, plus an address for keys to come
   apache:
     pgp4: "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"
-    email: "dev@maven.apache.org"
+    email: "apache-release@example.org"
 
   quarkus-team:
     pgp4: "BBE7232D7991050B54C8EA0ADC08637CA615D22C"
-    email: "quarkus-dev@googlegroups.com"
+    email: "quarkus-release@example.org"
 
   # Minimal form: email string
-  jackson-dev: "tatu@fasterxml.com"
+  jackson-release: "jackson-release@example.org"
 
   # Multiple keys and an address
   alice:
@@ -309,10 +310,10 @@ rules:
 
   # Both must have signed
   - match: ["com.example:shared-lib"]
-    requires: [alice, jackson-dev]
+    requires: [alice, jackson-release]
 
   - match: ["com.fasterxml.jackson.core:jackson-databind"]
-    requires: [jackson-dev]
+    requires: [jackson-release]
 
   # Published unsigned
   - match: ["com.internal.*", "org.example:legacy-lib"]
@@ -345,21 +346,34 @@ that it is observing only.
 
 ### Example Output
 
+A project with six dependencies, a policy requiring `alice` for `org.example.*` and `dave` for
+`com.acme:widget`, and one module tolerated unsigned:
+
 ```
-[INFO] SATISFIED (40)
-[INFO]   openpgp VERIFIED by bc (RSA) - Apache Software Foundation
-[INFO]     org.apache.commons:commons-lang3:3.12.0
-[INFO]     org.apache.maven:maven-core:3.9.0
-[INFO]   openpgp VERIFIED by sq (ML-DSA-87+Ed448) - Quarkus Team
-[INFO]     io.quarkus:quarkus-arc:3.0.0
-[INFO]     io.quarkus:quarkus-core:3.0.0
-[INFO]
+[INFO] SATISFIED (2)
+[INFO]   openpgp VERIFIED by bc (EdDSA) - Alice Example <alice@example.org>
+[INFO]     org.example:core:1.0
+[INFO]     org.example:util:1.0
+[ERROR]
 [ERROR] UNSATISFIED (1)
-[ERROR]   openpgp VERIFIED by gpg (RSA) - Unknown <unknown@example.com>
-[ERROR]     io.quarkus:quarkus-extra:3.0.0 [blocks]
+[ERROR]   openpgp VERIFIED by bc (EdDSA) - Mallory Example <mallory@example.org>
+[ERROR]     org.example:extra:1.0 [blocks]
 [INFO]
-[INFO] NO_CLAIM (3) — ignored: 3 by rules[4] 'com.internal.*'
+[INFO] NO_CLAIM (1) — ignored: 1 by rules[2] 'com.acme:internal'
+[ERROR]
+[ERROR] INDETERMINATE (1)
+[ERROR]   openpgp INDETERMINATE (KEY_UNAVAILABLE: no local key store or configured keyserver has it) by bc (EdDSA)
+[ERROR]     com.acme:widget:1.0 [blocks]
+[ERROR]
+[ERROR] NOT_CONFIGURED (1)
+[ERROR]   openpgp VERIFIED by bc (EdDSA) - Bob Example <bob@example.org>
+[ERROR]     net.other:lib:1.0 [blocks]
 ```
+
+The build then fails with `Verification blocked the build for 3 artifact(s): org.example:extra:1.0
+(UNSATISFIED), com.acme:widget:1.0 (INDETERMINATE), net.other:lib:1.0 (NOT_CONFIGURED)`. The name
+after a verified claim is the user ID on the key — display text, never what the policy matched:
+`extra` is `UNSATISFIED` because Mallory's key is not one `alice` holds, whatever its user ID says.
 
 Results are grouped by outcome, and within an outcome by who attested them. Each artifact line
 says what its outcome does — `[blocks]`, `[warning]` or `[ignored]` — and is logged at that
@@ -425,16 +439,17 @@ Instead of writing `sigmund.yaml` by hand, generate it from your project's actua
 
 ```bash
 mvn sigmund:dependency-signers \
-  -Dsigmund.generateTrustConfig=true \
-  -Dsigmund.resolveSigners=true
+  -Dsigmund.generateTrustConfig=true
 ```
 
 This creates a `sigmund.yaml` in your project root by:
 1. Resolving all project dependencies
 2. Downloading and verifying their signatures
 3. Grouping artifacts by the signers whose credentials they proved
-4. Asking `keys.openpgp.org` which addresses it has verified for each signer's keys, and naming
-   the signer by one of them — the one on the key, when verified — next to its fingerprints
+4. Asking `keys.openpgp.org` which addresses it has verified for each signer's keys, and writing
+   one as the signer's `email:` next to its fingerprints — the one on the key, when verified.
+   A signer's ID is taken from the user ID on its key — unverified display text, to rename
+   freely — or is `signer-N` when no user ID is known
 5. Collapsing common groupId prefixes into wildcard patterns (e.g., `io.quarkus.*`)
 6. Writing a requirement rule per group, and one rule tolerating the modules found without a signature
 
@@ -473,14 +488,17 @@ assumed by Sigmund, and removing that line and the `email:` lines leaves fingerp
 ### Generated File Structure
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cyberstamp/sigmund/main/core/src/main/resources/sigmund.schema.json
 issuers: [keys.openpgp.org]
 
 signers:
   alice-developer:
     pgp4: "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"
-    email: "alice@example.com"
-  signer-2:
-    pgp4: "BBE7232D7991050B54C8EA0ADC08637CA615D22C"
+    email: "alice@example.org"
+  bob-example:
+    pgp4: "BBE7232D7991050B54C8EA0ADC08637CA615D22C"  # user ID on the key, unverified: Bob Example <bob@example.org>
+  signer-3:
+    pgp4: "9A1C2E3D4F5A6B7C8D9E0F1A2B3C4D5E6F7A8B9C"  # signature could not be checked here
 
 rules:
   - match: com.example:specific-lib
@@ -488,10 +506,18 @@ rules:
   - match: io.quarkus.*
     requires: alice-developer
   - match: org.apache.maven.*
-    requires: signer-2
+    requires: bob-example
+  - match: com.acme:widget
+    requires: signer-3
   - match: [com.internal.utils:helper-lib]
     on-no-claim: ignore
 ```
+
+The first line points editors at the published schema, for completion and validation as the
+file is edited — see [editor support](configuration.md#editor-support). `alice-developer` is
+named by the address `keys.openpgp.org` verified for its key; `bob-example`'s key has no
+verified address, so its user ID is shown as a comment, for recognizing the key only; and
+`signer-3`'s signatures could not be checked here, as [above](#generating-trust-configuration).
 
 An artifact observed with several signatures gets all their signers in `requires`, so each must
 keep signing it — with one exception: a publisher's classic and post-quantum keys, carrying the
@@ -501,7 +527,7 @@ reaches a verdict on the classic one. A matching user ID alone never combines ke
 IDs are unverified.
 
 **Tips:**
-- Review the generated file before committing — rename signer IDs to something meaningful; the comment shows the user ID each key carries, which is unverified and not used for matching
+- Review the generated file before committing — rename signer IDs to something meaningful; where a key is not named by its verified address, a comment shows the user ID it carries — unverified, and never used for matching
 - Adjust wildcard patterns if they're too broad or too narrow
 - Add `email:` for signers whose future keys you want to accept, with the directory listed under `issuers`
 
@@ -511,7 +537,7 @@ IDs are unverified.
 |----------|-------------|
 | `sigmund.generateTrustConfig` | Generate a new `sigmund.yaml`. Set to `true` for project root, or provide a file path. |
 | `sigmund.overwrite` | Allow overwriting an existing file (default: `false`) |
-| `sigmund.resolveSigners` | Fetch keys from keyservers to resolve signer names and emails (recommended) |
+| `sigmund.resolveSigners` | Overrides `verification.resolve-signers`, default `true`. `false` works offline: keys are not fetched and the directory is not asked, so no `email:` is written |
 | `sigmund.keyservers` | Comma-separated keyserver list (default: `hkps://keys.openpgp.org`) |
 
 ## Updating Trust Configuration
@@ -520,8 +546,7 @@ After adding new dependencies, update your existing `sigmund.yaml` instead of re
 
 ```bash
 mvn sigmund:dependency-signers \
-  -Dsigmund.updateTrustConfig=true \
-  -Dsigmund.resolveSigners=true
+  -Dsigmund.updateTrustConfig=true
 ```
 
 The update adds what the policy does not cover yet, preserving existing content, comments and
@@ -578,7 +603,7 @@ After updating, review the changes with `git diff`.
 | Property | Description |
 |----------|-------------|
 | `sigmund.updateTrustConfig` | Update an existing `sigmund.yaml`. Set to `true` for project root, or provide a file path. |
-| `sigmund.resolveSigners` | Fetch keys from keyservers to resolve signer names and emails (recommended) |
+| `sigmund.resolveSigners` | Overrides `verification.resolve-signers`, default `true`. `false` works offline: keys are not fetched and the directory is not asked, so no `email:` is written |
 
 ## Recommended Workflow
 
@@ -589,8 +614,7 @@ Here's a complete workflow for setting up and maintaining trust verification:
 1. **Generate the initial trust config:**
    ```bash
    mvn sigmund:dependency-signers \
-     -Dsigmund.generateTrustConfig=true \
-     -Dsigmund.resolveSigners=true
+     -Dsigmund.generateTrustConfig=true
    ```
 
 2. **Review and refine the generated `sigmund.yaml`:**
@@ -650,8 +674,7 @@ When you add or upgrade dependencies:
 1. **Update the trust config:**
    ```bash
    mvn sigmund:dependency-signers \
-     -Dsigmund.updateTrustConfig=true \
-     -Dsigmund.resolveSigners=true
+     -Dsigmund.updateTrustConfig=true
    ```
 
 2. **Review the changes, and anything listed under Needs review:**
@@ -722,6 +745,14 @@ This usually means:
 1. The signer's credentials changed (a new key) — run `mvn sigmund:dependency-signers` to see the key that signed, and add its fingerprint
 2. A more specific rule matched than the one you expected — compare the artifact's coordinate with every rule whose pattern matches it; the most specific wins
 3. The artifact carries an extra signature from a signer the rule does not name, under `extra-claims: reject`
+
+### An artifact is INDETERMINATE
+
+A claim was found but could not be checked; the reason in the report says why — usually a key no
+store or keyserver could supply in usable form, or a post-quantum block without `sq`. See
+[Signature Verification troubleshooting](verification.md#troubleshooting) for each reason and what
+to do. A rule can tolerate it while you sort it out (`on-indeterminate: warn`), but it is not
+accepted as `SATISFIED`.
 
 ### "NO_CLAIM" for artifacts that should be signed
 
