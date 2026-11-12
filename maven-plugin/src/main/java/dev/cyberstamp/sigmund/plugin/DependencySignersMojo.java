@@ -489,6 +489,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
 
         getLog().info("");
         getLog().info("Trust configuration written to " + configFile.getPath());
+        warnNotCheckedHere(signersByKey.values());
     }
 
     /**
@@ -550,6 +551,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         getLog().info("");
         getLog().info("Trust configuration updated: " + configFile.getPath());
         getLog().info("Review changes with: git diff " + configFile.getName());
+        warnNotCheckedHere(addedSigners.values());
     }
 
     private static Map<ArtifactCoords, List<SignedArtifact>> groupByArtifact(
@@ -1073,7 +1075,8 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             return;
         }
         out.accept(indent + info.id + ":");
-        String comment = namedByAddressOnKey(info) ? "" : userIdComment(info.userId);
+        String comment = info.notCheckedHere() ? "  # signature could not be checked here"
+                : namedByAddressOnKey(info) ? "" : userIdComment(info.userId);
         if (info.pgp4Key != null) {
             out.accept(indent + "  pgp4: \"" + info.pgp4Key + "\"" + comment);
         }
@@ -1158,6 +1161,25 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
      * self-certified, so it helps a reviewer recognize the key but proves nothing. It is left out
      * for a signer named by the address it shows, which the directory verified.
      */
+    /**
+     * Warns about signers written to the file none of whose signatures could be checked here:
+     * their requirements hold the key that signed, and are indeterminate until it can be used.
+     * Each is named once with why, and the remedy is said once, so the file only marks them.
+     */
+    private void warnNotCheckedHere(Collection<SignerInfo> written) {
+        List<SignerInfo> notChecked = written.stream()
+                .filter(info -> info.hasCredentials() && info.notCheckedHere())
+                .sorted(Comparator.comparing(info -> info.id))
+                .toList();
+        if (notChecked.isEmpty()) {
+            return;
+        }
+        getLog().warn("The signatures of " + notChecked.size() + " signer(s) written could not be checked here; "
+                + "sigmund:verify reports their artifacts INDETERMINATE until a usable copy of each key is available:");
+        notChecked.forEach(info -> getLog().warn("  " + info.id + ": " + info.notCheckedBecause));
+        getLog().warn("Import each publisher's key from a source you trust (gpg --import, sq cert import).");
+    }
+
     private static String userIdComment(String userId) {
         return userId == null ? "" : "  # user ID on the key, unverified: " + userId.replaceAll("\\R", " ");
     }
@@ -1206,6 +1228,8 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         String userId;
         IdentityCredential emailIdentity;
         String directoryAddress;
+        boolean checked;
+        String notCheckedBecause;
 
         SignerInfo(String id, VerifyResult vr) {
             this.id = id;
@@ -1213,6 +1237,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         }
 
         void merge(VerifyResult vr) {
+            recordCheck(vr);
             if (userId == null && vr instanceof OpenPgpVerifyResult) {
                 userId = vr.signerDisplayName();
             }
@@ -1225,6 +1250,23 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
 
         boolean hasCredentials() {
             return pgp4Key != null || pgp6Key != null || emailIdentity != null;
+        }
+
+        /**
+         * Whether no signature by this signer could be checked here — every claim was left
+         * indeterminate — so that the requirement written for it holds the key that signed, but
+         * {@code verify} cannot confirm it until a usable copy of the key is available.
+         */
+        boolean notCheckedHere() {
+            return !checked && notCheckedBecause != null;
+        }
+
+        private void recordCheck(VerifyResult vr) {
+            if (!vr.isIndeterminate()) {
+                checked = true;
+            } else if (notCheckedBecause == null) {
+                notCheckedBecause = vr.reasonDetail() != null ? vr.reasonDetail() : vr.reason().name();
+            }
         }
 
         List<String> keys() {
@@ -1260,6 +1302,10 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             }
             if (pgp6Key == null) {
                 pgp6Key = other.pgp6Key;
+            }
+            checked |= other.checked;
+            if (notCheckedBecause == null) {
+                notCheckedBecause = other.notCheckedBecause;
             }
         }
 

@@ -344,9 +344,55 @@ class DependencySignersMojoTest {
             assertThat(config.trustPolicySpec().rules()).isEmpty();
         }
 
+        /**
+         * The key that signed is still pinned; the file marks it, and the log says once why its
+         * signature could not be checked and what to do, so a verify that reports it
+         * indeterminate is no surprise.
+         */
+        @Test
+        void markAKeyWhoseSignaturesCouldNotBeCheckedHere(@TempDir Path dir) throws Exception {
+            SignedArtifact signed = new SignedArtifact(coords, "central",
+                    new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE,
+                            null, "RSA", 4, FULL_FP, FULL_FP)
+                            .withReasonDetail(
+                                    "the copy from hkps://keys.openpgp.org carries no self-signature binding the key"),
+                    null, null);
+            Path configFile = dir.resolve("sigmund.yaml");
+
+            generate(List.of(signed), configFile);
+
+            assertThat(Files.readAllLines(configFile))
+                    .contains("    pgp4: \"" + FULL_FP + "\"  # signature could not be checked here");
+            assertThat(log.lines).containsSubsequence(
+                    "warn: The signatures of 1 signer(s) written could not be checked here; sigmund:verify reports "
+                            + "their artifacts INDETERMINATE until a usable copy of each key is available:",
+                    "warn:   signer-1: the copy from hkps://keys.openpgp.org carries no self-signature binding the key",
+                    "warn: Import each publisher's key from a source you trust (gpg --import, sq cert import).");
+        }
+
+        @Test
+        void doNotMarkAKeyWhoseSignatureWasCheckedOnAnotherArtifact(@TempDir Path dir) throws Exception {
+            SignedArtifact unavailable = new SignedArtifact(coords, "central",
+                    new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE,
+                            null, "RSA", 4, FULL_FP, FULL_FP),
+                    null, null);
+            SignedArtifact verified = new SignedArtifact(LIB_COORDS, "central",
+                    new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
+                            "RSA", 4, FULL_FP, FULL_FP),
+                    null, null);
+            Path configFile = dir.resolve("sigmund.yaml");
+
+            generate(List.of(unavailable, verified), configFile);
+
+            assertThat(Files.readAllLines(configFile)).noneMatch(line -> line.contains("could not be checked"));
+            assertThat(log.lines).noneMatch(line -> line.contains("could not be checked"));
+        }
+
+        private final RecordingLog log = new RecordingLog();
+
         private void generate(List<SignedArtifact> results, Path configFile) throws Exception {
             DependencySignersMojo mojo = new DependencySignersMojo();
-            mojo.setLog(new RecordingLog());
+            mojo.setLog(log);
             mojo.writeTrustConfigYaml(results, configFile.toFile());
         }
     }
