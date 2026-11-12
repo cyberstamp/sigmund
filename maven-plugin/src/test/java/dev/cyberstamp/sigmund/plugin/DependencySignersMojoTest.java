@@ -367,7 +367,7 @@ class DependencySignersMojoTest {
                     "warn: The signatures of 1 signer(s) written could not be checked here; sigmund:verify reports "
                             + "their artifacts INDETERMINATE until a usable copy of each key is available:",
                     "warn:   signer-1: the copy from hkps://keys.openpgp.org carries no self-signature binding the key",
-                    "warn: Import each publisher's key from a source you trust (gpg --import, sq cert import).");
+                    "warn: List a keyserver that serves these keys in full under verification.keyservers in sigmund.yaml; for a key none does, see \"Keys Served Without User IDs\" in the signature verification docs.");
         }
 
         @Test

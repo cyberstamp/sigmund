@@ -12,6 +12,7 @@ This page documents known limitations, ecosystem maturity notes, and caveats for
 - [Sequoia verdicts are read from its report text](#sequoia-verdicts-are-read-from-its-report-text)
 - [GnuPG does not honour revocation reasons](#gnupg-does-not-honour-revocation-reasons)
 - [BC cannot use a user ID that is not UTF-8](#bc-cannot-use-a-user-id-that-is-not-utf-8)
+- [keys.openpgp.org alone cannot serve keys without a verified address](#keysopenpgporg-alone-cannot-serve-keys-without-a-verified-address)
 - [Key passphrase protection caveats](#key-passphrase-protection-caveats)
   - [BC keys: decrypted material on the Java heap](#bc-keys-decrypted-material-on-the-java-heap)
 - [PQC ecosystem maturity](#pqc-ecosystem-maturity)
@@ -68,13 +69,18 @@ either change fails Sigmund's build rather than going unnoticed.
 ## GnuPG does not honour revocation reasons
 
 The design (§3.8 of the design direction) honours a revocation's reason code: a key revoked as
-compromised invalidates every signature it made, while one retired or superseded invalidates only
-signatures made after the revocation. Bouncy Castle and Sequoia do this. GnuPG reports a
-signature by a revoked key (`REVKEYSIG`) without the revocation's time or reason, so Sigmund
-treats every such signature as `FAILED` when GnuPG answers — including a signature made before
-a key was retired, which the other backends verify. GnuPG is stricter, never more lenient, than
-the others here. Reading the revocation details from GnuPG's key listing is part of roadmap task
-P4.7.
+compromised, or with no reason given, invalidates every signature it made, while one retired or
+superseded invalidates only signatures made after the revocation. Bouncy Castle and Sequoia do
+this. GnuPG reports a signature by a revoked key (`REVKEYSIG`) without the revocation's time or
+reason, so Sigmund treats every such signature as `FAILED` when GnuPG answers — including a
+signature made before a key was retired, which the other backends verify. GnuPG is stricter,
+never more lenient, than the others here.
+
+Since a conclusive answer ends routing, the toolchain order decides which view applies: with the
+default `[bc, sq, gpg]`, Bouncy Castle answers and a signature made before the key was retired is
+`VERIFIED`; with `gpg` listed first it is `FAILED`. `KeyValidityAgreementTest` pins both views.
+Reading the revocation details from GnuPG's key listing, so that the backends agree, is part of
+roadmap task P4.7.
 
 ## BC cannot use a user ID that is not UTF-8
 
@@ -86,6 +92,36 @@ backends report `VERIFIED`. It is never reported as `FAILED`
 ([ADR-009](../adr/009-an-unbound-key-is-never-failed.md)). When `sq` or `gpg` holds the key in its
 own store (`sq cert import`, `gpg --import`), verification falls through to it and the signature
 verifies; a key Sigmund fetches from a keyserver reaches only BC.
+
+## keys.openpgp.org alone cannot serve keys without a verified address
+
+`keys.openpgp.org` publishes a user ID only once its owner has verified the address, and an
+address belongs to one key at a time: verifying it for a new key removes it from the key it was
+verified for before ([FAQ](https://keys.openpgp.org/about/faq)). A key with no verified address is
+served without its user IDs, and so without the self-signatures that carry its expiry, its
+allowed uses and the binding of its subkeys. GnuPG, Sequoia and Bouncy Castle all treat such a
+copy as unusable, so a signature by that key is `INDETERMINATE` with `KEY_UNAVAILABLE` — never
+`FAILED` ([ADR-009](../adr/009-an-unbound-key-is-never-failed.md)) — when `keys.openpgp.org` is
+the only source of the key.
+
+This reaches two kinds of key:
+
+- **A key whose owner never verified an address**, common among release keys on Maven Central —
+  the gson and error_prone release keys among them.
+- **A key its owner rotated away from.** Once the address is verified for the new key, the old
+  key is served stripped, and every signature it made stops verifying from `keys.openpgp.org`
+  alone — even under a policy that pins the old key's fingerprint, since the copy itself cannot be
+  used.
+
+Listing a keyserver that serves the full key resolves both; see
+[Keys Served Without User IDs](verification.md#keys-served-without-user-ids). A publisher keeps
+old signatures verifiable from `keys.openpgp.org` by leaving a verified address on the old key,
+or by publishing the old key's full certificate where verifiers can find it, such as the
+project's `KEYS` file.
+
+Verifiers that check a signature against the key alone, without the key's validity —
+pgpverify-maven-plugin does — are not affected, and do not check the key's expiry or the
+binding of its subkeys either.
 
 ## Key passphrase protection caveats
 

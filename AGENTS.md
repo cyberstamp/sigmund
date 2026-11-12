@@ -82,8 +82,8 @@ wrapping to change after `mvn verify`.
 Rules the code relies on; breaking one is a defect even if tests pass.
 
 - **`FAILED` is the attack signal and is never overridable.** A claim is `FAILED` only when its
-  bytes do not match, or its key had expired when it signed or was revoked (compromise at any
-  time, otherwise before it signed). A key a tool will not use is `INDETERMINATE` with a reason
+  bytes do not match, or its key had expired when it signed or was revoked (as compromised or with
+  no reason given, at any time; retired or superseded, before it signed). A key a tool will not use is `INDETERMINATE` with a reason
   — never `FAILED` ([ADR-005](adr/005-verification-result-model.md)).
 - **Backends must agree.** The toolchain is an argument, so the outcome cannot depend on which
   backend answered. Judge CLI tools by what they report (GnuPG status lines, `sq`'s tally), not by

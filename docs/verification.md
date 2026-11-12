@@ -215,7 +215,10 @@ Each verification tool returns one of three outcomes:
 - **`VERIFIED`** — the signature is valid
 - **`FAILED`** — the signature must not be trusted: the artifact's bytes do not match it
   (tampering, or the wrong signature), or the key that made it had already expired when it
-  signed, or was revoked — as compromised, at any time; for another reason, before it signed
+  signed, or was revoked — as compromised or with no reason given, at any time; as retired or
+  superseded, before it signed. A revocation carries the date it was made and, optionally, a
+  reason; one giving no reason is treated as compromise, since the holder did not say the key was
+  safe until then
 - **`INDETERMINATE`** — nothing was established either way, with a reason saying why
 
 Keeping "could not check" apart from "checked and rejected" is the point of the
@@ -375,18 +378,28 @@ identities come only from the [`issuers`](configuration.md#issuers) a policy nam
 ### Keys Served Without User IDs
 
 `keys.openpgp.org` serves a key without its user IDs until the owner verifies an address. Without
-the self-signatures on those user IDs, no tool can validate the key, so its signatures are
-`INDETERMINATE` with `KEY_UNAVAILABLE`, not `FAILED`; GnuPG refuses to import such a key at all.
-A fuller copy resolves it:
+the self-signatures on those user IDs no tool can use the key — they carry its expiry, what it may
+be used for, and the binding of its subkeys — so its signatures are `INDETERMINATE` with
+`KEY_UNAVAILABLE`, not `FAILED`; GnuPG refuses to import such a copy at all. A fuller copy
+resolves it:
 
-1. List another keyserver after it, so the fetch can find a copy with user IDs:
+1. **List a keyserver that serves the full key**, in the project's `sigmund.yaml`:
    ```yaml
    verification:
      keyservers:
        - hkps://keys.openpgp.org
        - hkps://keyserver.ubuntu.com
    ```
-2. Or import the key from elsewhere before verifying, e.g. `gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys <FINGERPRINT>`
+   A keyserver supplies key material only: the signature proves the key, and identities come only
+   from [`issuers`](configuration.md#issuers), so this never widens what is accepted. The user
+   IDs it serves are the key owner's claims alone, unverified, and which keyservers to take key
+   material from is your choice. Keys are fetched afresh each build, so a revocation reaches every
+   machine the same way.
+2. **Import the key into GnuPG's or Sequoia's store** (`gpg --import`, `sq cert import`), taken from
+   where the publisher announces it — its project's `KEYS` file or release page — for a key no
+   keyserver serves usefully, or one Bouncy Castle cannot read (see
+   [Limitations](limitations.md)). Keep it to such keys: an imported key is not refreshed, so a
+   later revocation does not reach it, and a build then depends on that machine's keyring.
 
 ## Verification Report Format
 

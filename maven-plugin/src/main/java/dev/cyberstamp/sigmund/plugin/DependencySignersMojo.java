@@ -1177,7 +1177,8 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         getLog().warn("The signatures of " + notChecked.size() + " signer(s) written could not be checked here; "
                 + "sigmund:verify reports their artifacts INDETERMINATE until a usable copy of each key is available:");
         notChecked.forEach(info -> getLog().warn("  " + info.id + ": " + info.notCheckedBecause));
-        getLog().warn("Import each publisher's key from a source you trust (gpg --import, sq cert import).");
+        getLog().warn(
+                "List a keyserver that serves these keys in full under verification.keyservers in sigmund.yaml; for a key none does, see \"Keys Served Without User IDs\" in the signature verification docs.");
     }
 
     private static String userIdComment(String userId) {
