@@ -378,7 +378,7 @@ asserted signer's (`signing.signer`) when the parser loads the file, without com
 An OpenPGP user ID never becomes a credential. `ClaimIdentityResolver` asks a directory for
 the verified addresses of a signing key only when an expected signer has an email entry a
 named directory can vouch for and none of its fingerprints already matched; a failed lookup
-leaves the claim `INDETERMINATE` with `key-unavailable`.
+leaves the claim `INDETERMINATE` with `KEY_UNAVAILABLE`.
 
 Identity matching works via credential overlap: a claim satisfies a signer when one of the
 credentials it proved matches one the signer is configured with.
@@ -407,7 +407,8 @@ were met and which claims met them, not what a requirement is.
 - `SATISFIED` — the claims found meet what the policy requires of this artifact
 - `UNSATISFIED` — verification succeeded, but not by the signers the rule requires
 - `FAILED` — a signature does not match the artifact, or its key was revoked or had expired
-  when it signed, or was revoked as compromised at any time; an attack signal, and never tolerated
+  when it signed, or was revoked as compromised or with no reason given, at any time; an attack
+  signal, and never tolerated
 - `NO_CLAIM` — no evidence was found at all
 - `INDETERMINATE` — nothing could be established either way, with a reason saying why
 - `NOT_CONFIGURED` — no rule applies to this artifact

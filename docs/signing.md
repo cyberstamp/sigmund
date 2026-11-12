@@ -346,7 +346,7 @@ sq key generate \
   --without-password
 ```
 
-The default cipher suite `mldsa87-ed448` is a hybrid composite of ML-DSA-87 (post-quantum) and Ed448 (classical). This provides quantum resistance while maintaining classical security. See `sq key generate --help` for the full set of options.
+The cipher suite `mldsa87-ed448` is a hybrid composite of ML-DSA-87 (post-quantum) and Ed448 (classical); `sq`'s own default is `cv25519`, which is not post-quantum, so the command names the suite and the v6 profile. This provides quantum resistance while maintaining classical security. See `sq key generate --help` for the full set of options.
 
 The output begins with the key's summary; the primary key's fingerprint is the one to use:
 

@@ -65,6 +65,11 @@ import org.junit.jupiter.params.provider.ValueSource;
 class KeyValidityAgreementTest {
 
     private static final Duration DAY = Duration.ofDays(1);
+    private static final Instant HOUR_AGO = Instant.now().minus(Duration.ofHours(1));
+    private static final Instant TWO_HOURS_AGO = Instant.now().minus(Duration.ofHours(2));
+
+    /** A revocation without a reason subpacket, which RFC 9580 treats as giving no reason. */
+    private static final int NO_REASON_GIVEN = -1;
 
     @TempDir
     Path dir;
@@ -107,6 +112,49 @@ class KeyValidityAgreementTest {
         OpenPgpClaim claim = sign(key, artifact);
 
         assertThat(outcomes(revoked(key), artifact, claim)).isEqualTo(everywhere("FAILED"));
+    }
+
+    /**
+     * A key revoked as compromised, or with no reason given — RFC 9580's hard revocations —
+     * invalidates what it signed before the revocation too: who held the key then is in doubt.
+     */
+    @ParameterizedTest(name = "reason {0}")
+    @ValueSource(ints = { RevocationReasonTags.KEY_COMPROMISED, RevocationReasonTags.NO_REASON, NO_REASON_GIVEN })
+    void aHardRevocationFailsWhatTheKeySignedBeforeItEverywhere(int reason) throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact, TWO_HOURS_AGO);
+
+        assertThat(outcomes(revoked(key, reason, HOUR_AGO), artifact, claim)).isEqualTo(everywhere("FAILED"));
+    }
+
+    @ParameterizedTest(name = "reason {0}")
+    @ValueSource(ints = { RevocationReasonTags.KEY_RETIRED, RevocationReasonTags.KEY_SUPERSEDED })
+    void aSoftRevocationFailsWhatTheKeySignedAfterItEverywhere(int reason) throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact);
+
+        assertThat(outcomes(revoked(key, reason, HOUR_AGO), artifact, claim)).isEqualTo(everywhere("FAILED"));
+    }
+
+    /**
+     * A key retired or superseded — RFC 9580's soft revocations — keeps what it signed before the
+     * revocation valid. Bouncy Castle and Sequoia read the revocation's date and reason; GnuPG
+     * reports a revoked key without either, so its answer fails the signature anyway — stricter,
+     * never more lenient, and documented in {@code docs/limitations.md}. Agreement here waits on
+     * roadmap task P4.7.
+     */
+    @ParameterizedTest(name = "reason {0}")
+    @ValueSource(ints = { RevocationReasonTags.KEY_RETIRED, RevocationReasonTags.KEY_SUPERSEDED })
+    void aSoftRevocationKeepsWhatTheKeySignedBeforeItExceptUnderGnupg(int reason) throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact, TWO_HOURS_AGO);
+
+        Map<String, String> expected = everywhere("VERIFIED");
+        expected.put("gpg", "FAILED");
+        assertThat(outcomes(revoked(key, reason, HOUR_AGO), artifact, claim)).isEqualTo(expected);
     }
 
     @Test
@@ -288,14 +336,24 @@ class KeyValidityAgreementTest {
      * key was created and before anything is signed in a test.
      */
     private static PGPPublicKeyRing revoked(PGPSecretKeyRing key) throws Exception {
+        return revoked(key, RevocationReasonTags.KEY_COMPROMISED, HOUR_AGO);
+    }
+
+    /**
+     * The certificate with a key revocation made at {@code at}, giving {@code reason}, or no
+     * reason subpacket at all when it is {@link #NO_REASON_GIVEN}.
+     */
+    private static PGPPublicKeyRing revoked(PGPSecretKeyRing key, int reason, Instant at) throws Exception {
         PGPSecretKey secret = key.getSecretKey();
         PGPSignatureGenerator generator = new PGPSignatureGenerator(
                 new JcaPGPContentSignerBuilder(PublicKeyAlgorithmTags.RSA_GENERAL, HashAlgorithmTags.SHA256),
                 secret.getPublicKey());
         generator.init(PGPSignature.KEY_REVOCATION, secret.extractPrivateKey(null));
         PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
-        hashed.setSignatureCreationTime(true, Date.from(Instant.now().minus(Duration.ofHours(1))));
-        hashed.setRevocationReason(true, RevocationReasonTags.KEY_COMPROMISED, "compromised");
+        hashed.setSignatureCreationTime(true, Date.from(at));
+        if (reason != NO_REASON_GIVEN) {
+            hashed.setRevocationReason(true, (byte) reason, "revoked by the test");
+        }
         hashed.setIssuerFingerprint(false, secret.getPublicKey());
         generator.setHashedSubpackets(hashed.generate());
         PGPSignature revocation = generator.generateCertification(secret.getPublicKey());
@@ -304,13 +362,17 @@ class KeyValidityAgreementTest {
     }
 
     private static OpenPgpClaim sign(PGPSecretKeyRing key, Path artifact) throws Exception {
+        return sign(key, artifact, Instant.now());
+    }
+
+    private static OpenPgpClaim sign(PGPSecretKeyRing key, Path artifact, Instant at) throws Exception {
         PGPSecretKey secret = key.getSecretKey();
         PGPSignatureGenerator generator = new PGPSignatureGenerator(
                 new JcaPGPContentSignerBuilder(PublicKeyAlgorithmTags.RSA_GENERAL, HashAlgorithmTags.SHA256),
                 secret.getPublicKey());
         generator.init(PGPSignature.BINARY_DOCUMENT, secret.extractPrivateKey(null));
         PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
-        hashed.setSignatureCreationTime(true, new Date());
+        hashed.setSignatureCreationTime(true, Date.from(at));
         hashed.setIssuerFingerprint(false, secret.getPublicKey());
         generator.setHashedSubpackets(hashed.generate());
         generator.update(Files.readAllBytes(artifact));

@@ -387,7 +387,7 @@ proven, the trust root, and the evidence each claim was read from.
 |---------|---------|
 | **SATISFIED** | The claims found meet what the matched rule requires |
 | **UNSATISFIED** | Verification succeeded, but not by the signers the rule requires — or, under `extra-claims: reject`, also by one it does not name |
-| **FAILED** | A signature does not match the artifact, or its key was revoked or had expired when it signed — or was revoked as compromised, at any time ([details](verification.md#outcomes-and-reasons)). An attack signal, never tolerated |
+| **FAILED** | A signature does not match the artifact, or its key was revoked or had expired when it signed — or was revoked as compromised or with no reason given, at any time ([details](verification.md#outcomes-and-reasons)). An attack signal, never tolerated |
 | **NO_CLAIM** | No evidence was found at all |
 | **INDETERMINATE** | Evidence was found but could not be checked; the reason says why — a key that could not be fetched or used, an algorithm Sigmund does not accept, a tool that did not run |
 | **NOT_CONFIGURED** | No rule matches this artifact |
@@ -410,9 +410,9 @@ signature is two. Its outcome follows from them in a fixed order:
    and every claim could be checked (`INDETERMINATE`).
 5. **Otherwise, in order:** a claim that could not be checked → `INDETERMINATE`, since it might
    have satisfied the rule; requirements that set-aside claims would meet, had the keys they
-   name made them → `INDETERMINATE` with `unsupported-algorithm` — a co-signer whose
+   name made them → `INDETERMINATE` with `UNSUPPORTED_ALGORITHM` — a co-signer whose
    post-quantum signature this verifier cannot check is not a wrong signer; nothing verified
-   and a set-aside claim names no key → `INDETERMINATE` with `unsupported-algorithm`, since
+   and a set-aside claim names no key → `INDETERMINATE` with `UNSUPPORTED_ALGORITHM`, since
    there is no signer to judge; any other claim, verified or set aside → `UNSATISFIED`, since
    every signer in view is one the rule does not accept; nothing found → `NO_CLAIM`.
 
@@ -455,6 +455,10 @@ This creates a `sigmund.yaml` in your project root by:
 
 The generated file can be used directly with `mvn sigmund:verify`. It has no catch-all: a
 dependency added later matches no rule and fails as `NOT_CONFIGURED` until an update adds it.
+Trust established this way is trust on first use — the snapshot is accepted as it is, and only
+changes from it are detected — so review it before committing. When any signer is named by an
+address, the file lists `keys.openpgp.org` under `issuers`: the trust is stated in the file, not
+assumed by Sigmund, and removing that line and the `email:` lines leaves fingerprints only.
 
 **A key whose signatures could not be checked here is still pinned, and marked.** The signature
 names its key, so the rule requires the key that signed; but when no copy of it could be used —
@@ -472,18 +476,12 @@ the reason, once:
 [WARNING] The signatures of 2 signer(s) written could not be checked here; sigmund:verify reports their artifacts INDETERMINATE until a usable copy of each key is available:
 [WARNING]   signer-2: the copy from hkps://keys.openpgp.org carries no self-signature binding the key
 [WARNING]   signer-3: the copy from hkps://keys.openpgp.org carries no self-signature binding the key
-[WARNING] Import each publisher's key from a source you trust (gpg --import, sq cert import).
+[WARNING] List a keyserver that serves these keys in full under verification.keyservers in sigmund.yaml; for a key none does, see "Keys Served Without User IDs" in the signature verification docs.
 ```
 
-Importing the key into GnuPG's or Sequoia's store resolves it: `gpg` verifies from its keyring,
-and Bouncy Castle reads the same keyring. Take the key from where the publisher announces it — its
-project's `KEYS` file or release page — rather than any keyserver: a key from a keyserver that
-does not verify addresses proves the signature as well, but the user ID it carries is the
-publisher's claim alone.
-Trust established this way is trust on first use — the snapshot is accepted as it is, and only
-changes from it are detected — so review it before committing. When any signer is named by an
-address, the file lists `keys.openpgp.org` under `issuers`: the trust is stated in the file, not
-assumed by Sigmund, and removing that line and the `email:` lines leaves fingerprints only.
+A keyserver that serves the full key, listed under `verification.keyservers`, resolves it for
+every machine; see [Keys Served Without User IDs](verification.md#keys-served-without-user-ids),
+which also covers a key no keyserver serves usefully.
 
 ### Generated File Structure
 
@@ -769,7 +767,8 @@ A fingerprint with spaces, or a 16-character key ID, is rejected when the file l
 ### "FAILED" results
 
 The signature does not match the artifact, or the key that made it was revoked or had expired
-when it signed — or was revoked as compromised, which fails every signature it made. This is different from `UNSATISFIED`, where the signature is valid but the signer
+when it signed — or was revoked as compromised or with no reason given, which fails every
+signature it made. This is different from `UNSATISFIED`, where the signature is valid but the signer
 is not accepted. Verify that:
 1. The artifact and signature files match
 2. The artifact hasn't been tampered with

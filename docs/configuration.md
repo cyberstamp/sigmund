@@ -108,7 +108,7 @@ signers:
   apache:
     members:
       - pgp4: "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"
-        email: "dev@maven.apache.org"
+        email: "apache-release@example.org"
       - pgp4: "BBE7232D7991050B54C8EA0ADC08637CA615D22C"
 
   # Keys already seen, plus an address for keys to come
@@ -124,7 +124,7 @@ signers:
         build-config-uri: "https://github.com/myorg/myrepo/.github/workflows/release.yml@refs/heads/main"
 
   # An address, vouched for by a listed issuer
-  jackson-dev: "tatu@fasterxml.com"
+  jackson-release: "jackson-release@example.org"
 
 # Named groups of artifact patterns, for use in rules
 artifact-sets:
@@ -138,7 +138,7 @@ rules:
     requires: [apache]
 
   - match: ["com.fasterxml.jackson.*"]
-    requires: [jackson-dev]
+    requires: [jackson-release]
 
   # Both the release key and the CI workflow must have signed
   - match: ["com.example:mylib"]
@@ -222,7 +222,7 @@ Verification gives every artifact one outcome:
 |---|---|
 | `SATISFIED` | The matched rule's requirements are met |
 | `UNSATISFIED` | Claims verified, but not from the signers the rule requires — or, under `extra-claims: reject`, also from a signer it does not name |
-| `FAILED` | A signature does not match the artifact, or its key was revoked or had expired when it signed — or was revoked as compromised, at any time ([details](verification.md#outcomes-and-reasons)). The attack signal |
+| `FAILED` | A signature does not match the artifact, or its key was revoked or had expired when it signed — or was revoked as compromised or with no reason given, at any time ([details](verification.md#outcomes-and-reasons)). The attack signal |
 | `NO_CLAIM` | No signature or attestation was found |
 | `INDETERMINATE` | Evidence exists but could not be checked: a key not available, an algorithm not accepted, a tool not working |
 | `NOT_CONFIGURED` | No rule matches the artifact |
@@ -295,7 +295,7 @@ A simple string value: an email address, vouched for by one of the listed [`issu
 issuers: [keys.openpgp.org]
 
 signers:
-  jackson-dev: "tatu@fasterxml.com"
+  jackson-release: "jackson-release@example.org"
 ```
 
 #### Object Form
@@ -331,7 +331,7 @@ signers:
 
 - **`email`** — An address, accepted only as vouched for by one of the listed [`issuers`](#issuers). To name the issuer, write it under `identities` instead.
 
-  It matches, ignoring case, an address that a directory served for the signing key, or the address in a Sigstore certificate from that issuer. A user ID on an OpenPGP key is **never** matched on its own: anyone can put any address on a key they generate. When a key is not already pinned by a fingerprint, the directory is asked for the addresses it has verified for that key; if it cannot be reached, the artifact is `INDETERMINATE` (`key-unavailable`), never accepted.
+  It matches, ignoring case, an address that a directory served for the signing key, or the address in a Sigstore certificate from that issuer. A user ID on an OpenPGP key is **never** matched on its own: anyone can put any address on a key they generate. When a key is not already pinned by a fingerprint, the directory is asked for the addresses it has verified for that key; if it cannot be reached, the artifact is `INDETERMINATE` (`KEY_UNAVAILABLE`), never accepted.
 
   keys.openpgp.org serves OpenPGP v4 keys only, so it vouches for no address on a v6 key: a v6 key is accepted by its fingerprint, and a publisher's new v6 key needs adding by hand.
 
@@ -377,7 +377,7 @@ signers:
   apache:
     members:
       - pgp4: "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"
-        email: "dev@maven.apache.org"
+        email: "apache-release@example.org"
       - pgp4: "BBE7232D7991050B54C8EA0ADC08637CA615D22C"
 ```
 
@@ -566,7 +566,7 @@ only prove a pinned `pgp6`, since directories do not vouch for v6 keys.
 
 Configures how verification runs: which tools check claims, and where keys are fetched from.
 These settings change what Sigmund can see, never what it accepts — a wider keyserver list can
-turn a `key-unavailable` into a verdict, but cannot make an untrusted artifact pass. Which
+turn a `KEY_UNAVAILABLE` into a verdict, but cannot make an untrusted artifact pass. Which
 cryptographic algorithms are accepted is fixed in Sigmund and the same for every tool; see
 [Accepted algorithms](verification.md#accepted-algorithms).
 
@@ -587,7 +587,7 @@ verification:
 
 - **`resolve-signers`** (boolean, default: `true`)
 
-  Whether to fetch missing keys from keyservers, and to ask directories named in `issuers` for the verified addresses of keys a policy entry needs. When `false`, a signature whose signer can only be established through a directory is `INDETERMINATE` (`key-unavailable`). When `true` and a key is not found locally, tools attempt to fetch it from the configured keyservers. The behavior depends on the tool and `import-to-keyring`:
+  Whether to fetch missing keys from keyservers, and to ask directories named in `issuers` for the verified addresses of keys a policy entry needs. When `false`, a signature whose signer can only be established through a directory is `INDETERMINATE` (`KEY_UNAVAILABLE`). When `true` and a key is not found locally, tools attempt to fetch it from the configured keyservers. The behavior depends on the tool and `import-to-keyring`:
 
   | `resolve-signers` | `import-to-keyring` | BC | GPG | SQ |
   |---|---|---|---|---|
@@ -608,7 +608,7 @@ verification:
   - `false` (default) — Keys are cached in memory for the session. BC supports ephemeral key storage; GPG does not, so key fetch is skipped entirely for GPG when this is `false`.
   - `true` — Keys are permanently imported into the tool's keyring (BC cert-d or GPG keyring).
 
-  **Note:** `keys.openpgp.org` serves a key without its user IDs until the owner verifies an address. Without the self-signatures on its user IDs, the key cannot be validated, so its signatures are `INDETERMINATE` (`key-unavailable`); a fuller copy from another keyserver resolves them. GPG refuses to import such a key at all.
+  **Note:** `keys.openpgp.org` serves a key without its user IDs until the owner verifies an address. Without the self-signatures on its user IDs no tool can use the key, so its signatures are `INDETERMINATE` (`KEY_UNAVAILABLE`), and GPG refuses to import such a copy at all. A keyserver that serves the full key, listed under `keyservers`, resolves it; see [Keys Served Without User IDs](verification.md#keys-served-without-user-ids) for that and for keys no keyserver serves usefully.
 
 - **`keyservers`** (array of strings, default: `[hkps://keys.openpgp.org]`)
 
@@ -746,7 +746,7 @@ tools:
   bc:
     signing-fingerprint: "ABCDEF1234567890ABCDEF1234567890ABCDEF12"
     passphrase-env: MY_BC_KEY_PASSPHRASE
-    cipher-suite: ed448
+    cipher-suite: rsa4096           # what `sigmund keygen` generates when not told
     gnupg-home: /custom/gnupg
     cert-d-home: /custom/cert-d
 ```
@@ -757,7 +757,7 @@ Configured in the top-level `tools.sq` section.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `home` | `~/.local/share/sequoia` | Sequoia home directory for keys and certificates |
+| `home` | (none) | Sequoia home directory for keys and certificates. Unset, `sq` uses `SEQUOIA_HOME`, else its own default (`~/.local/share/sequoia` on Linux) |
 | `executable` | `sq` | Path to the `sq` executable (if not on `PATH`) |
 | `signing-fingerprint` | `sign.signer-self` in sq's config | Full fingerprint of the key to sign with, or a list of them to sign with each: 40 hex characters for a v4 key, 64 for v6, the key's type coming from the length. `sign.signer-self` holding several keys signs with the first only |
 
@@ -768,9 +768,12 @@ runs; see [Accepted algorithms](verification.md#accepted-algorithms).
 Sigmund; see [Generating a PQC Key](signing.md#generating-a-pqc-key).
 
 Sequoia supports the post-quantum hybrid cipher suites of RFC 9980, which extends OpenPGP v6 (RFC 9580):
-- `mldsa87-ed448` — ML-DSA-87 + Ed448 (default)
+- `mldsa87-ed448` — ML-DSA-87 + Ed448
 - `mldsa65-ed25519` — ML-DSA-65 + Ed25519
-- Additional suites supported by `sq key generate --cipher-suite`
+
+`sq key generate` defaults to `cv25519` and the RFC 4880 (v4) profile, neither post-quantum: name
+the suite and `--profile rfc9580`, as in [Generating a PQC Key](signing.md#generating-a-pqc-key).
+`sq key generate --help` lists every suite.
 
 **Example:**
 
@@ -921,26 +924,25 @@ tools:
 ```yaml
 signers:
   release-team:
-    pgp4: "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF"                          # v4 key, for GPG compatibility
-    pgp6: "1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF"  # v6 key, for PQC
+    pgp4: "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF"                          # v4 key, verifiable by GnuPG and Maven Central
+    pgp6: "1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF"  # v6 post-quantum key
 
 signing:
   signer: release-team
-  toolchain: [bc, sq, gpg]
+  toolchain: [bc, sq]
   credential-types: [pgp4, pgp6]
-
-verification:
-  toolchain: [bc, sq, gpg]
 
 tools:
   bc:
-    signing-fingerprint: "1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF"
-    cipher-suite: ed448
+    signing-fingerprint: "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF"
   sq:
     signing-fingerprint: "1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF"
-  gpg:
-    signing-fingerprint: "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12"
 ```
+
+`bc` signs with the v4 key and `sq` with the v6 one, and the two signatures are combined into one
+`.asc`, the v4 block first, so verifiers that read only the first block still find one they
+understand. `signing.signer` checks that both keys are `release-team`'s. To make the v4 signature
+with GnuPG instead, use `toolchain: [gpg, sq]` and set the v4 fingerprint under `tools.gpg`.
 
 ### Sigstore-Only Signing
 
