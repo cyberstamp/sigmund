@@ -763,10 +763,12 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * Bouncy Castle 1.86 derives the primary key's binding from its first user ID alone and
      * takes a revocation without checking its type or signature. A first user ID that is unsigned,
      * certified by a forgery or revoked would so reject a key that GnuPG and Sequoia accept, and
-     * a forged revocation would be read as one. The view is for this question only: a user ID
-     * revocation does not touch the key, and a user ID is never a credential. Key-level
-     * signatures (key revocation, direct-key, subkey bindings) are left as they are, and the
-     * user ID to show is chosen from the certificate unfiltered.
+     * a forged revocation would be read as one. The same holds for a key revocation or a subkey
+     * revocation: one that does not verify against the primary key is a forgery GnuPG and
+     * Sequoia ignore, and is removed here so that it is never the attack signal. The view is for
+     * this question only: a user ID revocation does not touch the key, and a user ID is never a
+     * credential. Other key-level signatures (direct-key, subkey bindings) are left as they are,
+     * and the user ID to show is chosen from the certificate unfiltered.
      */
     private static PGPPublicKeyRing bindingViewOf(PGPPublicKeyRing ring) {
         PGPPublicKey primary = ring.getPublicKey();
@@ -776,7 +778,45 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         for (byte[] userId : userIds) {
             view = withVerifyingCertificationsOnly(view, primary, userId);
         }
-        return PGPPublicKeyRing.insertPublicKey(ring, view);
+        PGPPublicKeyRing filtered = PGPPublicKeyRing.insertPublicKey(ring,
+                withVerifyingRevocationsOnly(view, primary));
+        Iterator<PGPPublicKey> subkeys = ring.getPublicKeys();
+        while (subkeys.hasNext()) {
+            PGPPublicKey subkey = subkeys.next();
+            if (!subkey.isMasterKey()) {
+                filtered = PGPPublicKeyRing.insertPublicKey(filtered,
+                        withVerifyingRevocationsOnly(subkey, primary));
+            }
+        }
+        return filtered;
+    }
+
+    private static PGPPublicKey withVerifyingRevocationsOnly(PGPPublicKey key, PGPPublicKey primary) {
+        List<PGPSignature> revocations = new ArrayList<>();
+        key.getSignaturesOfType(PGPSignature.KEY_REVOCATION).forEachRemaining(revocations::add);
+        key.getSignaturesOfType(PGPSignature.SUBKEY_REVOCATION).forEachRemaining(revocations::add);
+        PGPPublicKey view = key;
+        for (PGPSignature revocation : revocations) {
+            if (!isVerifyingRevocation(revocation, key, primary)) {
+                view = PGPPublicKey.removeCertification(view, revocation);
+            }
+        }
+        return view;
+    }
+
+    private static boolean isVerifyingRevocation(PGPSignature revocation, PGPPublicKey key, PGPPublicKey primary) {
+        boolean ofPrimary = key.isMasterKey();
+        int expectedType = ofPrimary ? PGPSignature.KEY_REVOCATION : PGPSignature.SUBKEY_REVOCATION;
+        if (revocation.getSignatureType() != expectedType) {
+            return false;
+        }
+        try {
+            revocation.init(new BcPGPContentVerifierBuilderProvider(), primary);
+            return ofPrimary ? revocation.verifyCertification(primary)
+                    : revocation.verifyCertification(primary, key);
+        } catch (PGPException | RuntimeException e) {
+            return false;
+        }
     }
 
     private static PGPPublicKey withVerifyingCertificationsOnly(PGPPublicKey view, PGPPublicKey primary,
@@ -921,8 +961,9 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
 
     /**
      * Says why a key was revoked or had expired when it signed, or returns {@code null} when it
-     * was neither. The revocation is read through the certificate API, which ignores one that
-     * does not verify, and its provenance comes from the copies the store kept.
+     * was neither. The certificate passed is the binding view, which holds only the revocations
+     * that verify, so one a keyserver made up is never reported; the revocation's provenance
+     * comes from the copies the store kept.
      */
     private String failureDetail(OpenPGPCertificate.OpenPGPComponentKey key, Date at) {
         OpenPGPCertificate.OpenPGPComponentSignature revocation = key.getRevocation(at);

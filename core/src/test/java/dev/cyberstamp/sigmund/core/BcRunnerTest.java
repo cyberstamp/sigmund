@@ -11,7 +11,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Iterator;
@@ -291,18 +293,51 @@ class BcRunnerTest {
             }
         }
 
+        @Test
+        void aForgedRevocationNextToARealOneNeverSuppliesTheDetail(@TempDir Path tempDir) throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            PGPKeyPair forger = rsaKeyPair();
+            PGPPublicKey base = keyRing(primary, null, HashAlgorithmTags.SHA256).generatePublicKeyRing()
+                    .getPublicKey();
+            PGPPublicKey revokedKey = PGPPublicKey.addCertification(
+                    PGPPublicKey.addCertification(base, revocation(forger, primary, Instant.now().minus(Duration.ofDays(3)),
+                            RevocationReasonTags.KEY_COMPROMISED)),
+                    revocation(primary, primary, Instant.now().minusSeconds(1800),
+                            RevocationReasonTags.KEY_COMPROMISED));
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"),
+                    tempDir.resolve("bc-private"));
+            store.addFetched(Map.of("hkps://keys.example.org", new PGPPublicKeyRing(List.of(revokedKey))));
+            Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
+            OpenPgpClaim claim = lowLevelSignature(primary.getPublicKey(), primary.getPrivateKey(),
+                    artifact, HashAlgorithmTags.SHA256, Instant.now());
+
+            try (BcRunner bcRunner = new BcRunner(store, null, null)) {
+                VerifyResult result = bcRunner.verify(artifact, claim);
+
+                assertThat(result.isFailed()).as(result.outcome() + " " + result.reason()).isTrue();
+                assertThat(result.detail()).startsWith("key revoked as compromised on "
+                        + Instant.now().minusSeconds(1800).atZone(ZoneOffset.UTC).toLocalDate());
+            }
+        }
+
         private static PGPSignature revocation(PGPKeyPair primary) throws Exception {
+            return revocation(primary, primary, Instant.now().minusSeconds(1),
+                    RevocationReasonTags.KEY_COMPROMISED);
+        }
+
+        private static PGPSignature revocation(PGPKeyPair signer, PGPKeyPair subject, Instant at, int reason)
+                throws Exception {
             PGPSignatureGenerator generator = new PGPSignatureGenerator(
                     new JcaPGPContentSignerBuilder(PublicKeyAlgorithmTags.RSA_GENERAL,
                             HashAlgorithmTags.SHA256),
-                    primary.getPublicKey());
-            generator.init(PGPSignature.KEY_REVOCATION, primary.getPrivateKey());
+                    signer.getPublicKey());
+            generator.init(PGPSignature.KEY_REVOCATION, signer.getPrivateKey());
             PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
-            hashed.setSignatureCreationTime(true, Date.from(Instant.now().minusSeconds(1)));
-            hashed.setIssuerFingerprint(false, primary.getPublicKey());
-            hashed.setRevocationReason(false, RevocationReasonTags.KEY_COMPROMISED, "compromised");
+            hashed.setSignatureCreationTime(true, Date.from(at));
+            hashed.setIssuerFingerprint(false, subject.getPublicKey());
+            hashed.setRevocationReason(false, (byte) reason, "revoked");
             generator.setHashedSubpackets(hashed.generate());
-            return generator.generateCertification(primary.getPublicKey());
+            return generator.generateCertification(subject.getPublicKey());
         }
 
         private static PGPKeyPair rsaKeyPair() throws Exception {
