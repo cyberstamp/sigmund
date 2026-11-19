@@ -248,7 +248,7 @@ class BcRunnerTest {
                             .getPublicKey(subkey.getKeyID()));
             BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"),
                     tempDir.resolve("bc-private"));
-            store.addFetched(certificate, "hkps://keys.example.org");
+            store.addFetched(Map.of("hkps://keys.example.org", certificate));
             Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
             OpenPgpClaim claim = lowLevelSignature(subkey.getPublicKey(), subkey.getPrivateKey(),
                     artifact, HashAlgorithmTags.SHA256, Instant.now());
@@ -432,8 +432,8 @@ class BcRunnerTest {
         void aCopyWithoutSelfSignaturesNamesWhereItCameFrom() throws Exception {
             Signed signed = sign();
             BcKeyStore store = emptyStore();
-            store.addFetched(withoutSelfSignatures(signed.store().findPublicKey(signed.fingerprint()).ring()),
-                    "hkps://keys.example.org");
+            store.addFetched(Map.of("hkps://keys.example.org",
+                    withoutSelfSignatures(signed.store().findPublicKey(signed.fingerprint()).ring())));
             try (BcRunner verifier = new BcRunner(store, null, null)) {
 
                 OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), signed.claim());
@@ -814,7 +814,7 @@ class BcRunnerTest {
                     // Export the key, then simulate ephemeral fetch by calling cacheEphemeral directly
                     // (fetchKey would call fetchKeyFromHkp which needs a real keyserver)
                     var pubRing = signerStore.findPublicKey(fp).ring();
-                    verifierStore.addFetched(pubRing, "hkps://keys.example.org");
+                    verifierStore.addFetched(Map.of("hkps://keys.example.org", pubRing));
 
                     String armored = Files.readString(sigFile);
                     OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);

@@ -121,6 +121,15 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     private final Map<String, PGPPublicKeyRing> signingCertificates = new ConcurrentHashMap<>();
 
     /**
+     * Returns the key store this runner looks keys up in.
+     *
+     * @return the key store
+     */
+    BcKeyStore keyStore() {
+        return keyStore;
+    }
+
+    /**
      * Creates a new BC runner without passphrase support or key fetching.
      *
      * @param keyStore the key store for key lookup and storage
@@ -494,7 +503,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         if (credential instanceof KeyCredential fc && fetcher != null) {
             String keyId = fc.fingerprint();
             for (String keyserver : fetcher.keyservers()) {
-                PGPPublicKeyRing keyRing = fetcher.download(keyId, keyserver);
+                PGPPublicKeyRing keyRing = fetcher.downloadCopy(keyId, keyserver);
                 if (keyRing != null) {
                     results.add(new SignerSourceResult(SOURCE_HKP, keyserver, true,
                             extractKeyInfo(keyRing)));

@@ -7,8 +7,17 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 
 /**
@@ -16,8 +25,9 @@ import org.bouncycastle.openpgp.PGPPublicKeyRing;
  *
  * <p>
  * Keyservers supply key material only: the signature proves the key whoever served it, so
- * which server answered changes what can be verified, never what is accepted. The store
- * records the server that supplied each key it keeps.
+ * which server answered changes what can be verified, never what is accepted. Every healthy
+ * keyserver is asked, concurrently, and the store joins what they serve into one certificate
+ * while recording which servers supplied it and keeping each server's copy.
  *
  * <p>
  * A per-build {@link KeyFetchCache} keeps a slow or unreachable server from slowing every
@@ -28,11 +38,19 @@ class KeyserverFetcher implements AutoCloseable {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration ANSWER_GRACE = Duration.ofMillis(500);
     private static final int OK = 200;
+
+    /**
+     * The largest copy of a key read from a keyserver, in bytes; a larger one is recorded as
+     * unreadable and not parsed.
+     */
+    static final int MAX_COPY_BYTES = 1024 * 1024;
 
     private final BcKeyStore keyStore;
     private final List<String> keyservers;
     private final KeyFetchCache fetchCache = new KeyFetchCache();
+    private final Duration requestTimeout;
     private final HttpClient httpClient;
     private final List<UnreadableCertificate> unreadableServed = new CopyOnWriteArrayList<>();
 
@@ -43,11 +61,23 @@ class KeyserverFetcher implements AutoCloseable {
      * @param keyservers the keyserver URLs to ask, in order; must not be empty
      */
     KeyserverFetcher(BcKeyStore keyStore, List<String> keyservers) {
+        this(keyStore, keyservers, REQUEST_TIMEOUT);
+    }
+
+    /**
+     * Creates a fetcher with a given request timeout.
+     *
+     * @param keyStore the store fetched keys are added to
+     * @param keyservers the keyserver URLs to ask, in order; must not be empty
+     * @param requestTimeout how long one keyserver may take to answer
+     */
+    KeyserverFetcher(BcKeyStore keyStore, List<String> keyservers, Duration requestTimeout) {
         if (keyservers == null || keyservers.isEmpty()) {
             throw new IllegalArgumentException("at least one keyserver is required");
         }
         this.keyStore = keyStore;
         this.keyservers = List.copyOf(keyservers);
+        this.requestTimeout = requestTimeout;
         this.httpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
     }
 
@@ -64,15 +94,17 @@ class KeyserverFetcher implements AutoCloseable {
      * Makes a key available in the store, fetching it if needed.
      *
      * <p>
-     * Short-circuits if the store already holds the key with user IDs. Otherwise asks each
-     * keyserver in order, skipping those whose circuit breaker has tripped, and adds what it
-     * gets to the store. A copy with user IDs is preferred, so reports can show who a key
-     * claims to belong to: keys.openpgp.org serves keys whose owners have not verified an
-     * address without any. That preference is safe because user IDs are display text only —
-     * identities come only from directories the policy names. A key no healthy server has is
-     * remembered as missing for the rest of the build. A copy a server serves that cannot be
-     * read is not a missing key: it is kept ({@link #unreadableCopyOf(String)}), so the key is
-     * reported as served but unreadable, and the key is not asked for again.
+     * Short-circuits if the store already holds the key with user IDs. Otherwise asks every
+     * keyserver whose circuit breaker has not tripped, all at once, and waits for the answers
+     * for no longer than a request may take. The readable copies are joined into one
+     * certificate by the store, which also keeps each server's copy: what one server withholds
+     * — user IDs, which keys.openpgp.org omits until an owner verifies an address, or a
+     * revocation — another may serve, and the joined certificate holds all of it. A server
+     * whose copy is larger than {@link #MAX_COPY_BYTES} is not read. A key no healthy server
+     * has is remembered as missing for the rest of the build. A copy a server serves that
+     * cannot be read is not a missing key: it is kept ({@link #unreadableCopyOf(String)}), so
+     * the key is reported as served but unreadable when no other server served a readable one,
+     * and the key is not asked for again.
      *
      * @param keyId the key ID or fingerprint
      * @return {@code true} if a copy of the key was obtained — one that could not be read
@@ -89,19 +121,12 @@ class KeyserverFetcher implements AutoCloseable {
         if (existing != null && hasUserIds(existing.ring())) {
             return true;
         }
-        boolean fetched = existing != null;
-        for (String keyserver : keyservers) {
-            if (!fetchCache.shouldAttempt(keyserver, keyId)) {
-                continue;
-            }
-            PGPPublicKeyRing ring = fetchAndStore(keyId, keyserver);
-            if (ring != null) {
-                fetched = true;
-                if (hasUserIds(ring)) {
-                    return true;
-                }
-            }
+        Map<String, PGPPublicKeyRing> copies = readableCopies(keyId, downloadAll(keyId));
+        if (!copies.isEmpty()) {
+            keyStore.addFetched(copies);
+            copies.keySet().forEach(keyserver -> fetchCache.recordSuccess(keyserver, keyId));
         }
+        boolean fetched = existing != null || !copies.isEmpty();
         if (!fetched && unreadableCopyOf(keyId) != null) {
             return true;
         }
@@ -111,42 +136,103 @@ class KeyserverFetcher implements AutoCloseable {
         return fetched;
     }
 
-    private PGPPublicKeyRing fetchAndStore(String keyId, String keyserver) {
-        PGPPublicKeyRing keyRing = download(keyId, keyserver);
-        if (keyRing == null) {
+    private Map<String, byte[]> downloadAll(String keyId) {
+        List<String> asked = keyservers.stream()
+                .filter(keyserver -> fetchCache.shouldAttempt(keyserver, keyId))
+                .toList();
+        Map<String, byte[]> bodies = new LinkedHashMap<>();
+        if (asked.isEmpty()) {
+            return bodies;
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(asked.size());
+        try {
+            List<Future<byte[]>> answers = pool.invokeAll(
+                    asked.stream().<Callable<byte[]>> map(keyserver -> () -> download(keyId, keyserver)).toList(),
+                    requestTimeout.plus(ANSWER_GRACE).toMillis(), TimeUnit.MILLISECONDS);
+            for (int i = 0; i < asked.size(); i++) {
+                bodies.put(asked.get(i), answerOf(asked.get(i), answers.get(i)));
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            pool.shutdownNow();
+        }
+        return bodies;
+    }
+
+    private byte[] answerOf(String keyserver, Future<byte[]> answer) {
+        if (answer.isCancelled()) {
+            fetchCache.recordConnectionFailure(keyserver);
             return null;
         }
-        keyStore.addFetched(keyRing, keyserver);
-        fetchCache.recordSuccess(keyserver, keyId);
-        return keyRing;
+        try {
+            return answer.get();
+        } catch (ExecutionException e) {
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
     }
 
     /**
-     * Downloads a key from one keyserver without adding it to the store.
+     * Downloads and reads one keyserver's copy of a key without adding it to the store.
      *
      * <p>
-     * Distinguishes connection-level failures, which trip the server's circuit breaker,
-     * from HTTP-level errors, which mean a healthy server does not have the key. A copy the
-     * server returns that cannot be read is recorded in the store as such, not taken for a key
-     * the server does not have.
+     * A copy that cannot be read is recorded as such, not taken for a key the server does not
+     * have.
      *
      * @param keyId the key ID or fingerprint
      * @param keyserver the keyserver URL
-     * @return the key ring, or {@code null} when the server did not supply it
+     * @return the key ring, or {@code null} when the server did not supply a readable one
      */
-    PGPPublicKeyRing download(String keyId, String keyserver) {
+    PGPPublicKeyRing downloadCopy(String keyId, String keyserver) {
+        byte[] body = download(keyId, keyserver);
+        return body == null ? null : readCopy(body, keyId, keyserver);
+    }
+
+    private Map<String, PGPPublicKeyRing> readableCopies(String keyId, Map<String, byte[]> bodies) {
+        Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
+        bodies.forEach((keyserver, body) -> {
+            PGPPublicKeyRing copy = body == null ? null : readCopy(body, keyId, keyserver);
+            if (copy != null && BcKeyStore.matchesFingerprint(copy, keyId)) {
+                copies.put(keyserver, copy);
+            }
+        });
+        return copies;
+    }
+
+    private PGPPublicKeyRing readCopy(byte[] body, String keyId, String keyserver) {
+        if (body.length > MAX_COPY_BYTES) {
+            unreadableServed.add(new UnreadableCertificate(TrustRootRef.keyserver(keyserver), null,
+                    Set.of(keyId), UnreadableCertificate.Cause.DAMAGED,
+                    "larger than " + MAX_COPY_BYTES + " bytes, not read"));
+            return null;
+        }
+        return readServedCopy(body, keyId, keyserver);
+    }
+
+    /**
+     * Downloads what one keyserver serves for a key, without reading or storing it.
+     *
+     * <p>
+     * Distinguishes connection-level failures, which trip the server's circuit breaker,
+     * from HTTP-level errors, which mean a healthy server does not have the key.
+     *
+     * @param keyId the key ID or fingerprint
+     * @param keyserver the keyserver URL
+     * @return the response body, or {@code null} when the server did not answer with HTTP 200
+     */
+    byte[] download(String keyId, String keyserver) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(lookupUrl(keyserver, keyId)))
-                    .timeout(REQUEST_TIMEOUT)
+                    .timeout(requestTimeout)
                     .GET()
                     .build();
             HttpResponse<byte[]> response = httpClient.send(request,
                     HttpResponse.BodyHandlers.ofByteArray());
-            if (response.statusCode() != OK) {
-                return null;
-            }
-            return readServedCopy(response.body(), keyId, keyserver);
+            return response.statusCode() == OK ? response.body() : null;
         } catch (HttpTimeoutException | ConnectException e) {
             fetchCache.recordConnectionFailure(keyserver);
             return null;

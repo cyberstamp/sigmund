@@ -240,7 +240,7 @@ class KeyValidityAgreementTest {
         Path certFile = Files.writeString(dir.resolve("cert.asc"), armor(cert));
 
         BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc"));
-        store.addFetched(cert, "hkps://keys.example.org");
+        store.addFetched(Map.of("hkps://keys.example.org", cert));
         Path gpgHome = GpgTestKeys.home(dir.resolve("gpg-home"));
         CliTool.run(Map.of("GNUPGHOME", gpgHome.toString()),
                 "gpg", "--batch", "--import", certFile.toString());
