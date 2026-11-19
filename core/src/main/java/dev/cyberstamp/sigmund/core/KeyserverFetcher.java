@@ -181,7 +181,9 @@ class KeyserverFetcher implements AutoCloseable {
      *
      * <p>
      * A copy that cannot be read is recorded as such, not taken for a key the server does not
-     * have. Of several certificates served, the first that holds the key is returned.
+     * have. Of several certificates served, the one the key belongs to is returned, chosen as
+     * the store chooses among every server's ({@link BcKeyStore#certificateAmong}): a
+     * certificate of another primary key served before it is never shown in its place.
      *
      * @param keyId the key ID or fingerprint
      * @param keyserver the keyserver URL
@@ -189,8 +191,7 @@ class KeyserverFetcher implements AutoCloseable {
      */
     PGPPublicKeyRing downloadCopy(String keyId, String keyserver) {
         byte[] body = download(keyId, keyserver);
-        return body == null ? null
-                : holdingTheKey(readCopy(body, keyId, keyserver), keyId).stream().findFirst().orElse(null);
+        return body == null ? null : BcKeyStore.certificateAmong(keyId, readCopy(body, keyId, keyserver));
     }
 
     private Map<String, List<PGPPublicKeyRing>> readableCopies(String keyId, Map<String, byte[]> bodies) {

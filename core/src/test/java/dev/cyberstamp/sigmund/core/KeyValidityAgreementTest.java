@@ -38,6 +38,10 @@ import org.bouncycastle.openpgp.PGPSignature;
 import org.bouncycastle.openpgp.PGPSignatureGenerator;
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator;
 import org.bouncycastle.openpgp.PGPSignatureSubpacketVector;
+import org.bouncycastle.openpgp.api.OpenPGPKey;
+import org.bouncycastle.openpgp.api.bc.BcOpenPGPApi;
+import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
+import org.bouncycastle.openpgp.operator.bc.BcPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPDigestCalculatorProviderBuilder;
@@ -417,6 +421,39 @@ class KeyValidityAgreementTest {
                 .isEqualTo(everywhere("FAILED"));
     }
 
+    /**
+     * A v4 key whose keys are native Ed25519 (RFC 9580 algorithm 27), served by two keyservers:
+     * Bouncy Castle 1.86 corrupts such a signature when it joins two copies of it, so the copies
+     * must be joined without that. GnuPG 2.4 reads no v4 key of this algorithm and is not asked.
+     */
+    @Test
+    void aV4Ed25519KeyServedByTwoKeyserversVerifiesWithBcAndSq() throws Exception {
+        OpenPGPKey key = v4Ed25519Key();
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = signWithSigningKey(key, artifact);
+
+        assertThat(outcomesServedTwice(key.toCertificate().getPGPPublicKeyRing(), artifact, claim))
+                .isEqualTo(Map.of("bc", "VERIFIED", "sq", "VERIFIED"));
+    }
+
+    @Test
+    void aRevokedV4Ed25519KeyServedByTwoKeyserversFailsWithBcAndSq() throws Exception {
+        OpenPGPKey key = v4Ed25519Key();
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = signWithSigningKey(key, artifact);
+        PGPPublicKeyRing certificate = key.toCertificate().getPGPPublicKeyRing();
+        PGPSecretKey primary = key.getPGPSecretKeyRing().getSecretKey();
+        PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                new BcPGPContentSignerBuilder(primary.getPublicKey().getAlgorithm(), HashAlgorithmTags.SHA256),
+                primary.getPublicKey());
+        generator.init(PGPSignature.KEY_REVOCATION, primary.extractPrivateKey(null));
+        generator.setHashedSubpackets(revocationSubpacketsFor(primary.getPublicKey()));
+        PGPPublicKeyRing revoked = PGPPublicKeyRing.insertPublicKey(certificate, PGPPublicKey.addCertification(
+                certificate.getPublicKey(), generator.generateCertification(primary.getPublicKey())));
+
+        assertThat(outcomesServedTwice(revoked, artifact, claim)).isEqualTo(Map.of("bc", "FAILED", "sq", "FAILED"));
+    }
+
     private static final byte[] A = "A <a@example.org>".getBytes(StandardCharsets.UTF_8);
     private static final byte[] B = "B <b@example.org>".getBytes(StandardCharsets.UTF_8);
     private static final Instant FOUR_HOURS_AGO = Instant.now().minus(Duration.ofHours(4));
@@ -524,6 +561,67 @@ class KeyValidityAgreementTest {
         answers.put("gpg", new GpgRunner("gpg", null, gpgHome).verify(artifact, claim));
         answers.put("sq", new SqRunner(sqHome).verify(artifact, claim));
         return answers;
+    }
+
+    /**
+     * The outcomes of Bouncy Castle, given two keyservers' copies of the certificate, each parsed
+     * from its encoding as a fetched copy is, and of Sequoia, given the certificate once.
+     */
+    private Map<String, String> outcomesServedTwice(PGPPublicKeyRing cert, Path artifact, OpenPgpClaim claim)
+            throws Exception {
+        byte[] encoded = cert.getEncoded();
+        Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
+        copies.put("hkps://one.example.org", new PGPPublicKeyRing(encoded, new BcKeyFingerprintCalculator()));
+        copies.put("hkps://two.example.org", new PGPPublicKeyRing(encoded, new BcKeyFingerprintCalculator()));
+        BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc"));
+        store.addFetched(copies);
+        Path certFile = Files.writeString(dir.resolve("cert.asc"), armor(cert));
+        Path sqHome = Files.createDirectories(dir.resolve("sq-home"));
+        CliTool.run(SqRunner.envFor(sqHome), "sq", "cert", "import", certFile.toString());
+
+        Map<String, VerifyResult> answers = new LinkedHashMap<>();
+        try (BcRunner bc = new BcRunner(store, null, null)) {
+            answers.put("bc", bc.verify(artifact, claim));
+        }
+        answers.put("sq", new SqRunner(sqHome).verify(artifact, claim));
+        return outcomes(answers);
+    }
+
+    /** A v4 key of native Ed25519 keys (algorithm 27), created a day ago. */
+    private static OpenPGPKey v4Ed25519Key() throws Exception {
+        return new BcOpenPGPApi().generateKey(PublicKeyPacket.VERSION_4, Date.from(Instant.now().minus(DAY)))
+                .ed25519x25519Key("Release Signer <release@example.org>").build();
+    }
+
+    private static PGPSignatureSubpacketVector revocationSubpacketsFor(PGPPublicKey key) {
+        PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+        hashed.setSignatureCreationTime(true, Date.from(HOUR_AGO));
+        hashed.setRevocationReason(true, RevocationReasonTags.KEY_COMPROMISED, "revoked by the test");
+        hashed.setIssuerFingerprint(false, key);
+        return hashed.generate();
+    }
+
+    /** A signature over the artifact made now by the key's first signing-capable key. */
+    private static OpenPgpClaim signWithSigningKey(OpenPGPKey key, Path artifact) throws Exception {
+        PGPSecretKey signer = key.getPGPSecretKeyRing()
+                .getSecretKey(key.getSigningKeys().get(0).getKeyIdentifier());
+        PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                new BcPGPContentSignerBuilder(signer.getPublicKey().getAlgorithm(), HashAlgorithmTags.SHA256),
+                signer.getPublicKey());
+        generator.init(PGPSignature.BINARY_DOCUMENT, signer.extractPrivateKey(null));
+        PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+        hashed.setSignatureCreationTime(true, new Date());
+        hashed.setIssuerFingerprint(false, signer.getPublicKey());
+        generator.setHashedSubpackets(hashed.generate());
+        generator.update(Files.readAllBytes(artifact));
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (OutputStream out = new ArmoredOutputStream(bytes)) {
+            generator.generate().encode(out);
+        }
+        String armored = bytes.toString(StandardCharsets.US_ASCII);
+        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+        return new OpenPgpClaim(armored, info.version(), info.issuerFingerprint(), info.algorithmId(),
+                info.creationTime());
     }
 
     /**

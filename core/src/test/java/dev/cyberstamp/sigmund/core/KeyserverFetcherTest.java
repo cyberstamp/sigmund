@@ -533,6 +533,27 @@ class KeyserverFetcherTest {
         }
 
         /**
+         * {@code inspect-signer} shows what one server serves for a key; of the certificates it
+         * serves, the one the key belongs to is shown, not an impostor served before it, whose
+         * fingerprint a user might otherwise pin.
+         */
+        @Test
+        void aDownloadedCopyIsTheAskedKeysCertificateNotAnImpostorServedBeforeIt() throws Exception {
+            byte[] impostor = impostorHolding(full.getPublicKey()).getEncoded();
+            byte[] real = full.getEncoded();
+            byte[] body = Arrays.copyOf(impostor, impostor.length + real.length);
+            System.arraycopy(real, 0, body, impostor.length, real.length);
+            Map<String, byte[]> bodies = new HashMap<>();
+            bodies.put(SERVER1, body);
+            try (StubFetcher fetcher = new StubFetcher(fetchStore("fetch"), BOTH, bodies, Duration.ofSeconds(10))) {
+                PGPPublicKeyRing copy = fetcher.downloadCopy(fp, SERVER1);
+
+                assertThat(BcKeyStore.bytesToHex(copy.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
+                assertThat(userIds(copy)).containsExactly(USER_ID);
+            }
+        }
+
+        /**
          * A key a local store holds without user IDs is fetched again; a revocation only the
          * local copy held stays in the certificate found, and in the one written to cert-d.
          */

@@ -3,13 +3,13 @@ package dev.cyberstamp.sigmund.core;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -314,6 +314,22 @@ class BcKeyStore {
         return kept;
     }
 
+    /**
+     * The certificate of a key among those one keyserver served, chosen as
+     * {@link #addFetched(String, Map)} chooses among every server's, with that server's copies of
+     * it joined.
+     *
+     * @param keyId the fingerprint of the primary key or a subkey, or the 64-bit key ID, that
+     *        was asked for
+     * @param served the certificates the keyserver served, in the order served
+     * @return the certificate, or {@code null} when none of them holds the key
+     */
+    static PGPPublicKeyRing certificateAmong(String keyId, List<PGPPublicKeyRing> served) {
+        Map<String, List<PGPPublicKeyRing>> group = bestServedGroup(keyId,
+                groupedByPrimary(keyId, Map.of(keyId, served)));
+        return group == null ? null : join(group.get(keyId));
+    }
+
     private static Map<String, Map<String, List<PGPPublicKeyRing>>> groupedByPrimary(String keyId,
             Map<String, List<PGPPublicKeyRing>> served) {
         Map<String, Map<String, List<PGPPublicKeyRing>>> groups = new LinkedHashMap<>();
@@ -353,17 +369,86 @@ class BcKeyStore {
         return join(List.of(fetched, local.ring()));
     }
 
+    /**
+     * Joins copies of one certificate, in order.
+     *
+     * <p>
+     * A signature the certificate joined so far already holds is removed from the next copy
+     * before {@link PGPPublicKeyRing#join} sees it: Bouncy Castle 1.86 rebuilds a signature it
+     * finds in both from the signature's integers, which a native Ed25519 or Ed448 signature
+     * (RFC 9580 algorithms 27 and 28) does not have, and the certificate it returns can then be
+     * neither encoded nor verified. A copy that still cannot be joined into a certificate that
+     * encodes is left out, with a warning, and the certificate joined so far is kept: one
+     * server's copy never makes the others unusable.
+     */
     private static PGPPublicKeyRing join(Iterable<PGPPublicKeyRing> copies) {
         Iterator<PGPPublicKeyRing> iterator = copies.iterator();
         PGPPublicKeyRing joined = iterator.next();
-        try {
-            while (iterator.hasNext()) {
-                joined = PGPPublicKeyRing.join(joined, iterator.next());
-            }
-        } catch (PGPException e) {
-            throw new IllegalStateException("copies of one certificate could not be joined", e);
+        while (iterator.hasNext()) {
+            joined = joinedOrKept(joined, iterator.next());
         }
         return joined;
+    }
+
+    private static PGPPublicKeyRing joinedOrKept(PGPPublicKeyRing joined, PGPPublicKeyRing copy) {
+        try {
+            PGPPublicKeyRing result = PGPPublicKeyRing.join(joined, withoutSignaturesIn(copy, joined));
+            result.getEncoded();
+            return result;
+        } catch (PGPException | IOException | RuntimeException e) {
+            System.getLogger(BcKeyStore.class.getName()).log(System.Logger.Level.WARNING,
+                    "a copy of " + fingerprintHex(joined) + " could not be joined with the others and is left out ("
+                            + e + ")");
+            return joined;
+        }
+    }
+
+    /** The copy without the signatures {@code held} already holds on the same key. */
+    private static PGPPublicKeyRing withoutSignaturesIn(PGPPublicKeyRing copy, PGPPublicKeyRing held) {
+        List<PGPPublicKey> keys = new ArrayList<>();
+        Iterator<PGPPublicKey> copyKeys = copy.getPublicKeys();
+        while (copyKeys.hasNext()) {
+            PGPPublicKey key = copyKeys.next();
+            PGPPublicKey heldKey = held.getPublicKey(key.getFingerprint());
+            keys.add(heldKey == null ? key : withoutSignaturesOf(key, heldKey));
+        }
+        return new PGPPublicKeyRing(keys);
+    }
+
+    private static PGPPublicKey withoutSignaturesOf(PGPPublicKey key, PGPPublicKey heldKey) {
+        List<PGPSignature> signatures = new ArrayList<>();
+        key.getSignatures().forEachRemaining(signatures::add);
+        PGPPublicKey stripped = key;
+        for (PGPSignature signature : signatures) {
+            if (holdsSignature(heldKey, signature)) {
+                PGPPublicKey without = PGPPublicKey.removeCertification(stripped, signature);
+                stripped = without != null ? without : stripped;
+            }
+        }
+        return stripped;
+    }
+
+    private static boolean holdsSignature(PGPPublicKey key, PGPSignature wanted) {
+        Iterator<PGPSignature> signatures = key.getSignatures();
+        while (signatures.hasNext()) {
+            if (sameSignature(signatures.next(), wanted)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether two signatures are one: the same type and signature value, which covers all they
+     * sign, whatever unhashed subpackets a server added.
+     */
+    private static boolean sameSignature(PGPSignature one, PGPSignature other) {
+        try {
+            return one.getSignatureType() == other.getSignatureType()
+                    && PGPSignature.isSignatureEncodingEqual(one, other);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /**
@@ -546,9 +631,7 @@ class BcKeyStore {
         while (keys.hasNext()) {
             Iterator<PGPSignature> signatures = keys.next().getSignatures();
             while (signatures.hasNext()) {
-                PGPSignature signature = signatures.next();
-                if (signature.getSignatureType() == wanted.getSignatureType()
-                        && PGPSignature.isSignatureEncodingEqual(signature, wanted)) {
+                if (sameSignature(signatures.next(), wanted)) {
                     return true;
                 }
             }
@@ -887,29 +970,51 @@ class BcKeyStore {
      * Writes a key ring to a file, creating parent directories as needed.
      * Secret key files (under bcPrivateHome) are created with owner-only (600) permissions
      * from the start to avoid a TOCTOU window where the file is world-readable.
+     *
+     * <p>
+     * The key ring is encoded in full before any file is touched, then written to a temporary
+     * file beside the target and moved over it, atomically where the file system can: a key ring
+     * that cannot be encoded, or a write that fails, leaves the file the store held as it was.
      */
     private void writeKeyRing(Path file, org.bouncycastle.openpgp.PGPKeyRing keyRing) {
         try {
+            byte[] encoded = keyRing.getEncoded();
             Files.createDirectories(file.getParent());
-            boolean isPrivateKey = bcPrivateHome != null && file.startsWith(bcPrivateHome);
-            if (isPrivateKey) {
-                try {
-                    Files.deleteIfExists(file);
-                    Files.createFile(file, OWNER_ONLY_ATTR);
-                    try (OutputStream out = Files.newOutputStream(file,
-                            StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
-                        keyRing.encode(out);
-                    }
-                    return;
-                } catch (UnsupportedOperationException e) {
-                    // non-POSIX filesystem — fall through to default write
-                }
-            }
-            try (OutputStream out = Files.newOutputStream(file)) {
-                keyRing.encode(out);
+            Path temporary = temporaryFileBeside(file, bcPrivateHome != null && file.startsWith(bcPrivateHome));
+            try {
+                Files.write(temporary, encoded);
+                replace(temporary, file);
+            } finally {
+                Files.deleteIfExists(temporary);
             }
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to write key to " + file, e);
+        }
+    }
+
+    /**
+     * A new, empty file in the directory of {@code file}, which the written key ring is moved
+     * from, so that a store another tool shares never holds a partly written certificate. A
+     * secret key's file is readable by its owner only from the start; a certificate's gets the
+     * default permissions.
+     */
+    private static Path temporaryFileBeside(Path file, boolean secret) throws IOException {
+        Path temporary = file.resolveSibling("." + file.getFileName() + "." + System.nanoTime() + ".tmp");
+        if (secret) {
+            try {
+                return Files.createFile(temporary, OWNER_ONLY_ATTR);
+            } catch (UnsupportedOperationException e) {
+                // non-POSIX filesystem — fall through to default permissions
+            }
+        }
+        return Files.createFile(temporary);
+    }
+
+    private static void replace(Path temporary, Path file) throws IOException {
+        try {
+            Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 

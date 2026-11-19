@@ -1,6 +1,7 @@
 package dev.cyberstamp.sigmund.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
@@ -14,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 import org.bouncycastle.bcpg.BCPGInputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
 import org.bouncycastle.bcpg.PublicKeyPacket;
@@ -27,6 +29,7 @@ import org.bouncycastle.openpgp.PGPSecretKeyRing;
 import org.bouncycastle.openpgp.PGPSignature;
 import org.bouncycastle.openpgp.PGPSignatureGenerator;
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator;
+import org.bouncycastle.openpgp.api.OpenPGPCertificate;
 import org.bouncycastle.openpgp.api.OpenPGPKey;
 import org.bouncycastle.openpgp.api.bc.BcOpenPGPApi;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
@@ -442,6 +445,69 @@ class BcKeyStoreTest {
                 .findPublicKey(fingerprint).ring().getPublicKey();
         assertThat(persisted.hasRevocation()).isTrue();
         assertThat(persisted.getUserIDs()).toIterable().containsExactly("Alice Example <alice@example.org>");
+    }
+
+    /**
+     * Bouncy Castle 1.86 corrupts a native Ed25519 (algorithm 27) v4 signature when it joins two
+     * copies of it; a local copy joined with a fetched one must still be a certificate.
+     */
+    @Test
+    void aLocalCopyOfAV4Ed25519KeyJoinsWithAFetchedOne(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        byte[] encoded = generateV4Key("Alice Example <alice@example.org>").toCertificate()
+                .getPGPPublicKeyRing().getEncoded();
+        store.storeCert(parsed(encoded));
+        store.addFetched(Map.of("hkps://keys.example.org", parsed(encoded)));
+        PGPPublicKeyRing found = store.findPublicKey(BcKeyStore.bytesToHex(parsed(encoded).getPublicKey()
+                .getFingerprint())).ring();
+
+        assertThat(found.getEncoded()).isEqualTo(encoded);
+        assertThat(new OpenPGPCertificate(found).getPrimaryKey().isBoundAt(new Date())).isTrue();
+    }
+
+    @Test
+    void aPersistedV4Ed25519KeyServedTwiceIsAReadableFile(@TempDir Path tempDir) throws Exception {
+        Path certD = tempDir.resolve("cert-d");
+        BcKeyStore store = new BcKeyStore(null, certD, tempDir.resolve("bc-private"), true);
+        byte[] encoded = generateV4Key("Alice Example <alice@example.org>").toCertificate()
+                .getPGPPublicKeyRing().getEncoded();
+        Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
+        copies.put("hkps://server1", parsed(encoded));
+        copies.put("hkps://server2", parsed(encoded));
+        store.addFetched(copies);
+        String fingerprint = BcKeyStore.bytesToHex(parsed(encoded).getPublicKey().getFingerprint());
+
+        PGPPublicKeyRing persisted = new BcKeyStore(null, certD, tempDir.resolve("later"))
+                .findPublicKey(fingerprint).ring();
+        assertThat(persisted.getEncoded()).isEqualTo(encoded);
+    }
+
+    /**
+     * A certificate that cannot be encoded — here one Bouncy Castle 1.86 corrupted by joining two
+     * copies of a native Ed25519 v4 key itself — never truncates the file a store already holds.
+     */
+    @Test
+    void aCertificateThatCannotBeEncodedLeavesTheStoredFileIntact(@TempDir Path tempDir) throws Exception {
+        Path certD = tempDir.resolve("cert-d");
+        BcKeyStore store = new BcKeyStore(null, certD, tempDir.resolve("bc-private"));
+        byte[] encoded = generateV4Key("Alice Example <alice@example.org>").toCertificate()
+                .getPGPPublicKeyRing().getEncoded();
+        PGPPublicKeyRing corrupted = PGPPublicKeyRing.join(parsed(encoded), parsed(encoded));
+        assertThatThrownBy(corrupted::getEncoded).isInstanceOf(RuntimeException.class);
+        store.storeCert(parsed(encoded));
+        String fp = BcKeyStore.bytesToHex(parsed(encoded).getPublicKey().getFingerprint()).toLowerCase();
+        Path certFile = certD.resolve(fp.substring(0, 2)).resolve(fp.substring(2));
+
+        assertThatThrownBy(() -> store.storeCert(corrupted)).isInstanceOf(RuntimeException.class);
+
+        assertThat(Files.readAllBytes(certFile)).isEqualTo(encoded);
+        try (Stream<Path> files = Files.list(certFile.getParent())) {
+            assertThat(files).containsExactly(certFile);
+        }
+    }
+
+    private static PGPPublicKeyRing parsed(byte[] encoded) throws Exception {
+        return new PGPPublicKeyRing(encoded, new BcKeyFingerprintCalculator());
     }
 
     /**
