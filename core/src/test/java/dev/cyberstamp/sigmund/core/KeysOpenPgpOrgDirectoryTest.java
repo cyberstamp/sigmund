@@ -165,6 +165,21 @@ class KeysOpenPgpOrgDirectoryTest {
         assertThat(requests).isEmpty();
     }
 
+    /**
+     * A copy the directory served without user IDs is its answer: it vouches for no address on
+     * the key, and is not asked again.
+     */
+    @Test
+    void aFetchedCopyWithoutUserIdsIsAnAnswerWithoutARequest() throws Exception {
+        PGPPublicKeyRing ring = generate("Release Manager <release@example.org>");
+        String fingerprint = primaryFingerprint(ring);
+        keys.put(fingerprint, ring.getEncoded());
+        directory.answerFrom(storeServing("hkps://keys.openpgp.org", withoutUserIds(ring)));
+
+        assertThat(directory.verifiedAddresses(fingerprint)).isEmpty();
+        assertThat(requests).isEmpty();
+    }
+
     @Test
     void asksWhenNoCopyWasFetched() throws Exception {
         PGPPublicKeyRing ring = generate("Release Manager <release@example.org>");
@@ -222,6 +237,19 @@ class KeysOpenPgpOrgDirectoryTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         store.addFetched(Map.of(keyserver, ring));
         return store;
+    }
+
+    /** The certificate as keys.openpgp.org serves it before its owner verified an address. */
+    private static PGPPublicKeyRing withoutUserIds(PGPPublicKeyRing ring) {
+        List<PGPPublicKey> keys = new ArrayList<>();
+        ring.getPublicKeys().forEachRemaining(keys::add);
+        PGPPublicKey primary = keys.get(0);
+        Iterator<String> userIds = primary.getUserIDs();
+        while (userIds.hasNext()) {
+            primary = PGPPublicKey.removeCertification(primary, userIds.next());
+        }
+        keys.set(0, primary);
+        return new PGPPublicKeyRing(keys);
     }
 
     /** A v4 key, the only version keys.openpgp.org serves. */

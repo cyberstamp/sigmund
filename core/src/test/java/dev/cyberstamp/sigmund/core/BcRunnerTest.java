@@ -11,7 +11,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -295,28 +294,29 @@ class BcRunnerTest {
 
         @Test
         void aForgedRevocationNextToARealOneNeverSuppliesTheDetail(@TempDir Path tempDir) throws Exception {
+            Instant now = Instant.now();
             PGPKeyPair primary = rsaKeyPair();
             PGPKeyPair forger = rsaKeyPair();
             PGPPublicKey base = keyRing(primary, null, HashAlgorithmTags.SHA256).generatePublicKeyRing()
                     .getPublicKey();
             PGPPublicKey revokedKey = PGPPublicKey.addCertification(
-                    PGPPublicKey.addCertification(base, revocation(forger, primary, Instant.now().minus(Duration.ofDays(3)),
-                            RevocationReasonTags.KEY_COMPROMISED)),
-                    revocation(primary, primary, Instant.now().minusSeconds(1800),
+                    PGPPublicKey.addCertification(base, revocation(forger, primary, now.minusSeconds(900),
+                            RevocationReasonTags.KEY_SUPERSEDED)),
+                    revocation(primary, primary, now.minusSeconds(1800),
                             RevocationReasonTags.KEY_COMPROMISED));
             BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"),
                     tempDir.resolve("bc-private"));
             store.addFetched(Map.of("hkps://keys.example.org", new PGPPublicKeyRing(List.of(revokedKey))));
             Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
             OpenPgpClaim claim = lowLevelSignature(primary.getPublicKey(), primary.getPrivateKey(),
-                    artifact, HashAlgorithmTags.SHA256, Instant.now());
+                    artifact, HashAlgorithmTags.SHA256, now);
 
             try (BcRunner bcRunner = new BcRunner(store, null, null)) {
                 VerifyResult result = bcRunner.verify(artifact, claim);
 
                 assertThat(result.isFailed()).as(result.outcome() + " " + result.reason()).isTrue();
                 assertThat(result.detail()).startsWith("key revoked as compromised on "
-                        + Instant.now().minusSeconds(1800).atZone(ZoneOffset.UTC).toLocalDate());
+                        + now.minusSeconds(1800).atZone(ZoneOffset.UTC).toLocalDate());
             }
         }
 

@@ -70,7 +70,10 @@ class ForgedSubkeyBindingTest {
             try (BcRunner bc = new BcRunner(store, null, null)) {
                 VerifyResult result = bc.verify(artifact, claim);
 
-                assertThat(result.isVerified()).isFalse();
+                assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE))
+                        .as(result.outcome() + " " + result.reason() + " " + result.detail()).isTrue();
+                assertThat(result.detail()).isEqualTo(
+                        "the copy from hkps://lenient.keyserver.example carries no self-signature binding the key");
                 assertThat(OpenPgpCredentials.from(result))
                         .doesNotContain(KeyCredential.openPgp(keys.victimFingerprint()));
             }
@@ -123,8 +126,12 @@ class ForgedSubkeyBindingTest {
                         "gpg", new GpgRunner("gpg", null, gpgHome).verify(artifact, claim),
                         "sq", new SqRunner(sqHome).verify(artifact, claim));
 
+                assertThat(results.values().stream().map(result -> result.outcome() + " " + result.reason())
+                        .distinct()).as("the backends agree: " + results).hasSize(1);
                 results.forEach((backend, result) -> {
-                    assertThat(result.isVerified()).as(backend + " verified a forged binding").isFalse();
+                    assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE))
+                            .as(backend + ": " + result.outcome() + " " + result.reason() + " " + result.detail())
+                            .isTrue();
                     assertThat(OpenPgpCredentials.from(result))
                             .as(backend + " attributed the signature to the victim")
                             .doesNotContain(KeyCredential.openPgp(keys.victimFingerprint()));

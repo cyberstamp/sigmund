@@ -1,5 +1,6 @@
 package dev.cyberstamp.sigmund.core;
 
+import java.io.InputStream;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -121,9 +122,9 @@ class KeyserverFetcher implements AutoCloseable {
         if (existing != null && hasUserIds(existing.ring())) {
             return true;
         }
-        Map<String, PGPPublicKeyRing> copies = readableCopies(keyId, downloadAll(keyId));
+        Map<String, List<PGPPublicKeyRing>> copies = readableCopies(keyId, downloadAll(keyId));
         if (!copies.isEmpty()) {
-            keyStore.addFetched(copies);
+            keyStore.addFetched(keyId, copies);
             copies.keySet().forEach(keyserver -> fetchCache.recordSuccess(keyserver, keyId));
         }
         boolean fetched = existing != null || !copies.isEmpty();
@@ -180,7 +181,7 @@ class KeyserverFetcher implements AutoCloseable {
      *
      * <p>
      * A copy that cannot be read is recorded as such, not taken for a key the server does not
-     * have.
+     * have. Of several certificates served, the first that holds the key is returned.
      *
      * @param keyId the key ID or fingerprint
      * @param keyserver the keyserver URL
@@ -188,26 +189,32 @@ class KeyserverFetcher implements AutoCloseable {
      */
     PGPPublicKeyRing downloadCopy(String keyId, String keyserver) {
         byte[] body = download(keyId, keyserver);
-        return body == null ? null : readCopy(body, keyId, keyserver);
+        return body == null ? null
+                : holdingTheKey(readCopy(body, keyId, keyserver), keyId).stream().findFirst().orElse(null);
     }
 
-    private Map<String, PGPPublicKeyRing> readableCopies(String keyId, Map<String, byte[]> bodies) {
-        Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
+    private Map<String, List<PGPPublicKeyRing>> readableCopies(String keyId, Map<String, byte[]> bodies) {
+        Map<String, List<PGPPublicKeyRing>> copies = new LinkedHashMap<>();
         bodies.forEach((keyserver, body) -> {
-            PGPPublicKeyRing copy = body == null ? null : readCopy(body, keyId, keyserver);
-            if (copy != null && BcKeyStore.matchesFingerprint(copy, keyId)) {
-                copies.put(keyserver, copy);
+            List<PGPPublicKeyRing> served = body == null ? List.of()
+                    : holdingTheKey(readCopy(body, keyId, keyserver), keyId);
+            if (!served.isEmpty()) {
+                copies.put(keyserver, served);
             }
         });
         return copies;
     }
 
-    private PGPPublicKeyRing readCopy(byte[] body, String keyId, String keyserver) {
+    private static List<PGPPublicKeyRing> holdingTheKey(List<PGPPublicKeyRing> served, String keyId) {
+        return served.stream().filter(copy -> BcKeyStore.matchesFingerprint(copy, keyId)).toList();
+    }
+
+    private List<PGPPublicKeyRing> readCopy(byte[] body, String keyId, String keyserver) {
         if (body.length > MAX_COPY_BYTES) {
             unreadableServed.add(new UnreadableCertificate(TrustRootRef.keyserver(keyserver), null,
                     Set.of(keyId), UnreadableCertificate.Cause.DAMAGED,
                     "larger than " + MAX_COPY_BYTES + " bytes, not read"));
-            return null;
+            return List.of();
         }
         return readServedCopy(body, keyId, keyserver);
     }
@@ -217,11 +224,14 @@ class KeyserverFetcher implements AutoCloseable {
      *
      * <p>
      * Distinguishes connection-level failures, which trip the server's circuit breaker,
-     * from HTTP-level errors, which mean a healthy server does not have the key.
+     * from HTTP-level errors, which mean a healthy server does not have the key. At most one
+     * byte more than {@link #MAX_COPY_BYTES} is read, so that a server sending more is told
+     * apart from one that does not, and the rest is never read.
      *
      * @param keyId the key ID or fingerprint
      * @param keyserver the keyserver URL
-     * @return the response body, or {@code null} when the server did not answer with HTTP 200
+     * @return the response body, cut off one byte past {@link #MAX_COPY_BYTES}, or {@code null}
+     *         when the server did not answer with HTTP 200
      */
     byte[] download(String keyId, String keyserver) {
         try {
@@ -230,9 +240,11 @@ class KeyserverFetcher implements AutoCloseable {
                     .timeout(requestTimeout)
                     .GET()
                     .build();
-            HttpResponse<byte[]> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofByteArray());
-            return response.statusCode() == OK ? response.body() : null;
+            HttpResponse<InputStream> response = httpClient.send(request,
+                    HttpResponse.BodyHandlers.ofInputStream());
+            try (InputStream body = response.body()) {
+                return response.statusCode() == OK ? body.readNBytes(MAX_COPY_BYTES + 1) : null;
+            }
         } catch (HttpTimeoutException | ConnectException e) {
             fetchCache.recordConnectionFailure(keyserver);
             return null;
@@ -245,15 +257,15 @@ class KeyserverFetcher implements AutoCloseable {
     }
 
     /**
-     * Reads the copy of a key a keyserver returned, keeping one that cannot be read rather than
-     * discarding it.
+     * Reads the certificates a keyserver returned for a key, keeping one that cannot be read
+     * rather than discarding it.
      *
      * @param body what the keyserver returned
      * @param keyId the key ID or fingerprint it was asked for
      * @param keyserver the keyserver URL
-     * @return the key ring, or {@code null} when the copy cannot be read
+     * @return the certificates read, in the order served; empty when none can be read
      */
-    PGPPublicKeyRing readServedCopy(byte[] body, String keyId, String keyserver) {
+    List<PGPPublicKeyRing> readServedCopy(byte[] body, String keyId, String keyserver) {
         return KeyRingFiles.readServed(body, keyserver, keyId, unreadableServed);
     }
 

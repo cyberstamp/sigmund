@@ -763,12 +763,14 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * Bouncy Castle 1.86 derives the primary key's binding from its first user ID alone and
      * takes a revocation without checking its type or signature. A first user ID that is unsigned,
      * certified by a forgery or revoked would so reject a key that GnuPG and Sequoia accept, and
-     * a forged revocation would be read as one. The same holds for a key revocation or a subkey
-     * revocation: one that does not verify against the primary key is a forgery GnuPG and
-     * Sequoia ignore, and is removed here so that it is never the attack signal. The view is for
-     * this question only: a user ID revocation does not touch the key, and a user ID is never a
-     * credential. Other key-level signatures (direct-key, subkey bindings) are left as they are,
-     * and the user ID to show is chosen from the certificate unfiltered.
+     * a forged revocation would be read as one. The same holds for every key-level signature: a
+     * key revocation, a direct-key signature, a subkey binding or a subkey revocation that does
+     * not verify against the primary key, or that sits where its type does not belong, is a
+     * forgery GnuPG and Sequoia ignore. It is removed here, so that a forged revocation is never
+     * the attack signal and a forged expiry or set of key flags never makes a bound key
+     * unavailable. The view is for this question only: a user ID revocation does not touch the
+     * key, and a user ID is never a credential. The user ID to show is chosen from the
+     * certificate unfiltered.
      */
     private static PGPPublicKeyRing bindingViewOf(PGPPublicKeyRing ring) {
         PGPPublicKey primary = ring.getPublicKey();
@@ -779,44 +781,53 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             view = withVerifyingCertificationsOnly(view, primary, userId);
         }
         PGPPublicKeyRing filtered = PGPPublicKeyRing.insertPublicKey(ring,
-                withVerifyingRevocationsOnly(view, primary));
+                withVerifyingKeySignaturesOnly(view, primary));
         Iterator<PGPPublicKey> subkeys = ring.getPublicKeys();
         while (subkeys.hasNext()) {
             PGPPublicKey subkey = subkeys.next();
             if (!subkey.isMasterKey()) {
                 filtered = PGPPublicKeyRing.insertPublicKey(filtered,
-                        withVerifyingRevocationsOnly(subkey, primary));
+                        withVerifyingKeySignaturesOnly(subkey, primary));
             }
         }
         return filtered;
     }
 
-    private static PGPPublicKey withVerifyingRevocationsOnly(PGPPublicKey key, PGPPublicKey primary) {
-        List<PGPSignature> revocations = new ArrayList<>();
-        key.getSignaturesOfType(PGPSignature.KEY_REVOCATION).forEachRemaining(revocations::add);
-        key.getSignaturesOfType(PGPSignature.SUBKEY_REVOCATION).forEachRemaining(revocations::add);
+    private static final List<Integer> KEY_SIGNATURE_TYPES = List.of(PGPSignature.KEY_REVOCATION,
+            PGPSignature.DIRECT_KEY, PGPSignature.SUBKEY_BINDING, PGPSignature.SUBKEY_REVOCATION);
+
+    private static PGPPublicKey withVerifyingKeySignaturesOnly(PGPPublicKey key, PGPPublicKey primary) {
+        List<PGPSignature> signatures = new ArrayList<>();
+        for (int type : KEY_SIGNATURE_TYPES) {
+            key.getSignaturesOfType(type).forEachRemaining(signatures::add);
+        }
         PGPPublicKey view = key;
-        for (PGPSignature revocation : revocations) {
-            if (!isVerifyingRevocation(revocation, key, primary)) {
-                view = PGPPublicKey.removeCertification(view, revocation);
+        for (PGPSignature signature : signatures) {
+            if (!isVerifyingKeySignature(signature, key, primary)) {
+                view = PGPPublicKey.removeCertification(view, signature);
             }
         }
         return view;
     }
 
-    private static boolean isVerifyingRevocation(PGPSignature revocation, PGPPublicKey key, PGPPublicKey primary) {
+    private static boolean isVerifyingKeySignature(PGPSignature signature, PGPPublicKey key, PGPPublicKey primary) {
         boolean ofPrimary = key.isMasterKey();
-        int expectedType = ofPrimary ? PGPSignature.KEY_REVOCATION : PGPSignature.SUBKEY_REVOCATION;
-        if (revocation.getSignatureType() != expectedType) {
+        if (!belongsOn(signature.getSignatureType(), ofPrimary)) {
             return false;
         }
         try {
-            revocation.init(new BcPGPContentVerifierBuilderProvider(), primary);
-            return ofPrimary ? revocation.verifyCertification(primary)
-                    : revocation.verifyCertification(primary, key);
+            signature.init(new BcPGPContentVerifierBuilderProvider(), primary);
+            return ofPrimary ? signature.verifyCertification(primary)
+                    : signature.verifyCertification(primary, key);
         } catch (PGPException | RuntimeException e) {
             return false;
         }
+    }
+
+    private static boolean belongsOn(int signatureType, boolean ofPrimary) {
+        return ofPrimary
+                ? signatureType == PGPSignature.KEY_REVOCATION || signatureType == PGPSignature.DIRECT_KEY
+                : signatureType == PGPSignature.SUBKEY_REVOCATION || signatureType == PGPSignature.SUBKEY_BINDING;
     }
 
     private static PGPPublicKey withVerifyingCertificationsOnly(PGPPublicKey view, PGPPublicKey primary,

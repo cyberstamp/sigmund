@@ -3,14 +3,19 @@ package dev.cyberstamp.sigmund.core;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.sun.net.httpserver.HttpServer;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -22,7 +27,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import org.bouncycastle.bcpg.ArmoredOutputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
+import org.bouncycastle.bcpg.PublicKeyPacket;
+import org.bouncycastle.bcpg.PublicSubkeyPacket;
+import org.bouncycastle.bcpg.sig.KeyFlags;
 import org.bouncycastle.bcpg.sig.RevocationReasonTags;
 import org.bouncycastle.openpgp.PGPPublicKey;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
@@ -32,6 +42,7 @@ import org.bouncycastle.openpgp.PGPSignature;
 import org.bouncycastle.openpgp.PGPSignatureGenerator;
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator;
 import org.bouncycastle.openpgp.api.OpenPGPCertificate;
+import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 import org.bouncycastle.openpgp.operator.bc.BcPGPContentSignerBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -104,7 +115,8 @@ class KeyserverFetcherTest {
                 PGPPublicKeyRing strippedKey = stripUserIds(fullKey);
                 assertThat(strippedKey.getPublicKey().getUserIDs().hasNext()).isFalse();
 
-                BcKeyStore verifierStore = createStore();
+                BcKeyStore verifierStore = new BcKeyStore(null, tempDir.resolve("verifier-cd"),
+                        tempDir.resolve("verifier-bp"));
                 verifierStore.addFetched(Map.of("hkps://keys.example.org", strippedKey));
 
                 PGPPublicKeyRing cached = verifierStore.findPublicKey(fp).ring();
@@ -334,6 +346,51 @@ class KeyserverFetcherTest {
             }
         }
 
+        /**
+         * A certificate of another key holding {@code held} as a subkey bound by that key's
+         * primary, as anyone can upload to a keyserver that does not validate uploads.
+         */
+        private PGPPublicKeyRing impostorHolding(PGPPublicKey held) throws Exception {
+            BcKeyStore impostorStore = fetchStore("impostor");
+            String impostorFp = BcTestKeys.generate(impostorStore, "Mallory <mallory@example.org>", "ed25519", "pgp4");
+            PGPSecretKey impostor = impostorStore.findSecretKey(impostorFp).getSecretKey();
+            PublicKeyPacket packet = held.getPublicKeyPacket();
+            PGPPublicKey asSubkey = new PGPPublicKey(new PublicSubkeyPacket(packet.getVersion(), packet.getAlgorithm(),
+                    packet.getTime(), packet.getKey()), new BcKeyFingerprintCalculator());
+            PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                    new BcPGPContentSignerBuilder(impostor.getPublicKey().getAlgorithm(), HashAlgorithmTags.SHA256),
+                    impostor.getPublicKey());
+            generator.init(PGPSignature.SUBKEY_BINDING, impostor.extractPrivateKey(null));
+            PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+            hashed.setSignatureCreationTime(true, new Date());
+            hashed.setKeyFlags(false, KeyFlags.SIGN_DATA);
+            generator.setHashedSubpackets(hashed.generate());
+            PGPSignature binding = generator.generateCertification(impostor.getPublicKey(), asSubkey);
+            return new PGPPublicKeyRing(List.of(impostor.getPublicKey(), PGPPublicKey.addCertification(asSubkey, binding)));
+        }
+
+        /** A signature over the artifact made with the generated key's primary key. */
+        private OpenPgpClaim signed(Path artifact) throws Exception {
+            PGPSecretKey signer = secret().getSecretKey();
+            PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                    new BcPGPContentSignerBuilder(signer.getPublicKey().getAlgorithm(), HashAlgorithmTags.SHA256),
+                    signer.getPublicKey());
+            generator.init(PGPSignature.BINARY_DOCUMENT, signer.extractPrivateKey(null));
+            PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+            hashed.setSignatureCreationTime(true, new Date());
+            hashed.setIssuerFingerprint(false, signer.getPublicKey());
+            generator.setHashedSubpackets(hashed.generate());
+            generator.update(Files.readAllBytes(artifact));
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            try (OutputStream out = new ArmoredOutputStream(bytes)) {
+                generator.generate().encode(out);
+            }
+            String armored = bytes.toString(StandardCharsets.US_ASCII);
+            OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+            return new OpenPgpClaim(armored, info.version(), info.issuerFingerprint(), info.algorithmId(),
+                    info.creationTime());
+        }
+
         private PGPPublicKeyRing stripped() {
             return stripUserIds(full);
         }
@@ -420,6 +477,79 @@ class KeyserverFetcherTest {
 
             assertThat(BcKeyStore.bytesToHex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
             assertThat(store.findPublicKey(keyId).source()).isEqualTo(TrustRootRef.keyserver(SERVER1));
+        }
+
+        /**
+         * A keyserver that accepts anyone's uploads serves, first, a certificate of the
+         * attacker's primary key holding the asked key as a subkey; the other serves the real
+         * certificate, revoked as compromised. The real certificate is kept and its revocation
+         * is the attack signal.
+         */
+        @Test
+        void anImpostorServedFirstDoesNotHideTheRevocationOfTheRealCertificate(@TempDir Path dir)
+                throws Exception {
+            BcKeyStore store = fetchStore("fetch");
+            PGPPublicKeyRing stored = fetchFrom(store, fp, bodies(impostorHolding(full.getPublicKey()), withRevocation()));
+
+            assertThat(BcKeyStore.bytesToHex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
+            assertThat(store.findPublicKey(fp).source()).isEqualTo(TrustRootRef.keyserver(SERVER2));
+            Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+            try (BcRunner bc = new BcRunner(store, null, null)) {
+                VerifyResult result = bc.verify(artifact, signed(artifact));
+
+                assertThat(result.outcome()).as(result.reason() + " " + result.detail()).isEqualTo(ClaimOutcome.FAILED);
+                assertThat(result.detail()).startsWith("key revoked as compromised");
+            }
+        }
+
+        @Test
+        void aSubkeyLookupSetsAsideAnImpostorServedFirst() throws Exception {
+            Iterator<PGPPublicKey> keys = full.getPublicKeys();
+            keys.next();
+            PGPPublicKey subkey = keys.next();
+            String subkeyFingerprint = BcKeyStore.bytesToHex(subkey.getFingerprint());
+
+            BcKeyStore store = fetchStore("fetch");
+            PGPPublicKeyRing stored = fetchFrom(store, subkeyFingerprint, bodies(impostorHolding(subkey), full));
+
+            assertThat(BcKeyStore.bytesToHex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
+            assertThat(store.findPublicKey(subkeyFingerprint).source()).isEqualTo(TrustRootRef.keyserver(SERVER2));
+        }
+
+        @Test
+        void everyCertificateInAServedBodyIsRead() throws Exception {
+            BcKeyStore store = fetchStore("fetch");
+            byte[] impostor = impostorHolding(full.getPublicKey()).getEncoded();
+            byte[] real = full.getEncoded();
+            byte[] body = Arrays.copyOf(impostor, impostor.length + real.length);
+            System.arraycopy(real, 0, body, impostor.length, real.length);
+            Map<String, byte[]> bodies = new HashMap<>();
+            bodies.put(SERVER1, body);
+
+            PGPPublicKeyRing stored = fetchFrom(store, fp, bodies);
+
+            assertThat(BcKeyStore.bytesToHex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
+            assertThat(userIds(stored)).containsExactly(USER_ID);
+        }
+
+        /**
+         * A key a local store holds without user IDs is fetched again; a revocation only the
+         * local copy held stays in the certificate found, and in the one written to cert-d.
+         */
+        @Test
+        void aRevocationOnlyTheLocalCopyHeldIsKept() throws Exception {
+            for (boolean persist : List.of(false, true)) {
+                Path certD = tempDir.resolve("local-" + persist + "-cd");
+                BcKeyStore store = new BcKeyStore(null, certD, tempDir.resolve("local-" + persist + "-bp"), persist);
+                store.storeCert(stripUserIds(withRevocation()));
+
+                PGPPublicKeyRing stored = fetchFrom(store, fp, bodies(full, full));
+
+                assertThat(stored.getPublicKey().hasRevocation()).as("persist " + persist).isTrue();
+                assertThat(userIds(stored)).containsExactly(USER_ID);
+                assertThat(new BcKeyStore(null, certD, tempDir.resolve("later-bp")).findPublicKey(fp).ring()
+                        .getPublicKey().hasRevocation()).as("persist " + persist).isTrue();
+            }
         }
 
         @Test
@@ -528,6 +658,48 @@ class KeyserverFetcherTest {
 
                 assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
                 assertThat(result.detail()).startsWith("the copy from hkps://server1 cannot be read: ");
+            }
+        }
+    }
+
+    @Nested
+    class ALargeAnswer {
+
+        private static final long SENT_AT_MOST = 64L * 1024 * 1024;
+
+        /**
+         * A keyserver that keeps sending is cut off one byte past the limit: the body is never
+         * read, or held in memory, to its end.
+         */
+        @Test
+        void isCutOffPastTheLimitWithoutReadingTheRest() throws Exception {
+            AtomicLong sent = new AtomicLong();
+            CountDownLatch done = new CountDownLatch(1);
+            HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/pks/lookup", exchange -> {
+                exchange.sendResponseHeaders(200, 0);
+                byte[] chunk = new byte[64 * 1024];
+                try (OutputStream out = exchange.getResponseBody()) {
+                    while (sent.get() < SENT_AT_MOST) {
+                        out.write(chunk);
+                        sent.addAndGet(chunk.length);
+                    }
+                } catch (IOException closedByTheClient) {
+                    exchange.close();
+                } finally {
+                    done.countDown();
+                }
+            });
+            server.start();
+            String keyserver = "http://127.0.0.1:" + server.getAddress().getPort();
+            try (KeyserverFetcher fetcher = new KeyserverFetcher(createStore(), List.of(keyserver))) {
+                byte[] body = fetcher.download("AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD", keyserver);
+
+                assertThat(body.length).isEqualTo(KeyserverFetcher.MAX_COPY_BYTES + 1);
+                assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+                assertThat(sent.get()).isLessThan(SENT_AT_MOST);
+            } finally {
+                server.stop(0);
             }
         }
     }

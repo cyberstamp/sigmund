@@ -356,6 +356,38 @@ class KeyValidityAgreementTest {
         assertThat(outcomes(subkey.certificate(), artifact, claim)).isEqualTo(everywhere("VERIFIED"));
     }
 
+    /**
+     * A direct-key signature made by another key, naming the victim as its issuer and expiring
+     * the key a second after its creation, is a forgery a keyserver can add: GnuPG and Sequoia
+     * ignore it, and so must Bouncy Castle, which would otherwise take its expiry.
+     */
+    @Test
+    void aForgedDirectKeySignatureCarryingAnExpiryVerifiesEverywhere() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        PGPSecretKeyRing other = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact);
+
+        PGPPublicKey forged = PGPPublicKey.addCertification(key.getPublicKey(),
+                directKeySignature(other, key, forgedExpiry(key)));
+
+        assertThat(outcomes(new PGPPublicKeyRing(List.of(forged)), artifact, claim))
+                .isEqualTo(everywhere("VERIFIED"));
+    }
+
+    @Test
+    void aForgedSubkeyBindingCarryingAnExpiryOnTheSigningSubkeyVerifiesEverywhere() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        PGPSecretKeyRing other = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+
+        SubkeyCertificate subkey = subkeyWith(key, other, PGPSignature.SUBKEY_BINDING, forgedExpiry(key));
+        OpenPgpClaim claim = sign(subkey.signingKey().getPublicKey(), subkey.signingKey().getPrivateKey(), artifact,
+                Instant.now());
+
+        assertThat(outcomes(subkey.certificate(), artifact, claim)).isEqualTo(everywhere("VERIFIED"));
+    }
+
     @Test
     void aRealSubkeyRevocationStaysFailed() throws Exception {
         PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
@@ -622,6 +654,17 @@ class KeyValidityAgreementTest {
 
     private static SubkeyCertificate subkeyRevokedBy(PGPSecretKeyRing key, PGPSecretKeyRing revoker)
             throws Exception {
+        return subkeyWith(key, revoker, PGPSignature.SUBKEY_REVOCATION,
+                revocationSubpackets(key, RevocationReasonTags.KEY_COMPROMISED, HOUR_AGO));
+    }
+
+    /**
+     * The certificate of a key with a signing subkey bound by the key, and a further signature
+     * of the given type over that subkey made by {@code signer}, a forgery when the signer is not
+     * the key.
+     */
+    private static SubkeyCertificate subkeyWith(PGPSecretKeyRing key, PGPSecretKeyRing signer, int type,
+            PGPSignatureSubpacketVector hashed) throws Exception {
         PGPKeyPair subkeyPair = rsaKeyPair();
         PGPPublicKey primary = key.getPublicKey();
         PGPPublicKey subkeyPublic = asSubkey(subkeyPair.getPublicKey());
@@ -632,12 +675,37 @@ class KeyValidityAgreementTest {
         flags.addEmbeddedSignature(false, primaryKeyBinding(subkeyPair, primary));
         PGPSignature binding = subkeySignature(key, PGPSignature.SUBKEY_BINDING, primary,
                 subkeyPublic, flags.generate());
-        PGPSignature revocation = subkeySignature(revoker, PGPSignature.SUBKEY_REVOCATION, primary,
-                subkeyPublic, revocationSubpackets(key, RevocationReasonTags.KEY_COMPROMISED, HOUR_AGO));
+        PGPSignature further = subkeySignature(signer, type, primary, subkeyPublic, hashed);
         PGPPublicKey subkey = PGPPublicKey.addCertification(
-                PGPPublicKey.addCertification(subkeyPublic, binding), revocation);
+                PGPPublicKey.addCertification(subkeyPublic, binding), further);
         return new SubkeyCertificate(subkeyPair,
                 PGPPublicKeyRing.insertPublicKey(publicRing(key), subkey));
+    }
+
+    /**
+     * Hashed subpackets that name {@code subject} as the issuer, are dated an hour ago — newer
+     * than every genuine self-signature in a test — and expire the key a second after its
+     * creation.
+     */
+    private static PGPSignatureSubpacketVector forgedExpiry(PGPSecretKeyRing subject) {
+        PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+        hashed.setSignatureCreationTime(true, Date.from(HOUR_AGO));
+        hashed.setKeyExpirationTime(true, 1);
+        hashed.setKeyFlags(false, KeyFlags.SIGN_DATA);
+        hashed.setIssuerFingerprint(false, subject.getPublicKey());
+        return hashed.generate();
+    }
+
+    /** A direct-key signature over {@code subject}'s primary key made by {@code signer}. */
+    private static PGPSignature directKeySignature(PGPSecretKeyRing signer, PGPSecretKeyRing subject,
+            PGPSignatureSubpacketVector hashed) throws Exception {
+        PGPSecretKey secret = signer.getSecretKey();
+        PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                new JcaPGPContentSignerBuilder(PublicKeyAlgorithmTags.RSA_GENERAL, HashAlgorithmTags.SHA256),
+                secret.getPublicKey());
+        generator.init(PGPSignature.DIRECT_KEY, secret.extractPrivateKey(null));
+        generator.setHashedSubpackets(hashed);
+        return generator.generateCertification(subject.getPublicKey());
     }
 
     private static PGPPublicKey asSubkey(PGPPublicKey key) throws Exception {

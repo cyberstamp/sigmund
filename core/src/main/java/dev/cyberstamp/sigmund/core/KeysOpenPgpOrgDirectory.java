@@ -77,8 +77,8 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
      *
      * <p>
      * When the store holds the directory's own copy of a key, the addresses on that copy are
-     * the directory's answer and no request is made; a key it holds no such copy of is asked
-     * for as before. A copy fetched from another keyserver is never the directory's answer.
+     * the directory's answer, none included, and no request is made; a key it holds no such
+     * copy of is asked for as before. A copy fetched from another keyserver is never the directory's answer.
      *
      * @param store the store the keyservers' copies were added to
      */
@@ -88,18 +88,28 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
 
     @Override
     public boolean carried(String fingerprint, String userId) {
-        return userId != null && servedUserIds(fingerprint.toUpperCase(Locale.ROOT)).contains(userId);
+        List<String> served = servedUserIds(fingerprint.toUpperCase(Locale.ROOT));
+        return userId != null && served != null && served.contains(userId);
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * When the key store this directory answers from holds the directory's own copy of the key,
+     * the addresses on that copy are the answer, none included: a copy served without user IDs
+     * says the directory vouches for no address on the key, and asking again would return the
+     * same.
+     */
     @Override
     public List<String> verifiedAddresses(String fingerprint) throws IOException {
         if (fingerprint.length() != V4_FINGERPRINT_LENGTH) {
             return List.of();
         }
         String key = fingerprint.toUpperCase(Locale.ROOT);
-        List<String> served = addressesIn(servedUserIds(key));
-        if (!served.isEmpty()) {
-            return served;
+        List<String> served = servedUserIds(key);
+        if (served != null) {
+            return addressesIn(served);
         }
         Lookup lookup = lookups.computeIfAbsent(key, this::lookUp);
         if (lookup.failure() != null) {
@@ -109,17 +119,21 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
         return lookup.addresses();
     }
 
+    /**
+     * The user IDs on the copy of a key the directory served this session, or {@code null} when
+     * the store holds no copy of that key from the directory.
+     */
     private List<String> servedUserIds(String fingerprint) {
         BcKeyStore store = fetched;
         if (store == null) {
-            return List.of();
+            return null;
         }
         for (String keyserver : store.keyserversServing(fingerprint)) {
             if (name().equals(IssuerKind.directoryServing(keyserver))) {
                 return store.userIdsServedBy(fingerprint, keyserver);
             }
         }
-        return List.of();
+        return null;
     }
 
     private Lookup lookUp(String fingerprint) {

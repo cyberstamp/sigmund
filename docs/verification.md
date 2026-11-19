@@ -363,12 +363,17 @@ default.
 1. Every tool in the toolchain returns `KEY_UNAVAILABLE` for the signature
 2. Sigmund takes the issuer fingerprint from the signature packet
 3. It asks every configured keyserver at once — by default `keys.openpgp.org` and
-   `keyserver.ubuntu.com` — skipping one that has already failed to answer this build. A copy
-   over 1 MiB is not read (certificate flooding), and one whose primary key is not the key asked
-   for is set aside
-4. The readable copies are merged into one certificate, as GnuPG and Sequoia merge on import, so
-   a user ID, self-signature, subkey or revocation any server serves counts; the key counts as
-   missing only when no server served a readable copy
+   `keyserver.ubuntu.com` — skipping one that has already failed to answer this build. An answer
+   over 1 MiB is cut off and not read (certificate flooding). Every certificate in an answer that
+   holds the key is read, and of the certificates served one is kept: the one whose primary key is
+   the key asked for or, for a subkey, the one whose primary key binds it with a signature the
+   subkey cross-signed. A certificate of another primary key that merely holds the key — which
+   anyone can upload to a server that does not validate uploads — is set aside, whichever server
+   served it and in whatever order
+4. The kept copies are merged into one certificate, as GnuPG and Sequoia merge on import,
+   together with any copy a local store already holds, so a user ID, self-signature, subkey or
+   revocation any server or local store holds counts; the key counts as missing only when no
+   server served a readable copy
 5. The merged key is added to the fetching tool's store — in memory for the session, or persisted
    when `import-to-keyring: true` — recording every keyserver that contributed a copy
 6. Verification is retried with the key now available
@@ -383,10 +388,12 @@ Only BC and GPG fetch keys; `sq` uses only the certificates already in its own s
 
 Keyservers supply key material only. The signature proves the key whoever served it, and the
 claim records which keyservers supplied it. Merging copies from several servers is safe because
-a server can withhold packets but not forge them: a self-signature, user-ID certification or
-revocation counts only if it verifies against the key's primary key, so only the key's holder
-could have made it, and a revocation the key's holder did not make — a forged one, served by any
-keyserver — is ignored, never `FAILED`, as `sq` and `gpg` ignore it (`gpg` alone also honours a
+a server can withhold packets but not forge them: a self-signature, user-ID certification,
+direct-key signature, subkey binding or revocation counts only if it verifies against the key's
+primary key, so only the key's holder could have made it. A revocation the key's holder did not
+make — a forged one, served by any keyserver — is ignored, never `FAILED`, and a forged direct-key
+signature or subkey binding carrying an expiry or key flags never makes a bound key unavailable,
+as `sq` and `gpg` ignore both (`gpg` alone also honours a
 revocation by a designated revoker whose key it holds; see
 [Limitations](limitations.md#designated-revokers-are-not-honoured-by-bc-or-sequoia)). A packet one server withholds, such as
 a revocation or a newer, shorter expiry, is restored by any server that serves it, so merging can
