@@ -24,6 +24,31 @@ class ClaimResultTest {
                 ClaimTimeSource.SIGNER, Instant.ofEpochSecond(1_700_000_100L), "RSA", "bc");
     }
 
+    @Test
+    void labeledDisplayNameShowsWhoVouches() {
+        ClaimResult claim = new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null, List.of(),
+                "Alice Example <alice@example.org>", TrustRootRef.unknown(), REF, null,
+                ClaimTimeSource.SIGNER, Instant.EPOCH, "RSA", "bc");
+
+        assertThat(claim.labeledDisplayName())
+                .isEqualTo("Alice Example <alice@example.org> (unverified)");
+        assertThat(claim.withDisplayNameVouchedBy(IssuerKind.KEYS_OPENPGP_ORG).labeledDisplayName())
+                .isEqualTo("Alice Example <alice@example.org> (address verified by keys.openpgp.org)");
+        assertThat(claim.withDisplayNameVouchedBy("https://accounts.google.com").labeledDisplayName())
+                .isEqualTo("Alice Example <alice@example.org> (attested by https://accounts.google.com)");
+        assertThat(claim.withDisplayNameVouchedBy(IssuerKind.KEYS_OPENPGP_ORG)
+                .withAdditionalCredentials(List.of()).displayNameVouchedBy())
+                .isEqualTo(IssuerKind.KEYS_OPENPGP_ORG);
+        assertThat(claim.withDisplayNameVouchedBy(IssuerKind.KEYS_OPENPGP_ORG)
+                .unresolved(IndeterminateReason.KEY_UNAVAILABLE).displayNameVouchedBy())
+                .isEqualTo(IssuerKind.KEYS_OPENPGP_ORG);
+    }
+
+    @Test
+    void noDisplayNameHasNoLabel() {
+        assertThat(verified(ClaimOutcome.VERIFIED, null, REF, List.of()).labeledDisplayName()).isNull();
+    }
+
     @Nested
     class FromAClaimAndResult {
 
@@ -117,7 +142,7 @@ class ClaimResultTest {
         void aVerifiedResultCarriesNoDetail() {
             assertThatThrownBy(() -> new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null,
                     List.of(), null, TrustRootRef.unknown(), REF, null,
-                    ClaimTimeSource.SIGNER, Instant.EPOCH, "RSA", "bc", null, "no keyserver has it", null))
+                    ClaimTimeSource.SIGNER, Instant.EPOCH, "RSA", "bc", null, "no keyserver has it", null, null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("carries no detail");
         }

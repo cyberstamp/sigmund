@@ -69,7 +69,8 @@ public class VerifySignatureMojo extends AbstractConfigLookupMojo {
         try {
             return buildSigmund(
                     resolveVerificationConfig(config.verificationConfig(), null, null, null),
-                    mergeToolOverrides(config.toolsConfig()));
+                    mergeToolOverrides(config.toolsConfig()),
+                    config.trustPolicySpec().issuers());
         } catch (Exception e) {
             throw new MojoExecutionException("Failed to create verifier", e);
         }

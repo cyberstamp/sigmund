@@ -7,9 +7,11 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,6 +22,7 @@ import org.bouncycastle.openpgp.api.bc.BcOpenPGPApi;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class KeysOpenPgpOrgDirectoryTest {
 
@@ -28,6 +31,9 @@ class KeysOpenPgpOrgDirectoryTest {
     private final Map<String, Integer> statuses = new ConcurrentHashMap<>();
     private final List<String> requests = new ArrayList<>();
     private KeysOpenPgpOrgDirectory directory;
+
+    @TempDir
+    Path tempDir;
 
     @BeforeEach
     void startServer() throws IOException {
@@ -146,6 +152,76 @@ class KeysOpenPgpOrgDirectoryTest {
     @Test
     void isNamedAsTheIssuerPolicyLists() {
         assertThat(KeysOpenPgpOrgDirectory.standard().name()).isEqualTo(IssuerKind.KEYS_OPENPGP_ORG);
+    }
+
+    @Test
+    void answersFromAFetchedCopyWithoutARequest() throws Exception {
+        PGPPublicKeyRing ring = generate("Release Manager <Release@Example.org>");
+        BcKeyStore store = storeServing("hkps://keys.openpgp.org", ring);
+        directory.answerFrom(store);
+
+        assertThat(directory.verifiedAddresses(primaryFingerprint(ring)))
+                .containsExactly("release@example.org");
+        assertThat(requests).isEmpty();
+    }
+
+    @Test
+    void asksWhenNoCopyWasFetched() throws Exception {
+        PGPPublicKeyRing ring = generate("Release Manager <release@example.org>");
+        String fingerprint = primaryFingerprint(ring);
+        keys.put(fingerprint, ring.getEncoded());
+        directory.answerFrom(storeServing("hkps://keyserver.ubuntu.com", ring));
+
+        assertThat(directory.verifiedAddresses(fingerprint)).containsExactly("release@example.org");
+        assertThat(requests).containsExactly(fingerprint);
+    }
+
+    @Test
+    void aCopyThatDoesNotHoldTheFingerprintVouchesForNothing() throws Exception {
+        PGPPublicKeyRing served = generate("Served <served@example.org>");
+        PGPPublicKeyRing other = generate("Other <other@example.org>");
+        directory.answerFrom(storeServing("hkps://keys.openpgp.org", served));
+
+        assertThat(directory.verifiedAddresses(primaryFingerprint(other))).isEmpty();
+        assertThat(directory.carried(primaryFingerprint(other), "Served <served@example.org>")).isFalse();
+    }
+
+    @Test
+    void carriedNeverMakesARequest() throws Exception {
+        PGPPublicKeyRing ring = generate("Release Manager <release@example.org>");
+        String fingerprint = primaryFingerprint(ring);
+        keys.put(fingerprint, ring.getEncoded());
+
+        assertThat(directory.carried(fingerprint, "Release Manager <release@example.org>")).isFalse();
+
+        directory.answerFrom(storeServing("hkps://keys.openpgp.org", ring));
+        assertThat(directory.carried(fingerprint, "Release Manager <release@example.org>")).isTrue();
+        assertThat(directory.carried(fingerprint, "Impostor <release@example.org>")).isFalse();
+        assertThat(directory.carried(fingerprint, null)).isFalse();
+        assertThat(requests).isEmpty();
+    }
+
+    @Test
+    void aSubkeyOnlyAnotherKeyserverServedIsAskedOfVksAndNotCarried() throws Exception {
+        PGPPublicKeyRing full = generate("Release Manager <release@example.org>");
+        PGPPublicKeyRing primaryOnly = new PGPPublicKeyRing(List.of(full.getPublicKey()));
+        String subkey = lastFingerprint(full);
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
+        copies.put("hkps://keys.openpgp.org", primaryOnly);
+        copies.put("hkps://keyserver.ubuntu.com", full);
+        store.addFetched(copies);
+        directory.answerFrom(store);
+
+        assertThat(directory.verifiedAddresses(subkey)).isEmpty();
+        assertThat(requests).containsExactly(subkey);
+        assertThat(directory.carried(subkey, "Release Manager <release@example.org>")).isFalse();
+    }
+
+    private BcKeyStore storeServing(String keyserver, PGPPublicKeyRing ring) {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        store.addFetched(Map.of(keyserver, ring));
+        return store;
     }
 
     /** A v4 key, the only version keys.openpgp.org serves. */

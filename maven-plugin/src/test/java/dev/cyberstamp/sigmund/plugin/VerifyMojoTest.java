@@ -202,7 +202,7 @@ class VerifyMojoTest {
 
             assertThat(log.lines).containsSubsequence(
                     "info: SATISFIED (1)",
-                    "info:   openpgp VERIFIED by bc (Ed25519) - Alice <alice@example.com>",
+                    "info:   openpgp VERIFIED by bc (Ed25519) - Alice <alice@example.com> (unverified)",
                     "info:     com.example:lib:1.0");
         }
 
@@ -229,7 +229,7 @@ class VerifyMojoTest {
             mojo.reportResults(reportOf(ArtifactOutcome.SATISFIED, verifiedClaim()));
 
             assertThat(log.lines).containsSubsequence(
-                    "info:   openpgp VERIFIED by bc (Ed25519) - Alice <alice@example.com>",
+                    "info:   openpgp VERIFIED by bc (Ed25519) - Alice <alice@example.com> (unverified)",
                     "info:     credential pgp4 " + FP,
                     "info:     trust root openpgp-cert-d /home/alice/.local/share/pgp.cert.d",
                     "info:     com.example:lib:1.0",

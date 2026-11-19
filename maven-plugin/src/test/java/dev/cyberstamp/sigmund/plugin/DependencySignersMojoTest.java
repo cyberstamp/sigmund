@@ -242,6 +242,63 @@ class DependencySignersMojoTest {
     }
 
     @Nested
+    class SignerLabels {
+
+        private SignedArtifact signedBy(String label) {
+            return new SignedArtifact(ArtifactCoords.parse("com.example:other:1.0"), "central",
+                    new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
+                            "RSA", 4, "ABCD1234", FULL_FP),
+                    null, null, label);
+        }
+
+        @Test
+        void theSignerLineSaysWhoVouchesForTheName() {
+            RecordingLog log = new RecordingLog();
+            DependencySignersMojo mojo = new DependencySignersMojo();
+            mojo.setLog(log);
+
+            mojo.logReport(List.of(signedBy(
+                    "User <user@example.com> (address verified by keys.openpgp.org)")));
+
+            assertThat(log.lines).contains(
+                    "info: Signer: User <user@example.com> (address verified by keys.openpgp.org)");
+        }
+
+        @Test
+        void keysVouchedForDifferentlyPrintSeparateSignerLines() {
+            RecordingLog log = new RecordingLog();
+            DependencySignersMojo mojo = new DependencySignersMojo();
+            mojo.setLog(log);
+            ArtifactCoords coords = ArtifactCoords.parse("com.example:other:1.0");
+            SignedArtifact v4 = new SignedArtifact(coords, "central",
+                    new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
+                            "RSA", 4, "ABCD1234", FP4),
+                    null, null, "User <user@example.com> (address verified by keys.openpgp.org)");
+            SignedArtifact v6 = new SignedArtifact(coords, "central",
+                    new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
+                            "ML-DSA-87+Ed448", 6, "EF567890", FP6),
+                    null, null, "User <user@example.com> (unverified)");
+
+            mojo.logReport(List.of(v4, v6));
+
+            assertThat(log.lines).contains(
+                    "info: Signer: User <user@example.com> (address verified by keys.openpgp.org)",
+                    "info: Signer: User <user@example.com> (unverified)");
+        }
+
+        @Test
+        void aSignerWithNoLabelIsPrintedByName() {
+            RecordingLog log = new RecordingLog();
+            DependencySignersMojo mojo = new DependencySignersMojo();
+            mojo.setLog(log);
+
+            mojo.logReport(List.of(signedBy(null)));
+
+            assertThat(log.lines).contains("info: Signer: User <user@example.com>");
+        }
+    }
+
+    @Nested
     class ArtifactsWithNoClaim {
 
         /**

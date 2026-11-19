@@ -113,7 +113,8 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                 config != null ? config.verificationConfig() : VerificationConfig.DEFAULT);
         try (SignatureInspector inspector = buildInspector(verificationConfig,
                 mergeToolOverrides(config != null ? config.toolsConfig()
-                        : ToolsConfig.EMPTY))) {
+                        : ToolsConfig.EMPTY),
+                config != null ? config.trustPolicySpec().issuers() : List.of())) {
 
             List<ArtifactCoords> artifacts = resolveDependencies();
             getLog().info("Inspecting signatures for " + artifacts.size() + " dependency(ies)...");
@@ -205,45 +206,50 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
 
             List<ArtifactCoords> coordsList = groupEntry.getValue();
 
-            // Pick the richest VerifyResult per key (prefer one with a known signer)
-            Map<String, VerifyResult> bestPerKey = new HashMap<>();
+            // Pick the richest entry per key (prefer one with a known signer)
+            Map<String, SignedArtifact> bestPerKey = new HashMap<>();
             for (ArtifactCoords coords : coordsList) {
                 for (SignedArtifact as : byArtifact.get(coords)) {
                     if (!as.hasAttributableClaim()) {
                         continue;
                     }
-                    bestPerKey.merge(profileKey(as.verifyResult()), as.verifyResult(),
-                            (existing, incoming) -> existing.signerDisplayName() != null ? existing : incoming);
+                    bestPerKey.merge(profileKey(as.verifyResult()), as,
+                            (existing, incoming) -> existing.verifyResult().signerDisplayName() != null
+                                    ? existing
+                                    : incoming);
                 }
             }
 
             // Sort key headers by profile key
-            List<VerifyResult> sortedKeys = bestPerKey.entrySet().stream()
+            List<SignedArtifact> sortedKeys = bestPerKey.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey())
                     .map(Map.Entry::getValue)
                     .toList();
 
-            // Sub-group keys by signer: same display name = same signer,
+            // Sub-group keys by signer: same labelled display name = same signer,
             // no display name = each key is its own signer
-            Map<String, List<VerifyResult>> signerSubGroups = new LinkedHashMap<>();
-            for (VerifyResult vr : sortedKeys) {
+            Map<String, List<SignedArtifact>> signerSubGroups = new LinkedHashMap<>();
+            for (SignedArtifact entry : sortedKeys) {
+                VerifyResult vr = entry.verifyResult();
                 String key = vr.signerDisplayName() != null
-                        ? "name:" + vr.signerDisplayName()
+                        ? "name:" + (entry.signerLabel() != null ? entry.signerLabel() : vr.signerDisplayName())
                         : "key:" + (vr.signerIdentifier() != null ? vr.signerIdentifier() : "?");
-                signerSubGroups.computeIfAbsent(key, k -> new ArrayList<>(2)).add(vr);
+                signerSubGroups.computeIfAbsent(key, k -> new ArrayList<>(2)).add(entry);
             }
 
             boolean anyIdentified = false;
             for (var signerSub : signerSubGroups.values()) {
-                VerifyResult first = signerSub.get(0);
+                VerifyResult first = signerSub.get(0).verifyResult();
                 boolean identified;
                 if (first.signerDisplayName() != null) {
-                    getLog().info("Signer: " + first.signerDisplayName());
+                    String label = signerSub.get(0).signerLabel();
+                    getLog().info("Signer: " + (label != null ? label : first.signerDisplayName()));
                     identified = true;
-                } else if (signerSub.stream().allMatch(vr -> vr.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE))) {
+                } else if (signerSub.stream().allMatch(
+                        e -> e.verifyResult().isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE))) {
                     getLog().warn("Signer: UNKNOWN (key unavailable)");
                     identified = false;
-                } else if (signerSub.stream().anyMatch(VerifyResult::isFailed)) {
+                } else if (signerSub.stream().anyMatch(SignedArtifact::isFailed)) {
                     getLog().warn("Signer: VERIFICATION FAILED");
                     identified = false;
                 } else {
@@ -251,7 +257,8 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                     identified = false;
                 }
                 anyIdentified |= identified;
-                for (VerifyResult vr : signerSub) {
+                for (SignedArtifact entry : signerSub) {
+                    VerifyResult vr = entry.verifyResult();
                     int pgpVersion = vr instanceof OpenPgpVerifyResult opvr ? opvr.version() : -1;
                     String ver = SignatureInspector.versionLabel(pgpVersion);
                     String keyId = vr.signerIdentifier() != null ? vr.signerIdentifier() : "-";

@@ -118,12 +118,16 @@ abstract class AbstractSigmundMojo extends AbstractMojo {
      *
      * @param verificationConfig the resolved verification configuration
      * @param toolsConfig the resolved tools configuration
+     * @param issuers the issuers of the configuration in use, whose vouching for a displayed
+     *        name is shown; empty when there is no configuration file
      * @return a configured Sigmund instance
      */
-    protected Sigmund buildSigmund(VerificationConfig verificationConfig, ToolsConfig toolsConfig) {
+    protected Sigmund buildSigmund(VerificationConfig verificationConfig, ToolsConfig toolsConfig,
+            List<String> issuers) {
         return Sigmund.builder()
                 .verificationConfig(verificationConfig)
                 .toolsConfig(toolsConfig)
+                .issuers(issuers)
                 .build();
     }
 }

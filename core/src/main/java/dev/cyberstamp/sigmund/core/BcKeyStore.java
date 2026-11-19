@@ -296,8 +296,8 @@ class BcKeyStore {
      * <p>
      * The user IDs of the certificate as that one server served it, decoded as UTF-8 with
      * invalid bytes replaced — not those of the joined certificate, which may hold more. Empty
-     * when that server served none, did not serve this certificate, or the certificate came
-     * from a local store.
+     * when that server served none, did not serve this certificate, its copy does not hold the
+     * fingerprint asked about, or the certificate came from a local store.
      *
      * @param fingerprint the fingerprint of the certificate's primary key or a subkey
      * @param keyserver the keyserver URL
@@ -305,7 +305,7 @@ class BcKeyStore {
      */
     List<String> userIdsServedBy(String fingerprint, String keyserver) {
         PGPPublicKeyRing copy = servedCopy(fingerprint, keyserver);
-        if (copy == null) {
+        if (copy == null || !matchesFingerprint(copy, fingerprint)) {
             return List.of();
         }
         List<String> userIds = new ArrayList<>();

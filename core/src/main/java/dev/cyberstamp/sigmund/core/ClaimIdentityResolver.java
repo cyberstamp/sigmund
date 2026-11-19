@@ -104,6 +104,60 @@ final class ClaimIdentityResolver {
     }
 
     /**
+     * Records, for each claim, which listed issuer vouches for the name it displays, so a report
+     * never shows a name read from a signed key as though it were verified.
+     *
+     * <p>
+     * An OpenPGP claim's name is vouched for by the first listed directory whose own copy of the
+     * signing key carried exactly that user ID; a Sigstore claim's by the OIDC issuer that
+     * certified it, when listed. Nothing is asked of the network, and the result is never a
+     * credential and never changes an outcome.
+     *
+     * @param issuers the issuers policy lists, in any form {@link IssuerKind#canonicalName(String)}
+     *        accepts
+     * @param claims the claims to label
+     * @return the claims, each carrying the issuer vouching for its displayed name where one does
+     */
+    List<ClaimResult> vouchForDisplayNames(List<String> issuers, List<ClaimResult> claims) {
+        List<String> listed = issuers.stream().map(IssuerKind::canonicalName).toList();
+        List<ClaimResult> vouched = new ArrayList<>(claims.size());
+        for (ClaimResult claim : claims) {
+            String voucher = claim.attesterDisplayName() == null ? null : voucherOf(claim, listed);
+            vouched.add(voucher == null ? claim : claim.withDisplayNameVouchedBy(voucher));
+        }
+        return vouched;
+    }
+
+    private String voucherOf(ClaimResult claim, List<String> listed) {
+        if (claim.verifyResult() instanceof OpenPgpVerifyResult openPgp) {
+            return directoryCarrying(openPgp, claim.attesterDisplayName(), listed);
+        }
+        if (claim.verifyResult() instanceof SigstoreVerifyResult sigstore
+                && sigstore.issuer() != null
+                && listed.contains(IssuerKind.canonicalName(sigstore.issuer()))) {
+            return sigstore.issuer();
+        }
+        return null;
+    }
+
+    private String directoryCarrying(OpenPgpVerifyResult result, String displayName,
+            List<String> listed) {
+        String fingerprint = result.primaryFingerprint() != null
+                ? result.primaryFingerprint()
+                : result.fingerprint();
+        if (fingerprint == null) {
+            return null;
+        }
+        for (String name : listed) {
+            OpenPgpDirectory directory = directories.get(name);
+            if (directory != null && directory.carried(fingerprint, displayName)) {
+                return name;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Collects the signers of the rule that applies to an artifact, flattening its requirement's
      * clauses, so the resolver knows which directory-backed identities a lookup could satisfy.
      *

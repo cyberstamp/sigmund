@@ -250,6 +250,25 @@ class BcKeyStoreTest {
     }
 
     @Test
+    void aServerWhoseCopyLacksTheSubkeyServesNoUserIdsForIt(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        PGPPublicKeyRing full = generateEd25519Key("Alice Example <alice@example.org>")
+                .toCertificate().getPGPPublicKeyRing();
+        PGPPublicKeyRing primaryOnly = new PGPPublicKeyRing(List.of(full.getPublicKey()));
+        Iterator<PGPPublicKey> keys = full.getPublicKeys();
+        keys.next();
+        String subkeyFingerprint = BcKeyStore.bytesToHex(keys.next().getFingerprint());
+        Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
+        copies.put("hkps://keys.openpgp.org", primaryOnly);
+        copies.put("hkps://server2", full);
+        store.addFetched(copies);
+
+        assertThat(store.userIdsServedBy(subkeyFingerprint, "hkps://keys.openpgp.org")).isEmpty();
+        assertThat(store.userIdsServedBy(subkeyFingerprint, "hkps://server2"))
+                .containsExactly("Alice Example <alice@example.org>");
+    }
+
+    @Test
     void revocationServedByComparesEncoding(@TempDir Path tempDir) throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         OpenPGPKey key = generateEd25519Key("Alice Example <alice@example.org>");

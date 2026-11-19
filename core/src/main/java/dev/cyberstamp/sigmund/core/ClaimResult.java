@@ -46,6 +46,9 @@ import java.util.List;
  *        details such as an OpenPGP key ID or packet version; {@code null} when it was not built
  *        from one. It is what the tool said, not what the claim established: {@code outcome} can
  *        differ, as when a verified signature's signer could not be resolved
+ * @param displayNameVouchedBy the issuer URL — a directory or an OIDC provider — that vouches for
+ *        {@code attesterDisplayName}, or {@code null} when none does. It decides only how the name
+ *        is labelled when shown; it is never a credential and never changes the outcome
  */
 public record ClaimResult(
         String kind,
@@ -62,7 +65,8 @@ public record ClaimResult(
         String verifiedBy,
         Credential declaredIssuer,
         String detail,
-        VerifyResult verifyResult) {
+        VerifyResult verifyResult,
+        String displayNameVouchedBy) {
 
     /**
      * Creates a result for a claim whose evidence names no issuer by full fingerprint.
@@ -86,7 +90,7 @@ public record ClaimResult(
             ClaimTimeSource claimTimeSource, Instant verifiedAt, String algorithm,
             String verifiedBy) {
         this(kind, outcome, reason, attesterCredentials, attesterDisplayName, trustRoot, evidence,
-                claimTime, claimTimeSource, verifiedAt, algorithm, verifiedBy, null, null, null);
+                claimTime, claimTimeSource, verifiedAt, algorithm, verifiedBy, null, null, null, null);
     }
 
     /**
@@ -146,7 +150,7 @@ public record ClaimResult(
         return new ClaimResult(kind, result.outcome(), result.reason(), provenCredentials,
                 result.signerDisplayName(), trustRoot, evidence,
                 claim.claimTime(), claim.claimTimeSource(), verifiedAt, result.algorithm(),
-                verifiedBy, declaredIssuerOf(claim), result.detail(), result);
+                verifiedBy, declaredIssuerOf(claim), result.detail(), result, null);
     }
 
     /**
@@ -176,7 +180,7 @@ public record ClaimResult(
         }
         return new ClaimResult(kind, ClaimOutcome.VERIFIED, null, List.of(declaredIssuer),
                 attesterDisplayName, trustRoot, evidence, claimTime, claimTimeSource, verifiedAt,
-                algorithm, verifiedBy, declaredIssuer, null, null);
+                algorithm, verifiedBy, declaredIssuer, null, null, displayNameVouchedBy);
     }
 
     /**
@@ -191,7 +195,7 @@ public record ClaimResult(
         credentials.addAll(additional);
         return new ClaimResult(kind, outcome, reason, credentials, attesterDisplayName,
                 trustRoot, evidence, claimTime, claimTimeSource, verifiedAt, algorithm,
-                verifiedBy, declaredIssuer, detail, verifyResult);
+                verifiedBy, declaredIssuer, detail, verifyResult, displayNameVouchedBy);
     }
 
     /**
@@ -205,7 +209,44 @@ public record ClaimResult(
         return new ClaimResult(kind, ClaimOutcome.INDETERMINATE, unresolvedReason,
                 attesterCredentials, attesterDisplayName, trustRoot, evidence, claimTime,
                 claimTimeSource, verifiedAt, algorithm, verifiedBy, declaredIssuer, null,
-                verifyResult);
+                verifyResult, displayNameVouchedBy);
+    }
+
+    /**
+     * Returns a copy recording which issuer vouches for the displayed name.
+     *
+     * @param issuer the issuer URL, or {@code null} for none
+     * @return the copy
+     */
+    public ClaimResult withDisplayNameVouchedBy(String issuer) {
+        return new ClaimResult(kind, outcome, reason, attesterCredentials, attesterDisplayName,
+                trustRoot, evidence, claimTime, claimTimeSource, verifiedAt, algorithm,
+                verifiedBy, declaredIssuer, detail, verifyResult, issuer);
+    }
+
+    /**
+     * Returns the display name followed by who vouches for it, so a name read from a signed
+     * key is never mistaken for a verified one: {@code (address verified by keys.openpgp.org)}
+     * for a directory, {@code (attested by <issuer URL>)} for an OIDC provider, and
+     * {@code (unverified)} when no listed issuer vouches for it.
+     *
+     * @return the labelled name, or {@code null} when the claim has no display name
+     */
+    public String labeledDisplayName() {
+        if (attesterDisplayName == null) {
+            return null;
+        }
+        return attesterDisplayName + voucherLabel();
+    }
+
+    private String voucherLabel() {
+        if (displayNameVouchedBy == null) {
+            return " (unverified)";
+        }
+        if (IssuerKind.of(displayNameVouchedBy) == IssuerKind.OPENPGP_DIRECTORY) {
+            return " (address verified by " + displayNameVouchedBy.replaceFirst("^https://", "") + ")";
+        }
+        return " (attested by " + displayNameVouchedBy + ")";
     }
 
     /**

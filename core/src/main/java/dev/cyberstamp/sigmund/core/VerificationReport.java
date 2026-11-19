@@ -343,8 +343,8 @@ public final class VerificationReport {
         if (claim.algorithm() != null) {
             headline.append(" (").append(claim.algorithm()).append(')');
         }
-        if (claim.attesterDisplayName() != null) {
-            headline.append(" - ").append(claim.attesterDisplayName());
+        if (claim.labeledDisplayName() != null) {
+            headline.append(" - ").append(claim.labeledDisplayName());
         }
         return headline.toString();
     }

@@ -47,6 +47,7 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
     private final String endpoint;
     private HttpClient httpClient;
     private final Map<String, Lookup> lookups = new ConcurrentHashMap<>();
+    private volatile BcKeyStore fetched;
 
     /**
      * Creates a client for a directory endpoint.
@@ -71,18 +72,54 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
         return IssuerKind.KEYS_OPENPGP_ORG;
     }
 
+    /**
+     * Makes the directory answer from the copies a key store has fetched from it.
+     *
+     * <p>
+     * When the store holds the directory's own copy of a key, the addresses on that copy are
+     * the directory's answer and no request is made; a key it holds no such copy of is asked
+     * for as before. A copy fetched from another keyserver is never the directory's answer.
+     *
+     * @param store the store the keyservers' copies were added to
+     */
+    void answerFrom(BcKeyStore store) {
+        this.fetched = store;
+    }
+
+    @Override
+    public boolean carried(String fingerprint, String userId) {
+        return userId != null && servedUserIds(fingerprint.toUpperCase(Locale.ROOT)).contains(userId);
+    }
+
     @Override
     public List<String> verifiedAddresses(String fingerprint) throws IOException {
         if (fingerprint.length() != V4_FINGERPRINT_LENGTH) {
             return List.of();
         }
         String key = fingerprint.toUpperCase(Locale.ROOT);
+        List<String> served = addressesIn(servedUserIds(key));
+        if (!served.isEmpty()) {
+            return served;
+        }
         Lookup lookup = lookups.computeIfAbsent(key, this::lookUp);
         if (lookup.failure() != null) {
             throw new IOException("keys.openpgp.org could not be asked about " + key + ": "
                     + lookup.failure());
         }
         return lookup.addresses();
+    }
+
+    private List<String> servedUserIds(String fingerprint) {
+        BcKeyStore store = fetched;
+        if (store == null) {
+            return List.of();
+        }
+        for (String keyserver : store.keyserversServing(fingerprint)) {
+            if (name().equals(IssuerKind.directoryServing(keyserver))) {
+                return store.userIdsServedBy(fingerprint, keyserver);
+            }
+        }
+        return List.of();
     }
 
     private Lookup lookUp(String fingerprint) {
@@ -156,10 +193,15 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
         if (!holds(ring, fingerprint)) {
             return List.of();
         }
+        List<String> userIds = new ArrayList<>();
+        ring.getPublicKey().getUserIDs().forEachRemaining(userIds::add);
+        return addressesIn(userIds);
+    }
+
+    private static List<String> addressesIn(List<String> userIds) {
         List<String> addresses = new ArrayList<>();
-        Iterator<String> userIds = ring.getPublicKey().getUserIDs();
-        while (userIds.hasNext()) {
-            String address = OpenPgpCredentials.email(userIds.next());
+        for (String userId : userIds) {
+            String address = OpenPgpCredentials.email(userId);
             if (address != null) {
                 String normalized = address.toLowerCase(Locale.ROOT);
                 if (!addresses.contains(normalized)) {

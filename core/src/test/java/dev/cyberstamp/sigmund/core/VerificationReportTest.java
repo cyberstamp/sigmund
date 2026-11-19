@@ -185,7 +185,7 @@ class VerificationReportTest {
 
             assertThat(groups).hasSize(1);
             assertThat(groups.get(0).summary()).containsExactly(
-                    "openpgp VERIFIED by bc (Ed25519) - Alice");
+                    "openpgp VERIFIED by bc (Ed25519) - Alice (unverified)");
             assertThat(groups.get(0).artifacts()).hasSize(2);
         }
 
@@ -208,8 +208,8 @@ class VerificationReportTest {
                             result("other", ArtifactOutcome.SATISFIED, null, by("Bob", otherFp))));
 
             assertThat(groups).hasSize(2);
-            assertThat(groups.get(0).summary().get(0)).endsWith("Alice");
-            assertThat(groups.get(1).summary().get(0)).endsWith("Bob");
+            assertThat(groups.get(0).summary().get(0)).endsWith("Alice (unverified)");
+            assertThat(groups.get(1).summary().get(0)).endsWith("Bob (unverified)");
         }
 
         /** The same key with a different display name is the same key, not two signers. */
@@ -274,7 +274,7 @@ class VerificationReportTest {
             ClaimResult unresolved = new ClaimResult("openpgp", ClaimOutcome.INDETERMINATE,
                     IndeterminateReason.KEY_UNAVAILABLE, List.of(), null,
                     TrustRootRef.unknown(), REF, null, ClaimTimeSource.SIGNER, Instant.EPOCH,
-                    null, "bc", null, "no local key store or configured keyserver has it", null);
+                    null, "bc", null, "no local key store or configured keyserver has it", null, null);
 
             List<VerificationReport.AttesterGroup> groups = VerificationReport.groupByAttester(
                     List.of(result("lib", ArtifactOutcome.INDETERMINATE,
@@ -291,7 +291,7 @@ class VerificationReportTest {
             ClaimResult uncheckable = new ClaimResult("openpgp", ClaimOutcome.INDETERMINATE,
                     IndeterminateReason.UNSUPPORTED_ALGORITHM, List.of(), null,
                     TrustRootRef.unknown(), REF, null, ClaimTimeSource.SIGNER, Instant.EPOCH,
-                    "ML-DSA-87+Ed448", null, KeyCredential.openPgp(pqc), null, null);
+                    "ML-DSA-87+Ed448", null, KeyCredential.openPgp(pqc), null, null, null);
 
             List<VerificationReport.AttesterGroup> groups = VerificationReport.groupByAttester(
                     List.of(result("lib", ArtifactOutcome.UNSATISFIED, null, uncheckable)));
@@ -305,12 +305,28 @@ class VerificationReportTest {
             ClaimResult verified = new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null,
                     List.of(KeyCredential.openPgp(FP)), "Alice", TrustRootRef.unknown(), REF,
                     null, ClaimTimeSource.SIGNER, Instant.EPOCH, "Ed25519", "bc",
-                    KeyCredential.openPgp(FP), null, null);
+                    KeyCredential.openPgp(FP), null, null, null);
 
             List<VerificationReport.AttesterGroup> groups = VerificationReport.groupByAttester(
                     List.of(result("lib", ArtifactOutcome.SATISFIED, null, verified)));
 
             assertThat(groups.get(0).detail()).containsExactly("  credential pgp4 " + FP);
+        }
+
+        @Test
+        void theSignerIsLabeledWithWhoVouchesForIt() {
+            ClaimResult alice = by("Alice Example <alice@example.org>", FP)
+                    .withDisplayNameVouchedBy(IssuerKind.KEYS_OPENPGP_ORG);
+            ClaimResult bob = by("Bob Example <bob@example.org>", FP);
+
+            List<VerificationReport.AttesterGroup> groups = VerificationReport.groupByAttester(
+                    List.of(result("lib", ArtifactOutcome.SATISFIED, null, alice),
+                            result("other", ArtifactOutcome.SATISFIED, null, bob)));
+
+            assertThat(groups).extracting(g -> g.summary().get(0)).containsExactlyInAnyOrder(
+                    "openpgp VERIFIED by bc (Ed25519) - Alice Example <alice@example.org> "
+                            + "(address verified by keys.openpgp.org)",
+                    "openpgp VERIFIED by bc (Ed25519) - Bob Example <bob@example.org> (unverified)");
         }
 
         @Test

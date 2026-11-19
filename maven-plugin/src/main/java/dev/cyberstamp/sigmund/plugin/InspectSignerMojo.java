@@ -91,6 +91,7 @@ public class InspectSignerMojo extends AbstractConfigLookupMojo {
         SigmundConfig config = loadConfig();
         VerificationConfig verificationConfig = resolveVerificationConfig(
                 config.verificationConfig(), resolveSigners, keyservers, null);
-        return buildSigmund(verificationConfig, mergeToolOverrides(config.toolsConfig()));
+        return buildSigmund(verificationConfig, mergeToolOverrides(config.toolsConfig()),
+                config.trustPolicySpec().issuers());
     }
 }

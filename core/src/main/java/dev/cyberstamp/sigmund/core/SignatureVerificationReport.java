@@ -133,8 +133,8 @@ public class SignatureVerificationReport {
         if (r.verifyResult() instanceof OpenPgpVerifyResult openPgp && openPgp.keyId() != null) {
             sb.append(" [key: ").append(openPgp.keyId()).append(']');
         }
-        if (r.attesterDisplayName() != null) {
-            sb.append(" [signer: ").append(r.attesterDisplayName()).append(']');
+        if (r.labeledDisplayName() != null) {
+            sb.append(" [signer: ").append(r.labeledDisplayName()).append(']');
         }
     }
 }

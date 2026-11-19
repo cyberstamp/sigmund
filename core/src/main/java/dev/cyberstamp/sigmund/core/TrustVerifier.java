@@ -78,7 +78,8 @@ public class TrustVerifier {
             List<Path> evidenceFiles) {
         Instant verifiedAt = Instant.now();
         List<ClaimResult> claims = identityResolver.resolve(coords,
-                collectClaims(artifactFile, evidenceFiles));
+                identityResolver.vouchForDisplayNames(policy.issuers(),
+                        collectClaims(artifactFile, evidenceFiles)));
         Rule matched = policy.matchRule(coords);
         OutcomeRollup.Result rollup = OutcomeRollup.derive(claims,
                 matched == null ? null : matched.requirement(),

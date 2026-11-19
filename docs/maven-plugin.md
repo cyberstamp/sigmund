@@ -262,7 +262,7 @@ In **lenient mode** (`sigmund.lenient=true`), the goal passes if at least one si
 
 Reports signer information for all project dependencies by downloading and inspecting their `.asc` signature files. Each armored block is reported separately with its OpenPGP version (v4 for classical GPG, v6 for PQC).
 
-Dependencies are grouped by signer, sorted alphabetically. Unsigned artifacts and unverified signatures are reported separately.
+Dependencies are grouped by signer, sorted alphabetically. Unsigned artifacts and unverified signatures are reported separately. A signer's name is read from the user ID on its key, so each `Signer:` line (and the `verify-signature` and `verify` reports) says who vouches for it: `(address verified by keys.openpgp.org)` when that directory, listed in `issuers`, served the user ID itself; `(attested by <issuer URL>)` for a Sigstore identity whose OIDC issuer is listed; otherwise `(unverified)`. The label only describes the name; it never changes an outcome.
 
 **Parameters:**
 
