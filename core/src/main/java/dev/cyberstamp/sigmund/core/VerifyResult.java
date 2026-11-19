@@ -24,7 +24,7 @@ public abstract sealed class VerifyResult
     private final IndeterminateReason reason;
     private final String signerDisplayName;
     private final String algorithm;
-    private final String reasonDetail;
+    private final String detail;
 
     /**
      * Creates a new verify result.
@@ -52,21 +52,21 @@ public abstract sealed class VerifyResult
      * @param signerDisplayName human-readable signer description (UID, email, URI),
      *        or {@code null} if unknown
      * @param algorithm the signing algorithm name, or {@code null} if unknown
-     * @param reasonDetail why the reason applies, or {@code null}
+     * @param detail why the outcome came out as it did, or {@code null}
      * @throws IllegalArgumentException if an indeterminate outcome carries no reason, a
-     *         conclusive one carries a reason, or a detail explains no reason
+     *         conclusive one carries a reason, or a verified result carries a detail
      */
     protected VerifyResult(ClaimOutcome outcome, IndeterminateReason reason,
-            String signerDisplayName, String algorithm, String reasonDetail) {
+            String signerDisplayName, String algorithm, String detail) {
         requireConsistent(outcome, reason);
-        if (reason == null && reasonDetail != null) {
-            throw new IllegalArgumentException("a reason detail needs a reason to explain");
+        if (outcome == ClaimOutcome.VERIFIED && detail != null) {
+            throw new IllegalArgumentException("a verified result carries no detail");
         }
         this.outcome = outcome;
         this.reason = reason;
         this.signerDisplayName = signerDisplayName;
         this.algorithm = algorithm;
-        this.reasonDetail = reasonDetail;
+        this.detail = detail;
     }
 
     private static void requireConsistent(ClaimOutcome outcome, IndeterminateReason reason) {
@@ -99,7 +99,11 @@ public abstract sealed class VerifyResult
     }
 
     /**
-     * Returns why the reason applies, in a few words, when the tool could say.
+     * Returns why the outcome came out as it did, in a few words, when the tool could say.
+     *
+     * <p>
+     * Allowed on {@link ClaimOutcome#INDETERMINATE} and {@link ClaimOutcome#FAILED}, never on a
+     * verified result.
      *
      * <p>
      * One reason covers situations an operator resolves differently:
@@ -110,8 +114,8 @@ public abstract sealed class VerifyResult
      * @return the detail, such as {@code "no local key store or configured keyserver has it"},
      *         or {@code null}
      */
-    public String reasonDetail() {
-        return reasonDetail;
+    public String detail() {
+        return detail;
     }
 
     /**

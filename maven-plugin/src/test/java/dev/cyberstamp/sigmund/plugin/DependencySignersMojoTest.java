@@ -354,7 +354,7 @@ class DependencySignersMojoTest {
             SignedArtifact signed = new SignedArtifact(coords, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE,
                             null, "RSA", 4, FULL_FP, FULL_FP)
-                            .withReasonDetail(
+                            .withDetail(
                                     "the copy from hkps://keys.openpgp.org carries no self-signature binding the key"),
                     null, null);
             Path configFile = dir.resolve("sigmund.yaml");

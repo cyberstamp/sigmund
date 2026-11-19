@@ -39,8 +39,8 @@ public final class OpenPgpVerifyResult extends VerifyResult {
 
     private OpenPgpVerifyResult(ClaimOutcome outcome, IndeterminateReason reason,
             String signerDisplayName, String algorithm, int version, String keyId,
-            String fingerprint, String primaryFingerprint, TrustRootRef keySource, String reasonDetail) {
-        super(outcome, reason, signerDisplayName, algorithm, reasonDetail);
+            String fingerprint, String primaryFingerprint, TrustRootRef keySource, String detail) {
+        super(outcome, reason, signerDisplayName, algorithm, detail);
         this.version = version;
         this.keyId = keyId;
         this.fingerprint = fingerprint;
@@ -64,7 +64,7 @@ public final class OpenPgpVerifyResult extends VerifyResult {
      */
     public OpenPgpVerifyResult withKeyFingerprints(String signingFingerprint, String primary) {
         return new OpenPgpVerifyResult(outcome(), reason(), signerDisplayName(), algorithm(),
-                version, keyId, signingFingerprint, primary, keySource, reasonDetail());
+                version, keyId, signingFingerprint, primary, keySource, detail());
     }
 
     /**
@@ -75,7 +75,7 @@ public final class OpenPgpVerifyResult extends VerifyResult {
      */
     public OpenPgpVerifyResult withKeySource(TrustRootRef source) {
         return new OpenPgpVerifyResult(outcome(), reason(), signerDisplayName(), algorithm(),
-                version, keyId, fingerprint, primaryFingerprint, source, reasonDetail());
+                version, keyId, fingerprint, primaryFingerprint, source, detail());
     }
 
     /**
@@ -91,13 +91,13 @@ public final class OpenPgpVerifyResult extends VerifyResult {
      * Returns a copy saying why its reason applies, such as which of the situations
      * {@link IndeterminateReason#KEY_UNAVAILABLE} covers the key is in.
      *
-     * @param reasonDetail why the reason applies
+     * @param detail why the reason applies
      * @return the copy
      * @throws IllegalArgumentException if this result has no reason to explain
      */
-    public OpenPgpVerifyResult withReasonDetail(String reasonDetail) {
+    public OpenPgpVerifyResult withDetail(String detail) {
         return new OpenPgpVerifyResult(outcome(), reason(), signerDisplayName(), algorithm(),
-                version, keyId, fingerprint, primaryFingerprint, keySource, reasonDetail);
+                version, keyId, fingerprint, primaryFingerprint, keySource, detail);
     }
 
     /**

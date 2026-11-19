@@ -441,7 +441,7 @@ final class KeyRingFiles {
     }
 
     /**
-     * Names what Bouncy Castle reported reading a copy, for a reason detail.
+     * Names what Bouncy Castle reported reading a copy, for a detail.
      */
     private static String messageOf(Exception e) {
         return e.getMessage() != null && !e.getMessage().isBlank()

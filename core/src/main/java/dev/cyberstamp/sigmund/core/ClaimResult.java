@@ -38,9 +38,10 @@ import java.util.List;
  *        lets a claim no installed tool can check say whose signature it would be, so that a
  *        requirement left unmet only for want of such a claim reads as unsupported rather than
  *        as the wrong signer
- * @param reasonDetail why the reason applies, in the verifying tool's words — a key no keyserver
- *        has, or one served without the self-signature that binds it — or {@code null}; it
- *        explains the reason and never changes the outcome
+ * @param detail why the outcome came out as it did, in the verifying tool's words — a key no
+ *        keyserver has, a key revoked, or bytes that do not match — or {@code null}; allowed on
+ *        an indeterminate or failed claim, never on a verified one, and it never changes the
+ *        outcome
  * @param verifyResult the verifying tool's own result this record was built from, for format
  *        details such as an OpenPGP key ID or packet version; {@code null} when it was not built
  *        from one. It is what the tool said, not what the claim established: {@code outcome} can
@@ -60,7 +61,7 @@ public record ClaimResult(
         String algorithm,
         String verifiedBy,
         Credential declaredIssuer,
-        String reasonDetail,
+        String detail,
         VerifyResult verifyResult) {
 
     /**
@@ -91,8 +92,8 @@ public record ClaimResult(
     /**
      * Normalizes the optional components and rejects results that cannot be explained.
      *
-     * @throws IllegalArgumentException if the outcome and reason disagree, a detail explains
-     *         no reason, or the evidence, kind or outcome is missing
+     * @throws IllegalArgumentException if the outcome and reason disagree, a verified claim
+     *         carries a detail, or the evidence, kind or outcome is missing
      */
     public ClaimResult {
         if (kind == null || kind.isBlank()) {
@@ -108,8 +109,8 @@ public record ClaimResult(
             throw new IllegalArgumentException(
                     "a " + outcome + " claim must not carry an indeterminate reason");
         }
-        if (reason == null && reasonDetail != null) {
-            throw new IllegalArgumentException("a reason detail needs a reason to explain");
+        if (outcome == ClaimOutcome.VERIFIED && detail != null) {
+            throw new IllegalArgumentException("a verified claim carries no detail");
         }
         if (evidence == null) {
             throw new IllegalArgumentException("a claim result must name its evidence");
@@ -145,7 +146,7 @@ public record ClaimResult(
         return new ClaimResult(kind, result.outcome(), result.reason(), provenCredentials,
                 result.signerDisplayName(), trustRoot, evidence,
                 claim.claimTime(), claim.claimTimeSource(), verifiedAt, result.algorithm(),
-                verifiedBy, declaredIssuerOf(claim), result.reasonDetail(), result);
+                verifiedBy, declaredIssuerOf(claim), result.detail(), result);
     }
 
     /**
@@ -190,7 +191,7 @@ public record ClaimResult(
         credentials.addAll(additional);
         return new ClaimResult(kind, outcome, reason, credentials, attesterDisplayName,
                 trustRoot, evidence, claimTime, claimTimeSource, verifiedAt, algorithm,
-                verifiedBy, declaredIssuer, reasonDetail, verifyResult);
+                verifiedBy, declaredIssuer, detail, verifyResult);
     }
 
     /**

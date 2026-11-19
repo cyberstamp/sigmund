@@ -527,7 +527,7 @@ class KeyserverFetcherTest {
                 VerifyResult result = runner.verify(artifact, new OpenPgpClaim("armored", 4, FP, 22, null));
 
                 assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
-                assertThat(result.reasonDetail()).startsWith("the copy from hkps://server1 cannot be read: ");
+                assertThat(result.detail()).startsWith("the copy from hkps://server1 cannot be read: ");
             }
         }
     }

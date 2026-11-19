@@ -122,8 +122,8 @@ public class SignatureVerificationReport {
         sb.append(r.outcome());
         if (r.reason() != null) {
             sb.append(" [").append(r.reason());
-            if (r.reasonDetail() != null) {
-                sb.append(": ").append(r.reasonDetail());
+            if (r.detail() != null) {
+                sb.append(": ").append(r.detail());
             }
             sb.append(']');
         }

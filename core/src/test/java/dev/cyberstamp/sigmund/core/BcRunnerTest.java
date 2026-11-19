@@ -23,6 +23,7 @@ import org.bouncycastle.bcpg.PublicKeyAlgorithmTags;
 import org.bouncycastle.bcpg.PublicKeyPacket;
 import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags;
 import org.bouncycastle.bcpg.sig.KeyFlags;
+import org.bouncycastle.bcpg.sig.RevocationReasonTags;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openpgp.PGPKeyPair;
 import org.bouncycastle.openpgp.PGPKeyRingGenerator;
@@ -261,6 +262,44 @@ class BcRunnerTest {
             }
         }
 
+        @Test
+        void aRevokedKeyFailsNamingTheKeyserversThatServedTheRevocation(@TempDir Path tempDir)
+                throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            PGPPublicKey revokedKey = PGPPublicKey.addCertification(
+                    keyRing(primary, null, HashAlgorithmTags.SHA256).generatePublicKeyRing().getPublicKey(),
+                    revocation(primary));
+            PGPPublicKeyRing certificate = new PGPPublicKeyRing(List.of(revokedKey));
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"),
+                    tempDir.resolve("bc-private"));
+            store.addFetched(Map.of("hkps://keys.example.org", certificate));
+            Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
+            OpenPgpClaim claim = lowLevelSignature(primary.getPublicKey(), primary.getPrivateKey(),
+                    artifact, HashAlgorithmTags.SHA256, Instant.now());
+
+            try (BcRunner bcRunner = new BcRunner(store, null, null)) {
+                VerifyResult result = bcRunner.verify(artifact, claim);
+
+                assertThat(result.isFailed()).as(result.outcome() + " " + result.reason()).isTrue();
+                assertThat(result.detail()).startsWith("key revoked as compromised on ")
+                        .endsWith("; revocation served by hkps://keys.example.org");
+            }
+        }
+
+        private static PGPSignature revocation(PGPKeyPair primary) throws Exception {
+            PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                    new JcaPGPContentSignerBuilder(PublicKeyAlgorithmTags.RSA_GENERAL,
+                            HashAlgorithmTags.SHA256),
+                    primary.getPublicKey());
+            generator.init(PGPSignature.KEY_REVOCATION, primary.getPrivateKey());
+            PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+            hashed.setSignatureCreationTime(true, Date.from(Instant.now().minusSeconds(1)));
+            hashed.setIssuerFingerprint(false, primary.getPublicKey());
+            hashed.setRevocationReason(false, RevocationReasonTags.KEY_COMPROMISED, "compromised");
+            generator.setHashedSubpackets(hashed.generate());
+            return generator.generateCertification(primary.getPublicKey());
+        }
+
         private static PGPKeyPair rsaKeyPair() throws Exception {
             KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA",
                     new BouncyCastleProvider());
@@ -410,7 +449,7 @@ class BcRunnerTest {
                 OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), signed.claim());
 
                 assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
-                assertThat(result.reasonDetail()).isEqualTo("no local key store has it, and key fetching is off");
+                assertThat(result.detail()).isEqualTo("no local key store has it, and key fetching is off");
             }
         }
 
@@ -423,7 +462,7 @@ class BcRunnerTest {
 
                 OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), keyIdOnly);
 
-                assertThat(result.reasonDetail())
+                assertThat(result.detail())
                         .isEqualTo("the signature names only a key ID, which is not looked up on keyservers");
             }
         }
@@ -439,7 +478,7 @@ class BcRunnerTest {
                 OpenPgpVerifyResult result = (OpenPgpVerifyResult) verifier.verify(signed.artifact(), signed.claim());
 
                 assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
-                assertThat(result.reasonDetail())
+                assertThat(result.detail())
                         .isEqualTo("the copy from hkps://keys.example.org carries no self-signature binding the key");
             }
         }

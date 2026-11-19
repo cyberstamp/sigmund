@@ -92,7 +92,9 @@ class KeyValidityAgreementTest {
         OpenPgpClaim claim = sign(key, artifact);
         Files.writeString(artifact, "tampered content");
 
-        assertThat(outcomes(publicRing(key), artifact, claim)).isEqualTo(everywhere("FAILED"));
+        Map<String, VerifyResult> answers = answers(publicRing(key), artifact, claim);
+        assertThat(outcomes(answers)).isEqualTo(everywhere("FAILED"));
+        assertThat(answers.get("bc").detail()).isEqualTo("the artifact does not match the signature");
     }
 
     @Test
@@ -125,7 +127,11 @@ class KeyValidityAgreementTest {
         Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
         OpenPgpClaim claim = sign(key, artifact, TWO_HOURS_AGO);
 
-        assertThat(outcomes(revoked(key, reason, HOUR_AGO), artifact, claim)).isEqualTo(everywhere("FAILED"));
+        Map<String, VerifyResult> answers = answers(revoked(key, reason, HOUR_AGO), artifact, claim);
+        assertThat(outcomes(answers)).isEqualTo(everywhere("FAILED"));
+        if (reason == RevocationReasonTags.KEY_COMPROMISED) {
+            assertThat(answers.get("bc").detail()).startsWith("key revoked as compromised on ");
+        }
     }
 
     @ParameterizedTest(name = "reason {0}")
@@ -164,7 +170,9 @@ class KeyValidityAgreementTest {
         Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
         OpenPgpClaim claim = sign(key, artifact);
 
-        assertThat(outcomes(publicRing(key), artifact, claim)).isEqualTo(everywhere("FAILED"));
+        Map<String, VerifyResult> answers = answers(publicRing(key), artifact, claim);
+        assertThat(outcomes(answers)).isEqualTo(everywhere("FAILED"));
+        assertThat(answers.get("bc").detail()).startsWith("key expired on ").endsWith(", before it signed");
     }
 
     /**
@@ -186,7 +194,7 @@ class KeyValidityAgreementTest {
         Map<String, String> expected = everywhere("VERIFIED");
         expected.put("bc", "INDETERMINATE(" + IndeterminateReason.KEY_UNAVAILABLE + ")");
         assertThat(outcomes(answers)).isEqualTo(expected);
-        assertThat(answers.get("bc").reasonDetail())
+        assertThat(answers.get("bc").detail())
                 .isEqualTo("its user ID is not valid UTF-8, which Bouncy Castle cannot read");
     }
 
@@ -209,7 +217,7 @@ class KeyValidityAgreementTest {
         Map<String, VerifyResult> answers = answers(cert, artifact, claim);
         assertThat(outcomes(answers))
                 .isEqualTo(everywhere("INDETERMINATE(" + IndeterminateReason.KEY_UNAVAILABLE + ")"));
-        assertThat(answers.get("bc").reasonDetail()).isEqualTo("its self-signatures do not bind it");
+        assertThat(answers.get("bc").detail()).isEqualTo("its self-signatures do not bind it");
     }
 
     private static Map<String, String> everywhere(String outcome) {

@@ -332,8 +332,8 @@ public final class VerificationReport {
                 .append(claim.outcome());
         if (claim.reason() != null) {
             headline.append(" (").append(claim.reason());
-            if (claim.reasonDetail() != null) {
-                headline.append(": ").append(claim.reasonDetail());
+            if (claim.detail() != null) {
+                headline.append(": ").append(claim.detail());
             }
             headline.append(')');
         }

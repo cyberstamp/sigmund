@@ -14,6 +14,7 @@ import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
 import java.security.spec.ECGenParameterSpec;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -33,6 +34,8 @@ import org.bouncycastle.bcpg.PublicKeyPacket;
 import org.bouncycastle.bcpg.S2K;
 import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags;
 import org.bouncycastle.bcpg.sig.KeyFlags;
+import org.bouncycastle.bcpg.sig.RevocationReason;
+import org.bouncycastle.bcpg.sig.RevocationReasonTags;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openpgp.PGPException;
 import org.bouncycastle.openpgp.PGPKeyPair;
@@ -649,23 +652,23 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             int version, UnreadableCertificate unreadable) {
         if (unreadable == null) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, null,
-                    algorithm, version, fingerprint, fingerprint).withReasonDetail(notFoundDetail(opgu));
+                    algorithm, version, fingerprint, fingerprint).withDetail(notFoundDetail(opgu));
         }
         return switch (unreadable.cause()) {
             case UNKNOWN_ALGORITHM -> OpenPgpVerifyResult.indeterminate(
                     IndeterminateReason.UNSUPPORTED_ALGORITHM, null, algorithm, version, fingerprint,
                     fingerprint)
-                    .withReasonDetail("Bouncy Castle cannot read the copy from "
+                    .withDetail("Bouncy Castle cannot read the copy from "
                             + where(unreadable.source()) + ": " + unreadable.message());
             case DAMAGED -> OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, null,
                     algorithm, version, fingerprint, fingerprint)
-                    .withReasonDetail("the copy from " + where(unreadable.source()) + " cannot be read: "
+                    .withDetail("the copy from " + where(unreadable.source()) + " cannot be read: "
                             + unreadable.message());
         };
     }
 
     /**
-     * Names where a copy of a key came from, for a reason detail: the store's location or the
+     * Names where a copy of a key came from, for a detail: the store's location or the
      * keyserver's URL, else the kind of source.
      */
     private static String where(TrustRootRef source) {
@@ -715,14 +718,15 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             }
             if (findVerificationKey(pubKeyRing, signature) == null) {
                 return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId, algorithm, version,
-                        fingerprint, fingerprint).withReasonDetail("the certificate found does not contain the signing key");
+                        fingerprint, fingerprint).withDetail("the certificate found does not contain the signing key");
             }
 
             OpenPGPCertificate certificate = new OpenPGPCertificate(pubKeyRing,
                     api.getImplementation(), VERIFICATION_POLICY);
             OpenPGPDocumentSignature document = verifyAgainst(certificate, signature, artifactFile);
             if (document == null || document.getIssuer() == null || !document.isTestedCorrect()) {
-                return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint);
+                return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint)
+                        .withDetail("the artifact does not match the signature");
             }
             if (!document.isValid(VERIFICATION_POLICY)) {
                 return keyNotValid(certificate, document, signature, version, fingerprint, algorithm, userId,
@@ -760,8 +764,13 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         Date signedAt = signature.getCreationTime();
         OpenPGPCertificate.OpenPGPComponentKey issuer = document.getIssuer();
         OpenPGPCertificate.OpenPGPPrimaryKey primary = certificate.getPrimaryKey();
-        if (revokedOrExpiredAt(primary, signedAt) || revokedOrExpiredAt(issuer, signedAt)) {
-            return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint);
+        String failure = failureDetail(primary, signedAt);
+        if (failure == null) {
+            failure = failureDetail(issuer, signedAt);
+        }
+        if (failure != null) {
+            return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint)
+                    .withDetail(failure);
         }
         if (!algorithmsAccepted(signature, issuer.getPGPPublicKey())) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM, userId,
@@ -772,7 +781,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         if (selfSignatures.isEmpty()) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId,
                     algorithm, version, fingerprint, fingerprint)
-                    .withReasonDetail("the copy from " + where(source) + " carries no self-signature binding the key");
+                    .withDetail("the copy from " + where(source) + " carries no self-signature binding the key");
         }
         if (selfSignatures.stream().anyMatch(BcRunner::rejectedByPolicy)) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM, userId,
@@ -780,7 +789,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         }
         return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId,
                 algorithm, version, fingerprint, fingerprint)
-                .withReasonDetail(hasUndecodableUserId(primary.getPGPPublicKey())
+                .withDetail(hasUndecodableUserId(primary.getPGPPublicKey())
                         ? "its user ID is not valid UTF-8, which Bouncy Castle cannot read"
                         : "its self-signatures do not bind it");
     }
@@ -797,12 +806,48 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         return false;
     }
 
-    private static boolean revokedOrExpiredAt(OpenPGPCertificate.OpenPGPComponentKey key, Date at) {
-        if (key.getRevocation(at) != null) {
-            return true;
+    /**
+     * Says why a key was revoked or had expired when it signed, or returns {@code null} when it
+     * was neither. The revocation is read through the certificate API, which ignores one that
+     * does not verify, and its provenance comes from the copies the store kept.
+     */
+    private String failureDetail(OpenPGPCertificate.OpenPGPComponentKey key, Date at) {
+        OpenPGPCertificate.OpenPGPComponentSignature revocation = key.getRevocation(at);
+        if (revocation != null) {
+            return revokedDetail(key, revocation);
         }
         Date expiry = key.getKeyExpirationDateAt(at);
-        return expiry != null && !expiry.after(at);
+        if (expiry != null && !expiry.after(at)) {
+            return "key expired on " + dateOf(expiry) + ", before it signed";
+        }
+        return null;
+    }
+
+    private String revokedDetail(OpenPGPCertificate.OpenPGPComponentKey key,
+            OpenPGPCertificate.OpenPGPComponentSignature revocation) {
+        PGPSignature signature = revocation.getSignature();
+        String detail = "key revoked as " + revocationReason(signature) + " on "
+                + dateOf(revocation.getCreationTime());
+        List<String> servers = keyStore.revocationServedBy(hex(key.getPGPPublicKey().getFingerprint()),
+                signature);
+        return servers.isEmpty() ? detail : detail + "; revocation served by " + String.join(", ", servers);
+    }
+
+    private static String revocationReason(PGPSignature revocation) {
+        RevocationReason reason = revocation.getHashedSubPackets().getRevocationReason();
+        if (reason == null) {
+            return "no reason given";
+        }
+        return switch (reason.getRevocationReason()) {
+            case RevocationReasonTags.KEY_COMPROMISED -> "compromised";
+            case RevocationReasonTags.KEY_SUPERSEDED -> "superseded";
+            case RevocationReasonTags.KEY_RETIRED -> "retired";
+            default -> "no reason given";
+        };
+    }
+
+    private static String dateOf(Date date) {
+        return date.toInstant().atZone(ZoneOffset.UTC).toLocalDate().toString();
     }
 
     private static boolean algorithmsAccepted(PGPSignature signature, PGPPublicKey signingKey) {

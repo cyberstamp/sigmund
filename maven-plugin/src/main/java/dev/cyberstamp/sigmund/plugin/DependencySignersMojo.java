@@ -369,8 +369,8 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             return "";
         }
         return switch (result.reason()) {
-            case KEY_UNAVAILABLE -> result.reasonDetail() != null
-                    ? " (key unavailable: " + result.reasonDetail() + ")"
+            case KEY_UNAVAILABLE -> result.detail() != null
+                    ? " (key unavailable: " + result.detail() + ")"
                     : " (key unavailable)";
             case TRUST_ROOT_UNAVAILABLE -> " (trust root unavailable)";
             case DISCOVERY_UNAVAILABLE -> " (evidence source unreachable)";
@@ -1266,7 +1266,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             if (!vr.isIndeterminate()) {
                 checked = true;
             } else if (notCheckedBecause == null) {
-                notCheckedBecause = vr.reasonDetail() != null ? vr.reasonDetail() : vr.reason().name();
+                notCheckedBecause = vr.detail() != null ? vr.detail() : vr.reason().name();
             }
         }
 

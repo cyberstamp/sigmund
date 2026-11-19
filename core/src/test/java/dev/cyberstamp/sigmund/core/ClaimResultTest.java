@@ -66,7 +66,7 @@ class ClaimResultTest {
 
             assertThat(claimResult.outcome()).isEqualTo(ClaimOutcome.INDETERMINATE);
             assertThat(claimResult.reason()).isEqualTo(IndeterminateReason.KEY_UNAVAILABLE);
-            assertThat(claimResult.reasonDetail()).isNull();
+            assertThat(claimResult.detail()).isNull();
             assertThat(claimResult.attesterCredentials()).isEmpty();
         }
 
@@ -85,27 +85,41 @@ class ClaimResultTest {
     }
 
     @Test
-    void anIndeterminateClaimKeepsTheToolsDetail() {
+    void aFailedResultMayExplainItself() {
         OpenPgpClaim claim = new OpenPgpClaim("armored", 4, FP, 1, null);
-        VerifyResult result = OpenPgpVerifyResult.indeterminate(
-                IndeterminateReason.KEY_UNAVAILABLE, null, "RSA", 4, FP, FP).withReasonDetail("no keyserver has it");
+        VerifyResult result = OpenPgpVerifyResult.failed(null, "RSA", 4, FP, FP)
+                .withDetail("the artifact does not match the signature");
 
         ClaimResult claimResult = ClaimResult.of(claim, "openpgp", result, List.of(), REF,
                 TrustRootRef.unknown(), "bc", Instant.now());
 
-        assertThat(claimResult.reasonDetail()).isEqualTo("no keyserver has it");
-        assertThat(claimResult.unresolved(IndeterminateReason.KEY_UNAVAILABLE).reasonDetail()).isNull();
+        assertThat(claimResult.outcome()).isEqualTo(ClaimOutcome.FAILED);
+        assertThat(claimResult.detail()).isEqualTo("the artifact does not match the signature");
+    }
+
+    @Test
+    void anIndeterminateClaimKeepsTheToolsDetail() {
+        OpenPgpClaim claim = new OpenPgpClaim("armored", 4, FP, 1, null);
+        VerifyResult result = OpenPgpVerifyResult.indeterminate(
+                IndeterminateReason.KEY_UNAVAILABLE, null, "RSA", 4, FP, FP).withDetail("no keyserver has it");
+
+        ClaimResult claimResult = ClaimResult.of(claim, "openpgp", result, List.of(), REF,
+                TrustRootRef.unknown(), "bc", Instant.now());
+
+        assertThat(claimResult.detail()).isEqualTo("no keyserver has it");
+        assertThat(claimResult.unresolved(IndeterminateReason.KEY_UNAVAILABLE).detail()).isNull();
     }
 
     @Nested
     class Invariants {
 
         @Test
-        void aDetailNeedsAReasonToExplain() {
+        void aVerifiedResultCarriesNoDetail() {
             assertThatThrownBy(() -> new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null,
                     List.of(), null, TrustRootRef.unknown(), REF, null,
                     ClaimTimeSource.SIGNER, Instant.EPOCH, "RSA", "bc", null, "no keyserver has it", null))
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("carries no detail");
         }
 
         @Test
