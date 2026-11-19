@@ -84,7 +84,7 @@ class ResolveToolsConfigTest {
         void defaultKeyserverUsedWhenResolveEnabledAndEmpty() {
             var fileConfig = new VerificationConfig(true, false, List.of(), null);
             var result = resolve(fileConfig, null, null, null);
-            assertThat(result.keyservers()).isEqualTo(List.of(VerificationConfig.DEFAULT_KEYSERVER));
+            assertThat(result.keyservers()).isEqualTo(VerificationConfig.DEFAULT_KEYSERVERS);
         }
 
         @Test
@@ -92,7 +92,7 @@ class ResolveToolsConfigTest {
             var fileConfig = new VerificationConfig(false, false, List.of(), null);
             var result = resolve(fileConfig, null, null, null);
             assertThat(result.resolveSigners()).isFalse();
-            assertThat(result.keyservers()).isEqualTo(List.of(VerificationConfig.DEFAULT_KEYSERVER));
+            assertThat(result.keyservers()).isEqualTo(VerificationConfig.DEFAULT_KEYSERVERS);
         }
 
         @Test
@@ -149,7 +149,7 @@ class ResolveToolsConfigTest {
                 System.clearProperty("sigmund.keyserver");
                 var result = resolve(VerificationConfig.DEFAULT, null, null, null);
                 assertThat(result.keyservers()).isEqualTo(
-                        List.of(VerificationConfig.DEFAULT_KEYSERVER));
+                        VerificationConfig.DEFAULT_KEYSERVERS);
             } finally {
                 if (old != null) {
                     System.setProperty("sigmund.keyserver", old);

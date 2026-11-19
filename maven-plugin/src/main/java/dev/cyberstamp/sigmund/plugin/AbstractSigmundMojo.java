@@ -65,7 +65,7 @@ abstract class AbstractSigmundMojo extends AbstractMojo {
      * <p>
      * Each parameter, when non-null, takes precedence over the file configuration.
      * If signer resolution is enabled but no keyservers are configured, the
-     * {@link VerificationConfig#DEFAULT_KEYSERVER default keyserver} is used.
+     * {@link VerificationConfig#DEFAULT_KEYSERVERS default keyservers} are used.
      *
      * @param fileConfig base verification configuration from the config file
      * @param resolveSigners override for signer resolution, or {@code null} to use file config
@@ -85,7 +85,7 @@ abstract class AbstractSigmundMojo extends AbstractMojo {
                 ? resolveSigners
                 : (keyservers != null || fileConfig.resolveSigners());
         if (effectiveResolve && effectiveKeyservers.isEmpty()) {
-            effectiveKeyservers = List.of(VerificationConfig.DEFAULT_KEYSERVER);
+            effectiveKeyservers = VerificationConfig.DEFAULT_KEYSERVERS;
         }
         boolean effectiveImport = importToKeyring != null
                 ? importToKeyring
