@@ -263,9 +263,13 @@ public record ClaimResult(
             return " (unverified)";
         }
         if (IssuerKind.of(displayNameVouchedBy) == IssuerKind.OPENPGP_DIRECTORY) {
-            return " (address verified by " + displayNameVouchedBy.replaceFirst("^https://", "") + ")";
+            return " (address verified by " + hostOf(displayNameVouchedBy) + ")";
         }
         return " (attested by " + displayNameVouchedBy + ")";
+    }
+
+    private static String hostOf(String url) {
+        return url.replaceFirst("^[A-Za-z][A-Za-z0-9+.-]*://", "").replaceFirst("[/?#].*$", "");
     }
 
     /**

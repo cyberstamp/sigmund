@@ -36,11 +36,29 @@ assert matcher.find() : "Could not find fingerprint in sq output:\n${output}"
 def fingerprint = matcher.group(1)
 println "Generated PQC key: ${fingerprint}"
 
+// A GnuPG home of the test's own with a generated key, so the build never reads or signs with
+// the user's keyring
+def gpgHome = new File(basedir, "target/gnupg-home")
+gpgHome.mkdirs()
+gpgHome.setReadable(false, false); gpgHome.setReadable(true, true)
+gpgHome.setWritable(false, false); gpgHome.setWritable(true, true)
+gpgHome.setExecutable(false, false); gpgHome.setExecutable(true, true)
+def gpgGen = new ProcessBuilder("gpg", "--batch", "--passphrase", "", "--pinentry-mode", "loopback",
+        "--quick-gen-key", "--yes", "IT Test GnuPG <it-gpg@example.org>", "ed25519", "sign", "0")
+gpgGen.environment().put("GNUPGHOME", gpgHome.absolutePath)
+gpgGen.redirectErrorStream(true)
+def gpgProc = gpgGen.start()
+def gpgOutput = gpgProc.inputStream.text
+gpgProc.waitFor()
+assert gpgProc.exitValue() == 0 : "gpg --quick-gen-key failed:\n${gpgOutput}"
+
 def sigmundYaml = new File(basedir, "sigmund.yaml")
 sigmundYaml.text = """\
 signing:
   toolchain: [gpg, sq]
 tools:
+  gpg:
+    home: "${gpgHome.absolutePath}"
   sq:
     signing-fingerprint: "${fingerprint}"
 """
@@ -49,6 +67,9 @@ new File(basedir, "gpg-only.yaml").text = """\
 verification:
   toolchain: [gpg]
   resolve-signers: false
+tools:
+  gpg:
+    home: "${gpgHome.absolutePath}"
 """
 
 def props = new File(basedir, "test.properties")

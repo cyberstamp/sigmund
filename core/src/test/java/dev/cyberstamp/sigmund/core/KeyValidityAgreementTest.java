@@ -742,14 +742,15 @@ class KeyValidityAgreementTest {
         return hashed.generate();
     }
 
+    /** A certificate with a signing subkey, and the subkey pair the test signs with. */
+    private record SubkeyCertificate(PGPKeyPair signingKey, PGPPublicKeyRing certificate) {
+    }
+
     /**
      * The certificate of a key with a signing subkey and a revocation of that subkey made by
      * {@code revoker}, a forgery when the revoker is not the key, with the subkey pair the test
      * signs with.
      */
-    private record SubkeyCertificate(PGPKeyPair signingKey, PGPPublicKeyRing certificate) {
-    }
-
     private static SubkeyCertificate subkeyRevokedBy(PGPSecretKeyRing key, PGPSecretKeyRing revoker)
             throws Exception {
         return subkeyWith(key, revoker, PGPSignature.SUBKEY_REVOCATION,

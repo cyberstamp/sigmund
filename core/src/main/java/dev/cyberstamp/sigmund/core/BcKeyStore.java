@@ -14,15 +14,17 @@ import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
 import org.bouncycastle.openpgp.PGPException;
 import org.bouncycastle.openpgp.PGPPublicKey;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
@@ -255,9 +257,10 @@ class BcKeyStore {
      *
      * <p>
      * The kept copies are joined with {@link PGPPublicKeyRing#join} into a single certificate, so
-     * a user ID, a signature or a revocation any one server held is in it, together with a copy of
-     * the same certificate a local store already holds, so that a revocation held only locally is
-     * never hidden by the fetch. The joined certificate is stored once and found as it always was,
+     * a user ID, a signature or a revocation any one server held is in it, together with every
+     * copy of the same certificate — the same primary key — the local stores already hold, so that
+     * a revocation held only locally is never hidden by the fetch. The joined certificate is stored once and found as it always
+     * was,
      * and its source names every server whose copy was joined, in the order given. Each kept copy
      * stays available for the rest of the session to {@link #userIdsServedBy} and
      * {@link #revocationServedBy}, so a later check can tell which server served what.
@@ -273,18 +276,22 @@ class BcKeyStore {
      *        was asked for
      * @param served the certificates each keyserver served, by keyserver URL, in the order the
      *        keyservers are configured; at least one must hold the key asked for
+     * @return the keyservers whose copy was kept, in the order given: the servers that served
+     *         the asked key's certificate, not those whose certificate was set aside
      */
-    void addFetched(String keyId, Map<String, List<PGPPublicKeyRing>> served) {
+    List<String> addFetched(String keyId, Map<String, List<PGPPublicKeyRing>> served) {
         Map<String, PGPPublicKeyRing> kept = copiesOfAskedCertificate(keyId, served);
-        PGPPublicKeyRing joined = withLocalCopy(join(kept.values()));
+        PGPPublicKeyRing joined = withLocalCopies(join(kept.values()));
         String fingerprint = fingerprintHex(joined);
         if (persistFetched) {
             storeCert(joined);
         } else {
             ephemeralKeys.put(fingerprint, joined);
         }
-        fetchedFrom.put(fingerprint, TrustRootRef.keyservers(List.copyOf(kept.keySet())));
+        List<String> keptFrom = List.copyOf(kept.keySet());
+        fetchedFrom.put(fingerprint, TrustRootRef.keyservers(keptFrom));
         servedCopies.put(fingerprint, kept);
+        return keptFrom;
     }
 
     private static Map<String, PGPPublicKeyRing> copiesOfAskedCertificate(String keyId,
@@ -340,17 +347,31 @@ class BcKeyStore {
     }
 
     /**
-     * Joins the copy of the certificate a local store holds, if any, into the fetched one: a key
-     * found in a local store without user IDs is fetched again, and what that copy held must not
-     * be lost when the fetched certificate is found first or replaces it in cert-d.
+     * Joins every copy of the certificate the stores hold into the fetched one: a key found in a
+     * local store without user IDs is fetched again, and what a copy held must not be lost when
+     * the fetched certificate is found first or replaces it in cert-d. Each store is searched for
+     * a certificate whose primary key is the fetched one's, so another certificate holding that
+     * key as a subkey, found first, never hides the key's own copy in a later store.
      */
-    private PGPPublicKeyRing withLocalCopy(PGPPublicKeyRing fetched) {
-        KeyLookup local = findInStores(fingerprintHex(fetched), new ArrayList<>());
-        if (local == null || !Arrays.equals(local.ring().getPublicKey().getFingerprint(),
-                fetched.getPublicKey().getFingerprint())) {
-            return fetched;
-        }
-        return join(List.of(fetched, local.ring()));
+    private PGPPublicKeyRing withLocalCopies(PGPPublicKeyRing fetched) {
+        List<PGPPublicKeyRing> copies = new ArrayList<>(List.of(fetched));
+        copies.addAll(localCopiesOf(fingerprintHex(fetched)));
+        return join(copies);
+    }
+
+    private List<PGPPublicKeyRing> localCopiesOf(String primary) {
+        List<UnreadableCertificate> ignored = new ArrayList<>();
+        Predicate<PGPPublicKeyRing> isTheCertificate = ring -> fingerprintHex(ring).equalsIgnoreCase(primary);
+        return Stream.of(ephemeralKeys.get(primary), findInGnupgPubring(isTheCertificate, ignored),
+                readCertDCopy(primary, ignored), findInBcPrivate(primary))
+                .filter(Objects::nonNull)
+                .filter(isTheCertificate)
+                .toList();
+    }
+
+    private PGPPublicKeyRing readCertDCopy(String primary, List<UnreadableCertificate> unreadable) {
+        Path certFile = certDFile(primary.toLowerCase());
+        return Files.isRegularFile(certFile) ? readCertDFile(certFile, unreadable) : null;
     }
 
     /**
@@ -665,29 +686,6 @@ class BcKeyStore {
     }
 
     /**
-     * Finds the primary user ID for a key matching the given fingerprint.
-     *
-     * @param fingerprint the uppercase hex fingerprint to search for
-     * @return the primary user ID, or {@code null} if no key or UID found
-     */
-    String findPrimaryUserId(String fingerprint) {
-        KeyLookup found = findPublicKey(fingerprint);
-        return found == null ? null : primaryUserIdOf(found.ring());
-    }
-
-    /**
-     * Returns the first user ID on a key ring, for display: a user ID is self-certified and
-     * proves nothing about who holds the key.
-     *
-     * @param keyRing the key ring
-     * @return the user ID, or {@code null} when the ring carries none
-     */
-    String primaryUserIdOf(PGPPublicKeyRing keyRing) {
-        Iterator<String> uids = keyRing.getPublicKey().getUserIDs();
-        return uids.hasNext() ? uids.next() : null;
-    }
-
-    /**
      * Checks whether any User ID on the primary key contains the given email.
      */
     private boolean uidContainsEmail(PGPPublicKeyRing ring, String lowerEmail) {
@@ -814,22 +812,25 @@ class BcKeyStore {
      * to the legacy {@code pubring.gpg}; a key that cannot be read is recorded and skipped.
      */
     private PGPPublicKeyRing findInGnupgPubring(String fingerprint, List<UnreadableCertificate> unreadable) {
+        return findInGnupgPubring(ring -> matchesFingerprint(ring, fingerprint), unreadable);
+    }
+
+    private PGPPublicKeyRing findInGnupgPubring(Predicate<PGPPublicKeyRing> matches,
+            List<UnreadableCertificate> unreadable) {
         if (gnupgHome == null) {
             return null;
         }
         TrustRootRef source = TrustRootRef.gnupgKeyring(gnupgHome);
         Path pubringKbx = gnupgHome.resolve("pubring.kbx");
         if (Files.isRegularFile(pubringKbx)) {
-            PGPPublicKeyRing result = KeyRingFiles.findInKeyBox(pubringKbx,
-                    ring -> matchesFingerprint(ring, fingerprint), source, unreadable);
+            PGPPublicKeyRing result = KeyRingFiles.findInKeyBox(pubringKbx, matches, source, unreadable);
             if (result != null) {
                 return result;
             }
         }
         Path pubringGpg = gnupgHome.resolve("pubring.gpg");
         if (Files.isRegularFile(pubringGpg)) {
-            return KeyRingFiles.findInKeyRingFile(pubringGpg,
-                    ring -> matchesFingerprint(ring, fingerprint), source, unreadable);
+            return KeyRingFiles.findInKeyRingFile(pubringGpg, matches, source, unreadable);
         }
         return null;
     }

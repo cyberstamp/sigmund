@@ -839,7 +839,7 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
                 return true;
             }
             if (isConnectionFailure(result)) {
-                fetchCache.recordConnectionFailure(keyserver);
+                fetchCache.recordServerFailure(keyserver);
             }
         }
         fetchCache.recordKeyNotFound(keyId);

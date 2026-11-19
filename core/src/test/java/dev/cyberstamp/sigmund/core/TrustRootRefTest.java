@@ -53,6 +53,12 @@ class TrustRootRefTest {
     }
 
     @Test
+    void aMissingListOfKeyserversIsRejected() {
+        assertThatThrownBy(() -> TrustRootRef.keyservers(null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void namesTheSigstoreTrustRoot() {
         TrustRootRef ref = TrustRootRef.sigstore("public-good");
 

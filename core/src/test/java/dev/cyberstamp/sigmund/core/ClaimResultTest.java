@@ -45,6 +45,16 @@ class ClaimResultTest {
     }
 
     @Test
+    void aDirectoryIsLabelledByItsHost() {
+        ClaimResult claim = new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null, List.of(),
+                "Alice Example <alice@example.org>", TrustRootRef.unknown(), REF, null,
+                ClaimTimeSource.SIGNER, Instant.EPOCH, "RSA", "bc");
+
+        assertThat(claim.withDisplayNameVouchedBy("https://keys.openpgp.org/").labeledDisplayName())
+                .isEqualTo("Alice Example <alice@example.org> (address verified by keys.openpgp.org)");
+    }
+
+    @Test
     void noDisplayNameHasNoLabel() {
         assertThat(verified(ClaimOutcome.VERIFIED, null, REF, List.of()).labeledDisplayName()).isNull();
     }

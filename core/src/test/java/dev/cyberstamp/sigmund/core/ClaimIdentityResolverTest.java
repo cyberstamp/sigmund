@@ -7,10 +7,12 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.bouncycastle.bcpg.PublicKeyPacket;
+import org.bouncycastle.openpgp.PGPPublicKey;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.bouncycastle.openpgp.api.bc.BcOpenPGPApi;
 import org.junit.jupiter.api.Nested;
@@ -248,15 +250,34 @@ class ClaimIdentityResolverTest {
             assertThat(vouched.get(0).displayNameVouchedBy()).isNull();
         }
 
+        /**
+         * {@code sq} reports a signature a subkey made by the subkey's fingerprint, with the
+         * primary key's beside it, where the claims above carry the primary key's alone. The
+         * directory is asked by the primary key's fingerprint, under which it holds the
+         * certificate: this one answers for no other.
+         */
         @Test
-        void theSameClaimAnsweredBySqGetsTheSameLabel() throws Exception {
+        void aClaimSqAnsweredForASubkeyIsVouchedFor() throws Exception {
             PGPPublicKeyRing ring = ring(UID);
-            KeysOpenPgpOrgDirectory served = directoryServing(OPENPGP_ORG, ring);
+            String primary = KeyRingFiles.hex(ring.getPublicKey().getFingerprint());
+            Iterator<PGPPublicKey> keys = ring.getPublicKeys();
+            keys.next();
+            String subkey = KeyRingFiles.hex(keys.next().getFingerprint());
+            OpenPgpVerifyResult sqAnswer = OpenPgpVerifyResult.verified(UID, "Ed25519", 4, subkey, subkey)
+                    .withKeyFingerprints(subkey, primary);
 
-            ClaimResult bc = vouch(served, List.of(DIRECTORY), openPgpClaim(ring, UID, "bc")).get(0);
-            ClaimResult sq = vouch(served, List.of(DIRECTORY), openPgpClaim(ring, UID, "sq")).get(0);
+            FakeDirectory carriedUnderThePrimary = new FakeDirectory() {
+                @Override
+                public boolean carried(String fingerprint, String userId) {
+                    return fingerprint.equals(primary) && userId.equals(UID);
+                }
+            };
 
-            assertThat(sq.labeledDisplayName()).isEqualTo(bc.labeledDisplayName());
+            List<ClaimResult> vouched = vouch(carriedUnderThePrimary, List.of(DIRECTORY),
+                    openPgpClaim(sqAnswer, primary, UID, "sq"));
+
+            assertThat(vouched.get(0).labeledDisplayName())
+                    .isEqualTo(UID + " (address verified by keys.openpgp.org)");
         }
 
         @Test
@@ -303,6 +324,11 @@ class ClaimIdentityResolverTest {
             String fingerprint = KeyRingFiles.hex(ring.getPublicKey().getFingerprint());
             OpenPgpVerifyResult result = OpenPgpVerifyResult.verified(displayed, "Ed25519", 4,
                     fingerprint.substring(24), fingerprint);
+            return openPgpClaim(result, fingerprint, displayed, tool);
+        }
+
+        private static ClaimResult openPgpClaim(OpenPgpVerifyResult result, String fingerprint, String displayed,
+                String tool) {
             return new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null,
                     List.of(KeyCredential.openPgp(fingerprint)), displayed, TrustRootRef.unknown(),
                     evidence(), null, ClaimTimeSource.SIGNER, Instant.EPOCH, "Ed25519", tool, null,
@@ -353,7 +379,7 @@ class ClaimIdentityResolverTest {
                 Evidence.SOURCE_SIDECAR);
     }
 
-    private static final class FakeDirectory implements OpenPgpDirectory {
+    private static class FakeDirectory implements OpenPgpDirectory {
         final Map<String, List<String>> addresses = new HashMap<>();
         final List<String> asked = new ArrayList<>();
         boolean failing;

@@ -39,6 +39,15 @@ class DependencySignersMojoTest {
     private static final String FP4 = FULL_FP;
     private static final String FP6 = "CB186C4F0609A697E4D52DFA6C722B0C1F1E27C18A56708F6525EC27BAD9ACC9";
 
+    /**
+     * An inspected signature, its signer labelled as a claim result labels a signer nobody
+     * vouches for.
+     */
+    private static SignedArtifact signedArtifact(ArtifactCoords coords, String repoId, VerifyResult result) {
+        String label = result.signerDisplayName() == null ? null : result.signerDisplayName() + " (unverified)";
+        return new SignedArtifact(coords, repoId, result, null, null, label);
+    }
+
     @Nested
     class ConfigLoading {
 
@@ -73,7 +82,7 @@ class DependencySignersMojoTest {
     void signedArtifactV4WithSigner() {
         VerifyResult vr = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null,
                 "User <user@example.com>", "RSA", 4, "ABCD1234", "ABCD1234");
-        SignedArtifact signer = new SignedArtifact(LIB_COORDS, "central", vr, null, null);
+        SignedArtifact signer = signedArtifact(LIB_COORDS, "central", vr);
         assertThat(signer.coords()).isEqualTo(LIB_COORDS);
         assertThat(signer.repoId()).isEqualTo("central");
         assertThat(signer.verifyResult()).isInstanceOf(OpenPgpVerifyResult.class);
@@ -87,7 +96,7 @@ class DependencySignersMojoTest {
     void signedArtifactV6Detected() {
         VerifyResult vr = new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.UNSUPPORTED_ALGORITHM,
                 null, null, 6, null, null);
-        SignedArtifact signer = new SignedArtifact(LIB_COORDS, "central", vr, null, null);
+        SignedArtifact signer = signedArtifact(LIB_COORDS, "central", vr);
         OpenPgpVerifyResult opvr = (OpenPgpVerifyResult) signer.verifyResult();
         assertThat(opvr.version()).isEqualTo(6);
         assertThat(opvr.preferredKeyId()).isNull();
@@ -285,17 +294,6 @@ class DependencySignersMojoTest {
                     "info: Signer: User <user@example.com> (address verified by keys.openpgp.org)",
                     "info: Signer: User <user@example.com> (unverified)");
         }
-
-        @Test
-        void aSignerWithNoLabelIsPrintedByName() {
-            RecordingLog log = new RecordingLog();
-            DependencySignersMojo mojo = new DependencySignersMojo();
-            mojo.setLog(log);
-
-            mojo.logReport(List.of(signedBy(null)));
-
-            assertThat(log.lines).contains("info: Signer: User <user@example.com>");
-        }
     }
 
     @Nested
@@ -328,11 +326,10 @@ class DependencySignersMojoTest {
          */
         private final SignedArtifact noClaim = SignedArtifact.noClaim(LIB_COORDS, "central");
 
-        private final SignedArtifact signed = new SignedArtifact(
+        private final SignedArtifact signed = signedArtifact(
                 ArtifactCoords.parse("com.example:other:1.0"), "central",
                 new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
-                        "RSA", 4, "ABCD1234", FULL_FP),
-                null, null);
+                        "RSA", 4, "ABCD1234", FULL_FP));
 
         @Test
         void areListedAsUnsignedInTheReport() {
@@ -388,10 +385,9 @@ class DependencySignersMojoTest {
 
         @Test
         void recordFullFingerprintsAndShowTheUserIdAsAComment(@TempDir Path dir) throws Exception {
-            SignedArtifact signed = new SignedArtifact(coords, "central",
+            SignedArtifact signed = signedArtifact(coords, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
-                            "RSA", 4, "ABCD1234", FULL_FP),
-                    null, null);
+                            "RSA", 4, "ABCD1234", FULL_FP));
             Path configFile = dir.resolve("sigmund.yaml");
 
             generate(List.of(signed), configFile);
@@ -408,10 +404,9 @@ class DependencySignersMojoTest {
 
         @Test
         void leaveOutASignerKnownOnlyByKeyId(@TempDir Path dir) throws Exception {
-            SignedArtifact signed = new SignedArtifact(coords, "central",
+            SignedArtifact signed = signedArtifact(coords, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
-                            "RSA", 4, "ABCD1234", "ABCD1234"),
-                    null, null);
+                            "RSA", 4, "ABCD1234", "ABCD1234"));
             Path configFile = dir.resolve("sigmund.yaml");
 
             generate(List.of(signed), configFile);
@@ -429,12 +424,11 @@ class DependencySignersMojoTest {
          */
         @Test
         void markAKeyWhoseSignaturesCouldNotBeCheckedHere(@TempDir Path dir) throws Exception {
-            SignedArtifact signed = new SignedArtifact(coords, "central",
+            SignedArtifact signed = signedArtifact(coords, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE,
                             null, "RSA", 4, FULL_FP, FULL_FP)
                             .withDetail(
-                                    "the copy from hkps://keys.openpgp.org carries no self-signature binding the key"),
-                    null, null);
+                                    "the copy from hkps://keys.openpgp.org carries no self-signature binding the key"));
             Path configFile = dir.resolve("sigmund.yaml");
 
             generate(List.of(signed), configFile);
@@ -446,18 +440,57 @@ class DependencySignersMojoTest {
                             + "their artifacts INDETERMINATE until a usable copy of each key is available:",
                     "warn:   signer-1: the copy from hkps://keys.openpgp.org carries no self-signature binding the key",
                     "warn: List a keyserver that serves these keys in full under verification.keyservers in sigmund.yaml; for a key none does, see \"Keys Served Without User IDs\" in the signature verification docs.");
+            assertThat(log.lines).noneMatch(line -> line.contains("import"));
+        }
+
+        /**
+         * Another keyserver does not help with a key Bouncy Castle cannot read: the advice is to
+         * import it into a store a tool that reads it uses.
+         */
+        @Test
+        void adviseImportingAKeyBouncyCastleCannotRead(@TempDir Path dir) throws Exception {
+            SignedArtifact signed = signedArtifact(coords, "central",
+                    new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE,
+                            null, "RSA", 4, FULL_FP, FULL_FP)
+                            .withDetail("its user ID is not valid UTF-8, which Bouncy Castle cannot read"));
+            Path configFile = dir.resolve("sigmund.yaml");
+
+            generate(List.of(signed), configFile);
+
+            assertThat(log.lines).containsSubsequence(
+                    "warn:   signer-1: its user ID is not valid UTF-8, which Bouncy Castle cannot read",
+                    "warn: Import a key Bouncy Castle cannot read into GnuPG's or Sequoia's store (gpg --import, sq cert import), taken from where its publisher announces it, and keep gpg or sq in verification.toolchain; see \"Keys Served Without User IDs\" in the signature verification docs.");
+            assertThat(log.lines).noneMatch(line -> line.contains("List a keyserver"));
+        }
+
+        /**
+         * A copy Bouncy Castle cannot read for its algorithm is {@code UNSUPPORTED_ALGORITHM}, a
+         * claim attributed to no signer, so it is neither written nor advised on: the import
+         * advice is reached only by the user ID detail above.
+         */
+        @Test
+        void aCopyBouncyCastleCannotReadIsNotWrittenSoNotAdvisedOn(@TempDir Path dir) throws Exception {
+            SignedArtifact signed = signedArtifact(coords, "central",
+                    new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.UNSUPPORTED_ALGORITHM,
+                            null, "RSA", 4, FULL_FP, FULL_FP)
+                            .withDetail("Bouncy Castle cannot read the copy from hkps://keys.example.org: "
+                                    + "unknown public key algorithm 99"));
+            Path configFile = dir.resolve("sigmund.yaml");
+
+            generate(List.of(signed), configFile);
+
+            assertThat(SigmundConfig.parse(configFile).signers().isEmpty()).isTrue();
+            assertThat(log.lines).noneMatch(line -> line.startsWith("warn:"));
         }
 
         @Test
         void doNotMarkAKeyWhoseSignatureWasCheckedOnAnotherArtifact(@TempDir Path dir) throws Exception {
-            SignedArtifact unavailable = new SignedArtifact(coords, "central",
+            SignedArtifact unavailable = signedArtifact(coords, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE,
-                            null, "RSA", 4, FULL_FP, FULL_FP),
-                    null, null);
-            SignedArtifact verified = new SignedArtifact(LIB_COORDS, "central",
+                            null, "RSA", 4, FULL_FP, FULL_FP));
+            SignedArtifact verified = signedArtifact(LIB_COORDS, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
-                            "RSA", 4, FULL_FP, FULL_FP),
-                    null, null);
+                            "RSA", 4, FULL_FP, FULL_FP));
             Path configFile = dir.resolve("sigmund.yaml");
 
             generate(List.of(unavailable, verified), configFile);
@@ -488,11 +521,10 @@ class DependencySignersMojoTest {
         private final RecordingLog log = new RecordingLog();
 
         private SignedArtifact signed(String userId, int version, String fingerprint) {
-            return new SignedArtifact(lib, "central",
+            return signedArtifact(lib, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, userId,
                             version == 6 ? "ML-DSA-87+Ed448" : "RSA", version,
-                            fingerprint.substring(fingerprint.length() - 16), fingerprint),
-                    null, null);
+                            fingerprint.substring(fingerprint.length() - 16), fingerprint));
         }
 
         private DirectoryLookup serving(Map<String, List<String>> addressesByKey) {
@@ -642,11 +674,10 @@ class DependencySignersMojoTest {
 
         private SignedArtifact signed(ArtifactCoords coords, String userId, int version,
                 String fingerprint) {
-            return new SignedArtifact(coords, "central",
+            return signedArtifact(coords, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, userId,
                             version == 6 ? "ML-DSA-87+Ed448" : "RSA", version,
-                            fingerprint.substring(fingerprint.length() - 16), fingerprint),
-                    null, null);
+                            fingerprint.substring(fingerprint.length() - 16), fingerprint));
         }
 
         private SigmundConfig generate(Path dir, SignedArtifact... results) throws Exception {
@@ -740,11 +771,10 @@ class DependencySignersMojoTest {
         private final ArtifactCoords lib = ArtifactCoords.parse("com.example:lib:1.0");
 
         private SignedArtifact signed(String userId, int version, String fingerprint) {
-            return new SignedArtifact(lib, "central",
+            return signedArtifact(lib, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, userId,
                             version == 6 ? "ML-DSA-87+Ed448" : "RSA", version,
-                            fingerprint.substring(fingerprint.length() - 16), fingerprint),
-                    null, null);
+                            fingerprint.substring(fingerprint.length() - 16), fingerprint));
         }
 
         private List<String> generate(Path dir, SignedArtifact... results) throws Exception {
@@ -798,17 +828,15 @@ class DependencySignersMojoTest {
         private final RecordingLog log = new RecordingLog();
 
         private SignedArtifact signedBy(ArtifactCoords coords, String fingerprint) {
-            return new SignedArtifact(coords, "central",
+            return signedArtifact(coords, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
-                            "RSA", 4, fingerprint.substring(24), fingerprint),
-                    null, null);
+                            "RSA", 4, fingerprint.substring(24), fingerprint));
         }
 
         private SignedArtifact signedByV6(ArtifactCoords coords, String fingerprint) {
-            return new SignedArtifact(coords, "central",
+            return signedArtifact(coords, "central",
                     new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "User <user@example.com>",
-                            "ML-DSA-87+Ed448", 6, fingerprint.substring(48), fingerprint),
-                    null, null);
+                            "ML-DSA-87+Ed448", 6, fingerprint.substring(48), fingerprint));
         }
 
         private Path configWith(Path dir, String yaml) throws Exception {

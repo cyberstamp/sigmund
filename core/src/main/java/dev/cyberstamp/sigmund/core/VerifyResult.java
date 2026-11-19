@@ -109,7 +109,10 @@ public abstract sealed class VerifyResult
      * One reason covers situations an operator resolves differently:
      * {@link IndeterminateReason#KEY_UNAVAILABLE} is a key no store or keyserver has, a key
      * served without the self-signature that binds it, and a key whose certificate a tool cannot
-     * use. The detail tells them apart for the report; it never changes the outcome.
+     * use; {@link IndeterminateReason#UNSUPPORTED_ALGORITHM} may name a certificate a tool cannot
+     * read. A failed result, which carries no reason, says what failed: an artifact that does not
+     * match, or a key that was revoked or had expired when it signed. The detail tells these apart
+     * for the report; it never changes the outcome.
      *
      * @return the detail, such as {@code "no local key store or configured keyserver has it"},
      *         or {@code null}

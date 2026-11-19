@@ -27,6 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
@@ -503,6 +504,23 @@ class KeyserverFetcherTest {
         }
 
         @Test
+        void onlyAServerWhoseCopyWasKeptIsCredited() throws Exception {
+            List<String> credited = new CopyOnWriteArrayList<>();
+            KeyFetchCache cache = new KeyFetchCache() {
+                @Override
+                void recordSuccess(String keyserver, String keyId) {
+                    credited.add(keyserver);
+                }
+            };
+            Map<String, byte[]> served = bodies(impostorHolding(full.getPublicKey()), full);
+            try (StubFetcher fetcher = new StubFetcher(fetchStore("fetch"), BOTH, served, Duration.ofSeconds(10), cache)) {
+                assertThat(fetcher.fetch(fp)).isTrue();
+            }
+
+            assertThat(credited).containsExactly(SERVER2);
+        }
+
+        @Test
         void aSubkeyLookupSetsAsideAnImpostorServedFirst() throws Exception {
             Iterator<PGPPublicKey> keys = full.getPublicKeys();
             keys.next();
@@ -591,12 +609,14 @@ class KeyserverFetcherTest {
         @Test
         void aServerThatNeverAnswersDoesNotHoldBackTheOther() throws Exception {
             CountDownLatch never = new CountDownLatch(1);
+            AtomicInteger silentAsked = new AtomicInteger();
             BcKeyStore store = fetchStore("fetch");
             Map<String, byte[]> bodies = encoded(Map.of(SERVER2, full));
             try (StubFetcher fetcher = new StubFetcher(store, BOTH, bodies, Duration.ofMillis(200)) {
                 @Override
                 byte[] download(String keyId, String keyserver) {
                     if (keyserver.equals(SERVER1)) {
+                        silentAsked.incrementAndGet();
                         try {
                             never.await();
                         } catch (InterruptedException e) {
@@ -613,6 +633,11 @@ class KeyserverFetcherTest {
                 assertThat(fetched).isTrue();
                 assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(2));
                 assertThat(store.findPublicKey(fp).source()).isEqualTo(TrustRootRef.keyserver(SERVER2));
+                assertThat(fetcher.unansweredServers(fp)).containsExactly(Map.entry(SERVER1, "timed out"));
+
+                fetcher.fetch("AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD");
+
+                assertThat(silentAsked).as("the circuit breaker tripped").hasValue(1);
             }
         }
 
@@ -638,6 +663,151 @@ class KeyserverFetcherTest {
                 assertThat(fetcher.fetch(fp)).isTrue();
             }
             assertThat(overlapped).isTrue();
+        }
+    }
+
+    @Nested
+    class AServerThatCannotAnswer {
+
+        private static final String FP = "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD";
+
+        @Test
+        void anAnswerOtherThan404TripsTheServerAndTheKeyIsNotRememberedAsMissing() throws Exception {
+            try (StatusServer busy = new StatusServer(429);
+                    StatusServer empty = new StatusServer(404);
+                    KeyserverFetcher fetcher = new KeyserverFetcher(createStore(), List.of(busy.url(), empty.url()))) {
+
+                assertThat(fetcher.fetch(FP)).isFalse();
+                assertThat(fetcher.fetch(FP)).isFalse();
+
+                assertThat(busy.requests()).as("the circuit breaker tripped").isEqualTo(1);
+                assertThat(empty.requests()).as("the key is asked for again").isEqualTo(2);
+            }
+        }
+
+        @Test
+        void aKeyEveryServerAnswered404ForIsRememberedAsMissing() throws Exception {
+            try (StatusServer first = new StatusServer(404);
+                    StatusServer second = new StatusServer(404);
+                    KeyserverFetcher fetcher = new KeyserverFetcher(createStore(), List.of(first.url(), second.url()))) {
+
+                assertThat(fetcher.fetch(FP)).isFalse();
+                assertThat(fetcher.fetch(FP)).isFalse();
+
+                assertThat(first.requests()).isEqualTo(1);
+                assertThat(second.requests()).isEqualTo(1);
+                assertThat(detailAfterFetching(fetcher)).isEqualTo("no local key store or configured keyserver has it");
+            }
+        }
+
+        @Test
+        void theDetailNamesWhyNoServerCouldAnswer() throws Exception {
+            try (StatusServer busy = new StatusServer(429);
+                    StatusServer broken = new StatusServer(503);
+                    KeyserverFetcher fetcher = new KeyserverFetcher(createStore(), List.of(busy.url(), broken.url()))) {
+
+                assertThat(detailAfterFetching(fetcher)).isEqualTo(
+                        "no local key store has it and no configured keyserver could be asked (" + busy.url()
+                                + " answered 429; " + broken.url() + " answered 503)");
+            }
+        }
+
+        @Test
+        void theDetailNamesTheServersThatCouldNotAnswerWhenTheOthersDoNotHaveIt() throws Exception {
+            try (StatusServer busy = new StatusServer(429);
+                    StatusServer empty = new StatusServer(404);
+                    KeyserverFetcher fetcher = new KeyserverFetcher(createStore(), List.of(busy.url(), empty.url()))) {
+
+                assertThat(detailAfterFetching(fetcher)).isEqualTo(
+                        "no local key store or configured keyserver that answered has it (" + busy.url()
+                                + " answered 429)");
+            }
+        }
+
+        @Test
+        void aServerNotAskedAgainIsNamedWithWhatHappenedWhenItFailed() throws Exception {
+            try (StatusServer busy = new StatusServer(429);
+                    StatusServer empty = new StatusServer(404);
+                    KeyserverFetcher fetcher = new KeyserverFetcher(createStore(), List.of(busy.url(), empty.url()))) {
+                fetcher.fetch("1122334411223344112233441122334411223344");
+
+                assertThat(detailAfterFetching(fetcher)).isEqualTo(
+                        "no local key store or configured keyserver that answered has it (" + busy.url()
+                                + " was not asked after it earlier answered 429)");
+                assertThat(busy.requests()).isEqualTo(1);
+            }
+        }
+
+        @Test
+        void anInterruptedFetchDoesNotRememberTheKeyAsMissing() throws Exception {
+            CountDownLatch asked = new CountDownLatch(1);
+            CountDownLatch released = new CountDownLatch(1);
+            try (StubFetcher fetcher = new StubFetcher(createStore(), List.of("hkps://server1"), Map.of(),
+                    Duration.ofSeconds(10)) {
+                @Override
+                byte[] download(String keyId, String keyserver) {
+                    byte[] answer = super.download(keyId, keyserver);
+                    asked.countDown();
+                    try {
+                        released.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return answer;
+                }
+            }) {
+                Thread fetching = new Thread(() -> fetcher.fetch(FP));
+                fetching.start();
+                assertThat(asked.await(5, TimeUnit.SECONDS)).isTrue();
+                fetching.interrupt();
+                fetching.join(5000);
+                released.countDown();
+
+                fetcher.fetch(FP);
+
+                assertThat(fetcher.queriedServers).hasSize(2);
+            }
+        }
+
+        private String detailAfterFetching(KeyserverFetcher fetcher) throws Exception {
+            BcKeyStore store = createStore();
+            try (BcRunner runner = new BcRunner(store, null, null, null, null, fetcher)) {
+                runner.fetchKey(FP);
+                Path artifact = Files.writeString(tempDir.resolve("a.txt"), "a");
+                VerifyResult result = runner.verify(artifact, new OpenPgpClaim("armored", 4, FP, 22, null));
+
+                assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
+                return result.detail();
+            }
+        }
+    }
+
+    /** A local keyserver answering every lookup with one HTTP status and no body. */
+    private static final class StatusServer implements AutoCloseable {
+        private final HttpServer server;
+        private final AtomicInteger requests = new AtomicInteger();
+
+        StatusServer(int status) throws IOException {
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/pks/lookup", exchange -> {
+                requests.incrementAndGet();
+                exchange.sendResponseHeaders(status, -1);
+                exchange.close();
+            });
+            server.start();
+        }
+
+        String url() {
+            return "http://127.0.0.1:" + server.getAddress().getPort();
+        }
+
+        int requests() {
+            return requests.get();
+        }
+
+        @Override
+        public void close() {
+            server.stop(0);
         }
     }
 
@@ -753,6 +923,12 @@ class KeyserverFetcherTest {
         StubFetcher(BcKeyStore store, List<String> keyservers, Map<String, byte[]> bodies,
                 Duration requestTimeout) {
             super(store, keyservers, requestTimeout);
+            this.bodies = bodies;
+        }
+
+        StubFetcher(BcKeyStore store, List<String> keyservers, Map<String, byte[]> bodies,
+                Duration requestTimeout, KeyFetchCache fetchCache) {
+            super(store, keyservers, requestTimeout, fetchCache);
             this.bodies = bodies;
         }
 

@@ -363,7 +363,10 @@ default.
 1. Every tool in the toolchain returns `KEY_UNAVAILABLE` for the signature
 2. Sigmund takes the issuer fingerprint from the signature packet
 3. It asks every configured keyserver at once — by default `keys.openpgp.org` and
-   `keyserver.ubuntu.com` — skipping one that has already failed to answer this build. An answer
+   `keyserver.ubuntu.com` — skipping one that has already failed to answer this build. A server
+   fails to answer when it cannot be reached, times out, or answers with anything but the key or
+   HTTP 404 (such as 429 Too Many Requests or a 5xx error); a 404 means it does not have the key.
+   An answer
    over 1 MiB is cut off and not read (certificate flooding). Every certificate in an answer that
    holds the key is read, and of the certificates served one is kept: the one whose primary key is
    the key asked for or, for a subkey, the one whose primary key binds it with a signature the
@@ -372,11 +375,16 @@ default.
    served it and in whatever order
 4. The kept copies are merged into one certificate, as GnuPG and Sequoia merge on import,
    together with any copy a local store already holds, so a user ID, self-signature, subkey or
-   revocation any server or local store holds counts; the key counts as missing only when no
-   server served a readable copy
+   revocation any server or local store holds counts. A local copy is one whose primary key is the
+   fetched certificate's, looked for in every local store, so another certificate holding the key
+   as a subkey, found first, does not hide it. The key counts as missing only when no server
+   served a readable copy, and is not asked for again this build only when every server asked
+   answered that it does not have it: a key no server served because servers failed is asked for
+   again, and its detail names them
 5. The merged key is added to the fetching tool's store — in memory for the session, or persisted
    when `import-to-keyring: true` — recording every keyserver that contributed a copy
-6. Verification is retried with the key now available
+6. Verification is retried with the same tool — with the key now available, or, when none was
+   fetched, so that the result says why: which keyservers could not answer
 
 Only BC and GPG fetch keys; `sq` uses only the certificates already in its own store.
 
@@ -515,6 +523,8 @@ The block was not checked because no usable copy of its key was found. The detai
 | Detail | What to do |
 |---|---|
 | `no local key store or configured keyserver has it` | The key is published nowhere Sigmund looks. Add a keyserver that serves it under [`verification.keyservers`](configuration.md#verification), or import it into a tool's store: `gpg --import`, `sq cert import`. |
+| `no local key store has it and no configured keyserver could be asked (<keyserver> answered 429; <keyserver> timed out)` | No keyserver could answer: each is named with what happened — an HTTP status other than 404, `timed out`, `could not be reached`, `failed (…)`, or `was not asked after an earlier failure` this build. The key may well be published; run again later or check the network. |
+| `no local key store or configured keyserver that answered has it (<keyserver> answered 503)` | The servers that answered do not have the key, and the ones named could not answer; the key may be on those. |
 | `no local key store has it, and key fetching is off` | Set `verification.resolve-signers: true` (the default), or import the key. |
 | `the signature names only a key ID, which is not looked up on keyservers` | The signature carries a 64-bit key ID rather than a fingerprint, as older signers wrote. Import the key by hand. |
 | `the copy from <source> carries no self-signature binding the key` | Usually a key `keys.openpgp.org` served without its user IDs, which no other configured keyserver served in full; list one that does — see [Keys Served Without User IDs](#keys-served-without-user-ids). |

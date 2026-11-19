@@ -92,10 +92,10 @@ public record TrustRootRef(String kind, String identifier) {
      *
      * @param urls the keyserver URLs, in the order they were consulted; must not be empty
      * @return the reference
-     * @throws IllegalArgumentException if no URL is given
+     * @throws IllegalArgumentException if no list or an empty one is given
      */
     public static TrustRootRef keyservers(List<String> urls) {
-        if (urls.isEmpty()) {
+        if (urls == null || urls.isEmpty()) {
             throw new IllegalArgumentException("at least one keyserver is required");
         }
         return new TrustRootRef(KIND_OPENPGP_KEYSERVER, String.join(", ", urls));

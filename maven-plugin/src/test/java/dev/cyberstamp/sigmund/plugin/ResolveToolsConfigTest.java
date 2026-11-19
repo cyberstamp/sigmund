@@ -81,14 +81,14 @@ class ResolveToolsConfigTest {
         }
 
         @Test
-        void defaultKeyserverUsedWhenResolveEnabledAndEmpty() {
+        void defaultKeyserversUsedWhenResolveEnabledAndEmpty() {
             var fileConfig = new VerificationConfig(true, false, List.of(), null);
             var result = resolve(fileConfig, null, null, null);
             assertThat(result.keyservers()).isEqualTo(VerificationConfig.DEFAULT_KEYSERVERS);
         }
 
         @Test
-        void defaultKeyserverAlwaysPresentEvenWhenResolveFalse() {
+        void defaultKeyserversAlwaysPresentEvenWhenResolveFalse() {
             var fileConfig = new VerificationConfig(false, false, List.of(), null);
             var result = resolve(fileConfig, null, null, null);
             assertThat(result.resolveSigners()).isFalse();

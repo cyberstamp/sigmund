@@ -259,18 +259,13 @@ class SignatureInspector implements AutoCloseable {
     record SignedArtifact(ArtifactCoords coords, String repoId,
             VerifyResult verifyResult, Path artifactFile, Path signatureFile, String signerLabel) {
 
-        SignedArtifact(ArtifactCoords coords, String repoId, VerifyResult verifyResult,
-                Path artifactFile, Path signatureFile) {
-            this(coords, repoId, verifyResult, artifactFile, signatureFile, null);
-        }
-
         /**
          * Records an artifact for which no claim was found at all — no signature file
          * resolved, or one that yielded nothing to verify. This is the absence of
          * evidence, not a failed or indeterminate claim.
          */
         static SignedArtifact noClaim(ArtifactCoords coords, String repoId) {
-            return new SignedArtifact(coords, repoId, null, null, null);
+            return new SignedArtifact(coords, repoId, null, null, null, null);
         }
 
         /** Records an artifact whose verification tool could not be run. */
@@ -278,7 +273,7 @@ class SignatureInspector implements AutoCloseable {
             return new SignedArtifact(coords, repoId,
                     new UnverifiedResult(ClaimOutcome.INDETERMINATE,
                             IndeterminateReason.TOOL_UNAVAILABLE),
-                    null, null);
+                    null, null, null);
         }
 
         boolean hasClaim() {

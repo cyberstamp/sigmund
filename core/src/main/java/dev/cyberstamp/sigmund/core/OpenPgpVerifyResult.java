@@ -88,12 +88,14 @@ public final class OpenPgpVerifyResult extends VerifyResult {
     }
 
     /**
-     * Returns a copy saying why its reason applies, such as which of the situations
-     * {@link IndeterminateReason#KEY_UNAVAILABLE} covers the key is in.
+     * Returns a copy saying why the outcome came out as it did: for an indeterminate result,
+     * such as which of the situations {@link IndeterminateReason#KEY_UNAVAILABLE} covers the key
+     * is in; for a failed one, which carries no reason, what failed, such as the revocation of
+     * the key. See {@link VerifyResult#detail()}.
      *
-     * @param detail why the reason applies
+     * @param detail why the outcome came out as it did, or {@code null} for none
      * @return the copy
-     * @throws IllegalArgumentException if this result has no reason to explain
+     * @throws IllegalArgumentException if this result is verified, which carries no detail
      */
     public OpenPgpVerifyResult withDetail(String detail) {
         return new OpenPgpVerifyResult(outcome(), reason(), signerDisplayName(), algorithm(),

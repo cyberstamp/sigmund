@@ -480,13 +480,14 @@ with the reason, once:
 ```
 [WARNING] The signatures of 1 signer(s) written could not be checked here; sigmund:verify reports their artifacts INDETERMINATE until a usable copy of each key is available:
 [WARNING]   signer-2: its user ID is not valid UTF-8, which Bouncy Castle cannot read
-[WARNING] List a keyserver that serves these keys in full under verification.keyservers in sigmund.yaml; for a key none does, see "Keys Served Without User IDs" in the signature verification docs.
+[WARNING] Import a key Bouncy Castle cannot read into GnuPG's or Sequoia's store (gpg --import, sq cert import), taken from where its publisher announces it, and keep gpg or sq in verification.toolchain; see "Keys Served Without User IDs" in the signature verification docs.
 ```
 
-For a key Bouncy Castle cannot read, such as this one, another keyserver does not help: importing
-the key into GnuPG's or Sequoia's store, the second route in
-[Keys Served Without User IDs](verification.md#keys-served-without-user-ids), is the one that
-applies.
+The advice follows the cause: another keyserver does not help with a key Bouncy Castle cannot
+read, so the second route in
+[Keys Served Without User IDs](verification.md#keys-served-without-user-ids) is advised; for a key
+served without the self-signatures that bind it, the warning says instead to list a keyserver that
+serves it in full.
 
 A keyserver that serves the full key, listed under `verification.keyservers`, resolves a key
 served without its user IDs for every machine; see

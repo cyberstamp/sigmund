@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -23,22 +24,26 @@ import org.junit.jupiter.api.io.TempDir;
  * to files. The parent reads the files and asserts.
  * <p>
  * This avoids test-only overloads or mock env var lookups — the child process
- * sees a real {@code SIGMUND_BC_SIGNING_KEY} in its environment.
+ * sees a real {@code SIGMUND_BC_SIGNING_KEY} in its environment. The child runs with a home
+ * directory of the test's own and, when it signs with gpg, a GnuPG home holding a key the test
+ * generated, so it never reads or signs with the user's own keys.
  */
 class EphemeralSigningKeyTest {
 
     /**
-     * Child-process entry point. Receives the working directory and mode as
-     * arguments, exercises the signing path, and writes results for the parent.
+     * Child-process entry point. Receives the working directory, the mode and, for a mode that
+     * signs with gpg, the GnuPG home as arguments, exercises the signing path, and writes
+     * results for the parent.
      */
     public static void main(String[] args) throws Exception {
         Path workDir = Path.of(args[0]);
         String mode = args[1];
+        String gpgHome = args.length > 2 ? args[2] : null;
 
         Path artifact = workDir.resolve("artifact.jar");
         Files.writeString(artifact, "test artifact content");
 
-        try (Sigmund sigmund = sigmundFor(mode)) {
+        try (Sigmund sigmund = sigmundFor(mode, gpgHome)) {
 
             Signer signer = sigmund.signer();
 
@@ -72,9 +77,9 @@ class EphemeralSigningKeyTest {
     /**
      * The instance the child process signs with: no configuration in {@code exclusive} mode, so the
      * environment key claims signing alone, and a {@code bc, gpg} toolchain in {@code key-provider}
-     * mode, where the key only supplies bc.
+     * mode, where the key only supplies bc and gpg signs with the key in {@code gpgHome}.
      */
-    private static Sigmund sigmundFor(String mode) {
+    private static Sigmund sigmundFor(String mode, String gpgHome) {
         if ("exclusive".equals(mode)) {
             return Sigmund.builder().build();
         }
@@ -84,13 +89,8 @@ class EphemeralSigningKeyTest {
                     new SigningConfig(null, toolchain, List.of(), Map.of()),
                     null, null);
             Sigmund.Builder builder = Sigmund.builder().config(config);
-            for (String toolName : toolchain) {
-                try {
-                    builder.addSigningTool(toolName, Map.of());
-                } catch (SigmundException e) {
-                    // tool not available (e.g., gpg not installed)
-                }
-            }
+            builder.addSigningTool("bc", Map.of());
+            builder.addSigningTool("gpg", Map.of("home", gpgHome));
             return builder.build();
         }
         throw new IllegalArgumentException("Unknown mode: " + mode);
@@ -104,7 +104,7 @@ class EphemeralSigningKeyTest {
         Path workDir = tempDir.resolve("work");
         Files.createDirectories(workDir);
 
-        int exitCode = fork(armoredKey, workDir, "exclusive");
+        int exitCode = fork(armoredKey, tempDir, workDir, "exclusive");
         assertThat(exitCode).as("Child process failed").isEqualTo(0);
 
         assertThat(Files.readString(workDir.resolve("tool-names"))).isEqualTo("bc");
@@ -121,7 +121,10 @@ class EphemeralSigningKeyTest {
         Path workDir = tempDir.resolve("work");
         Files.createDirectories(workDir);
 
-        int exitCode = fork(armoredKey, workDir, "key-provider");
+        Path gpgHome = tempDir.resolve("gnupg");
+        String gpgFp = GpgTestKeys.generate(gpgHome, "CI GnuPG <ci-gpg@example.org>", "ed25519");
+
+        int exitCode = fork(armoredKey, tempDir, workDir, "key-provider", gpgHome.toString());
         assertThat(exitCode).as("Child process failed").isEqualTo(0);
 
         String toolNames = Files.readString(workDir.resolve("tool-names"));
@@ -130,6 +133,7 @@ class EphemeralSigningKeyTest {
         assertThat(tools.contains("gpg")).as("GPG should be a signer").isTrue();
 
         assertThat(Files.readString(workDir.resolve("fingerprint-bc"))).isEqualTo(expectedFp);
+        assertThat(Files.readString(workDir.resolve("fingerprint-gpg"))).isEqualTo(gpgFp);
 
         String signedTools = Files.readString(workDir.resolve("signed-tools"));
         assertThat(signedTools.contains("bc")).as("BC should have signed").isTrue();
@@ -140,7 +144,7 @@ class EphemeralSigningKeyTest {
         BcKeyStore store = new BcKeyStore(null,
                 tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         try (BcRunner gen = new BcRunner(store, null, null)) {
-            String fp = gen.generateKey("CI Test <ci@example.com>", "ed25519", null);
+            String fp = gen.generateKey("CI Test <ci@example.org>", "ed25519", null);
 
             PGPSecretKeyRing ring = store.findSecretKey(fp);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -152,15 +156,21 @@ class EphemeralSigningKeyTest {
         }
     }
 
-    private int fork(String signingKey, Path workDir, String mode) throws Exception {
+    /**
+     * Runs {@link #main} in a child JVM whose home directory is {@code home} inside
+     * {@code tempDir}, passing the working directory, the mode and any further arguments.
+     */
+    private int fork(String signingKey, Path tempDir, Path workDir, String mode, String... more) throws Exception {
         String classpath = System.getProperty("java.class.path");
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        Path home = Files.createDirectories(tempDir.resolve("home"));
 
-        ProcessBuilder pb = new ProcessBuilder(
-                java, "-cp", classpath,
-                EphemeralSigningKeyTest.class.getName(),
-                workDir.toString(), mode);
+        List<String> command = new ArrayList<>(List.of(java, "-Duser.home=" + home, "-cp", classpath,
+                EphemeralSigningKeyTest.class.getName(), workDir.toString(), mode));
+        command.addAll(List.of(more));
+        ProcessBuilder pb = new ProcessBuilder(command);
         pb.environment().put("SIGMUND_BC_SIGNING_KEY", signingKey);
+        pb.environment().put("HOME", home.toString());
         pb.directory(workDir.toFile());
         pb.redirectErrorStream(true);
 

@@ -600,7 +600,7 @@ verification:
 
   When `resolve-signers: true` but no tool in the configured toolchain can fetch keys (e.g., only GPG with `import-to-keyring: false`), Sigmund logs a warning.
 
-  A per-keyserver circuit breaker prevents slow builds when offline — after the first connection failure to a keyserver, all subsequent fetch attempts to that server are skipped. A per-key negative cache prevents re-querying the same missing key across artifacts.
+  A per-keyserver circuit breaker prevents slow builds when offline — after a keyserver first fails to answer, all subsequent fetch attempts to that server are skipped. For Bouncy Castle's fetcher a server fails to answer when it cannot be reached, times out, or answers with anything but the key or HTTP 404, such as 429 or 503; GnuPG's fetching (`import-to-keyring: true`) trips it only on connection failures it reports. A per-key negative cache prevents re-querying the same missing key across artifacts; Bouncy Castle's fetcher caches a key as missing only when every server asked answered that it does not have it.
 
 - **`import-to-keyring`** (boolean, default: `false`)
 

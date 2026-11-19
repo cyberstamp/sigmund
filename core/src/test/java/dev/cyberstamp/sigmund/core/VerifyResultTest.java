@@ -75,7 +75,7 @@ class VerifyResultTest {
     }
 
     @Nested
-    class ReasonDetail {
+    class Detail {
 
         @Test
         void aCopyKeepsItsTypeAndFieldsAndGainsTheDetail() {
@@ -90,10 +90,20 @@ class VerifyResultTest {
         }
 
         @Test
-        void aDetailNeedsAReasonToExplain() {
+        void aVerifiedResultCarriesNoDetail() {
             assertThatThrownBy(() -> OpenPgpVerifyResult.verified(null, "RSA", 4, "KEYID", "FP")
                     .withDetail("no keyserver has it"))
                     .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
+        void aFailedResultCarriesADetailWithoutAReason() {
+            OpenPgpVerifyResult result = OpenPgpVerifyResult.failed(null, "RSA", 4, "KEYID", "FP")
+                    .withDetail("key revoked as compromised on 2026-01-01");
+
+            assertThat(result.isFailed()).isTrue();
+            assertThat(result.reason()).isNull();
+            assertThat(result.detail()).isEqualTo("key revoked as compromised on 2026-01-01");
         }
     }
 

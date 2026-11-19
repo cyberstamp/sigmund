@@ -14,6 +14,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -40,6 +41,7 @@ import org.bouncycastle.openpgp.PGPSecretKeyRing;
 import org.bouncycastle.openpgp.PGPSignature;
 import org.bouncycastle.openpgp.PGPSignatureGenerator;
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator;
+import org.bouncycastle.openpgp.operator.bc.BcPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPDigestCalculatorProviderBuilder;
@@ -48,6 +50,9 @@ import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyEncryptorBuilder;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class BcRunnerTest {
 
@@ -118,6 +123,42 @@ class BcRunnerTest {
                 ring.getPublicKeys().forEachRemaining(key -> assertThat(key.getAlgorithm())
                         .isEqualTo(PublicKeyAlgorithmTags.EDDSA_LEGACY));
             }
+        }
+
+        /**
+         * A keyserver may serve the user's own key with a user ID put first that the key's own
+         * certificate does not carry; the description shows the user ID of the key itself.
+         */
+        @Test
+        void theOwnKeyIsDescribedByItsOwnUserIdNotOneAFetchedCopyPutFirst(@TempDir Path dir) throws Exception {
+            BcKeyStore store = store(dir);
+            String fingerprint = BcTestKeys.generate(store, "Own <own@example.org>", "ed25519", null);
+            BcTestKeys.addFetched(store, Map.of("hkps://keyserver.example.org",
+                    withUserIdFirst(store, fingerprint, "Added <added@example.org>")));
+            assertThat(store.findPublicKey(fingerprint).ring().getPublicKey().getUserIDs().next())
+                    .isEqualTo("Added <added@example.org>");
+
+            try (BcRunner runner = new BcRunner(store, fingerprint, null)) {
+                assertThat(runner.signingInfo().get(0).userId()).isEqualTo("Own <own@example.org>");
+            }
+        }
+
+        private PGPPublicKeyRing withUserIdFirst(BcKeyStore store, String fingerprint, String added) throws Exception {
+            PGPPublicKeyRing ring = store.findPublicKey(fingerprint).ring();
+            PGPPublicKey primary = ring.getPublicKey();
+            String own = primary.getUserIDs().next();
+            List<PGPSignature> ownSignatures = new ArrayList<>();
+            primary.getSignaturesForID(own).forEachRemaining(ownSignatures::add);
+            PGPSecretKey secret = store.findSecretKey(fingerprint).getSecretKey();
+            PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                    new BcPGPContentSignerBuilder(primary.getAlgorithm(), HashAlgorithmTags.SHA256), primary);
+            generator.init(PGPSignature.POSITIVE_CERTIFICATION, secret.extractPrivateKey(null));
+            PGPPublicKey reordered = PGPPublicKey.addCertification(PGPPublicKey.removeCertification(primary, own),
+                    added, generator.generateCertification(added, primary));
+            for (PGPSignature signature : ownSignatures) {
+                reordered = PGPPublicKey.addCertification(reordered, own, signature);
+            }
+            return PGPPublicKeyRing.insertPublicKey(ring, reordered);
         }
 
         @Test
@@ -229,6 +270,46 @@ class BcRunnerTest {
             }
         }
 
+        /**
+         * A block that holds no signature, checked against a key the store holds, names no signer:
+         * nothing in it was made by that key.
+         */
+        @Test
+        void aBlockHoldingNoSignatureIsMalformedAndNamesNoSigner(@TempDir Path tempDir) throws Exception {
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+            String fingerprint = BcTestKeys.generate(store, "Signer <signer@example.org>", "ed25519", null);
+            String notASignature = AscCombiner.armor(store.findPublicKey(fingerprint).ring().getEncoded());
+            Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
+
+            try (BcRunner runner = new BcRunner(store, null, null)) {
+                VerifyResult result = runner.verify(artifact, new OpenPgpClaim(notASignature, 4, fingerprint, 22, null));
+
+                assertThat(result.isIndeterminate(IndeterminateReason.EVIDENCE_MALFORMED)).isTrue();
+                assertThat(result.signerDisplayName()).isNull();
+            }
+        }
+
+        /**
+         * A signature packet cut short, which Bouncy Castle breaks on while checking it against a
+         * key the store holds, names no signer either.
+         */
+        @Test
+        void aBlockBouncyCastleBreaksOnNamesNoSigner(@TempDir Path tempDir) throws Exception {
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+            String fingerprint = BcTestKeys.generate(store, "Signer <signer@example.org>", "ed25519", null);
+            Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
+
+            try (BcRunner runner = new BcRunner(store, null, null)) {
+                String truncatedSignature = AscCombiner.armor(new byte[] { (byte) 0xC2, 0x10, 0x04 });
+                VerifyResult result = runner.verify(artifact,
+                        new OpenPgpClaim(truncatedSignature, 4, fingerprint, 22, null));
+
+                assertThat(result.isIndeterminate(IndeterminateReason.TOOL_UNAVAILABLE))
+                        .as(result.outcome() + " " + result.reason()).isTrue();
+                assertThat(result.signerDisplayName()).isNull();
+            }
+        }
+
         @Test
         void aClaimOfAnotherKindIsUnsupported(@TempDir Path tempDir) throws Exception {
             try (BcRunner runner = createVerifyOnly(tempDir)) {
@@ -317,6 +398,131 @@ class BcRunnerTest {
                 assertThat(result.isFailed()).as(result.outcome() + " " + result.reason()).isTrue();
                 assertThat(result.detail()).startsWith("key revoked as compromised on "
                         + now.minusSeconds(1800).atZone(ZoneOffset.UTC).toLocalDate());
+            }
+        }
+
+        @ParameterizedTest(name = "reason {0}")
+        @CsvSource({ "1, superseded", "3, retired", "50, no reason given" })
+        void aRevocationIsNamedByItsReason(int reason, String named, @TempDir Path tempDir) throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+            BcTestKeys.addFetched(store, Map.of("hkps://keys.example.org", revokedCertificate(primary, reason)));
+
+            VerifyResult result = verifySignedNow(tempDir, store, primary);
+
+            assertThat(result.isFailed()).as(result.outcome() + " " + result.reason()).isTrue();
+            assertThat(result.detail()).startsWith("key revoked as " + named + " on ");
+        }
+
+        @Test
+        void aRevocationServedBySeveralKeyserversNamesEach(@TempDir Path tempDir) throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            PGPPublicKeyRing certificate = revokedCertificate(primary, RevocationReasonTags.KEY_COMPROMISED);
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+            Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
+            copies.put("hkps://one.example.org", certificate);
+            copies.put("hkps://two.example.org", certificate);
+            BcTestKeys.addFetched(store, copies);
+
+            VerifyResult result = verifySignedNow(tempDir, store, primary);
+
+            assertThat(result.detail())
+                    .endsWith("; revocation served by hkps://one.example.org, hkps://two.example.org");
+        }
+
+        @Test
+        void aRevocationFromALocalStoreNamesNoKeyserver(@TempDir Path tempDir) throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+            store.storeCert(revokedCertificate(primary, RevocationReasonTags.KEY_COMPROMISED));
+
+            VerifyResult result = verifySignedNow(tempDir, store, primary);
+
+            assertThat(result.isFailed()).as(result.outcome() + " " + result.reason()).isTrue();
+            assertThat(result.detail()).startsWith("key revoked as compromised on ").doesNotContain("served by");
+        }
+
+        /**
+         * A revocation the key's holder made but placed where its type does not belong — a subkey
+         * revocation (0x28) on the primary key, a key revocation (0x20) on a subkey — revokes
+         * nothing: GnuPG and Sequoia ignore it. Each is made over the data its place is checked
+         * against — the primary key alone, or the primary key and the subkey — so only its type
+         * is out of place. The binding view drops it: besides its own type check, Bouncy Castle's
+         * {@code verifyCertification} refuses a signature whose type does not fit the keys it is
+         * checked over, and Bouncy Castle's certificate does not read either as a revocation.
+         */
+        @ParameterizedTest(name = "on the primary key: {0}")
+        @ValueSource(booleans = { true, false })
+        void aRevocationOfTheWrongTypeForItsKeyIsDropped(boolean onPrimary, @TempDir Path tempDir) throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            PGPKeyPair subkey = rsaKeyPair();
+            PGPPublicKeyRing ring = keyRing(primary, subkey, HashAlgorithmTags.SHA256).generatePublicKeyRing();
+            PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                    new JcaPGPContentSignerBuilder(PublicKeyAlgorithmTags.RSA_GENERAL, HashAlgorithmTags.SHA256),
+                    primary.getPublicKey());
+            generator.init(onPrimary ? PGPSignature.SUBKEY_REVOCATION : PGPSignature.KEY_REVOCATION,
+                    primary.getPrivateKey());
+            PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+            hashed.setSignatureCreationTime(true, Date.from(Instant.now().minusSeconds(1800)));
+            hashed.setIssuerFingerprint(false, primary.getPublicKey());
+            hashed.setRevocationReason(false, RevocationReasonTags.KEY_COMPROMISED, "revoked");
+            generator.setHashedSubpackets(hashed.generate());
+            PGPPublicKey subkeyInRing = ring.getPublicKey(subkey.getKeyID());
+            PGPSignature revocation = onPrimary ? generator.generateCertification(primary.getPublicKey())
+                    : generator.generateCertification(primary.getPublicKey(), subkeyInRing);
+            PGPPublicKeyRing misplaced = withSignatureAfter(ring, onPrimary ? ring.getPublicKey() : subkeyInRing,
+                    revocation);
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+            store.storeCert(misplaced);
+
+            VerifyResult result = verifySignedNow(tempDir, store, subkey);
+
+            assertThat(result.isVerified()).as(result.outcome() + " " + result.detail()).isTrue();
+        }
+
+        /**
+         * The certificate with a signature placed right after a key's packet, written as packets
+         * because Bouncy Castle will not add a revocation to a key of the wrong kind.
+         */
+        private static PGPPublicKeyRing withSignatureAfter(PGPPublicKeyRing ring, PGPPublicKey key,
+                PGPSignature signature) throws Exception {
+            ByteArrayOutputStream keyPacket = new ByteArrayOutputStream();
+            try (BCPGOutputStream out = new BCPGOutputStream(keyPacket)) {
+                out.writePacket(key.getPublicKeyPacket());
+            }
+            byte[] encoded = ring.getEncoded();
+            byte[] packet = keyPacket.toByteArray();
+            int end = indexOf(encoded, packet) + packet.length;
+            ByteArrayOutputStream spliced = new ByteArrayOutputStream();
+            spliced.write(encoded, 0, end);
+            spliced.write(signature.getEncoded());
+            spliced.write(encoded, end, encoded.length - end);
+            return new PGPPublicKeyRing(spliced.toByteArray(), new JcaKeyFingerprintCalculator());
+        }
+
+        private static int indexOf(byte[] bytes, byte[] wanted) {
+            for (int i = 0; i + wanted.length <= bytes.length; i++) {
+                if (Arrays.equals(bytes, i, i + wanted.length, wanted, 0, wanted.length)) {
+                    return i;
+                }
+            }
+            throw new IllegalArgumentException("packet not found");
+        }
+
+        private static PGPPublicKeyRing revokedCertificate(PGPKeyPair primary, int reason) throws Exception {
+            PGPPublicKey revokedKey = PGPPublicKey.addCertification(
+                    keyRing(primary, null, HashAlgorithmTags.SHA256).generatePublicKeyRing().getPublicKey(),
+                    revocation(primary, primary, Instant.now().minusSeconds(1800), reason));
+            return new PGPPublicKeyRing(List.of(revokedKey));
+        }
+
+        private static VerifyResult verifySignedNow(Path tempDir, BcKeyStore store, PGPKeyPair signer)
+                throws Exception {
+            Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
+            OpenPgpClaim claim = lowLevelSignature(signer.getPublicKey(), signer.getPrivateKey(),
+                    artifact, HashAlgorithmTags.SHA256, Instant.now());
+            try (BcRunner bcRunner = new BcRunner(store, null, null)) {
+                return bcRunner.verify(artifact, claim);
             }
         }
 
@@ -419,6 +625,29 @@ class BcRunnerTest {
         }
 
         @Test
+        void aLookupByKeyIdPrefersTheDirectoryServedUserIdAsAFingerprintLookupDoes(@TempDir Path tempDir)
+                throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            PGPPublicKeyRing directoryCopy = certificate(primary,
+                    userId("Verified <verified@example.org>", certify(primary, "Verified <verified@example.org>", false)));
+            PGPPublicKeyRing otherCopy = certificate(primary,
+                    userId("Verified <verified@example.org>", certify(primary, "Verified <verified@example.org>", false)),
+                    userId("Primary <primary@example.org>", certify(primary, "Primary <primary@example.org>", true)));
+            Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
+            copies.put("hkps://keyserver.example.org", otherCopy);
+            copies.put(DIRECTORY, directoryCopy);
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+            BcTestKeys.addFetched(store, copies);
+            String fingerprint = KeyRingFiles.hex(primary.getPublicKey().getFingerprint());
+
+            try (BcRunner runner = new BcRunner(store, null, null)) {
+                assertThat(runner.lookupKeyUserId(fingerprint)).isEqualTo("Verified <verified@example.org>");
+                assertThat(runner.lookupKeyUserId(fingerprint.substring(fingerprint.length() - 16)))
+                        .isEqualTo("Verified <verified@example.org>");
+            }
+        }
+
+        @Test
         void thePrimaryIsShownForAKeyFromALocalStore(@TempDir Path tempDir) throws Exception {
             PGPKeyPair primary = rsaKeyPair();
             PGPPublicKeyRing certificate = certificate(primary,
@@ -428,18 +657,6 @@ class BcRunnerTest {
             store.storeCert(certificate);
 
             assertThat(displayed(tempDir, store, primary)).isEqualTo("Primary <primary@example.org>");
-        }
-
-        @Test
-        void aUserIdThatIsNotUtf8IsSkipped(@TempDir Path tempDir) throws Exception {
-            PGPKeyPair primary = rsaKeyPair();
-            byte[] latin1 = new byte[] { 'J', 'o', 's', (byte) 0xE9 };
-            PGPPublicKeyRing certificate = certificate(primary,
-                    userId(latin1, certify(primary, latin1, false)),
-                    userId("Signer <signer@example.org>", certify(primary, "Signer <signer@example.org>", false)));
-
-            assertThat(displayedFor(tempDir, primary, Map.of(DIRECTORY, certificate)))
-                    .isEqualTo("Signer <signer@example.org>");
         }
 
         private static String displayedFor(Path tempDir, PGPKeyPair primary,

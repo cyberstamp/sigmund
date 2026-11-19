@@ -89,6 +89,13 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
     /** The directory a generated config trusts for the addresses it names signers by. */
     private static final String DIRECTORY = "keys.openpgp.org";
     private static final String DIRECTORY_URL = IssuerKind.KEYS_OPENPGP_ORG;
+    private static final String BOUNCY_CASTLE_CANNOT_READ = "Bouncy Castle cannot read";
+    private static final String KEYSERVER_ADVICE = "List a keyserver that serves these keys in full under "
+            + "verification.keyservers in sigmund.yaml; for a key none does, see \"Keys Served Without User IDs\" "
+            + "in the signature verification docs.";
+    private static final String IMPORT_ADVICE = "Import a key Bouncy Castle cannot read into GnuPG's or Sequoia's "
+            + "store (gpg --import, sq cert import), taken from where its publisher announces it, and keep gpg or sq "
+            + "in verification.toolchain; see \"Keys Served Without User IDs\" in the signature verification docs.";
 
     private DirectoryLookup directoryLookup;
 
@@ -232,7 +239,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             for (SignedArtifact entry : sortedKeys) {
                 VerifyResult vr = entry.verifyResult();
                 String key = vr.signerDisplayName() != null
-                        ? "name:" + (entry.signerLabel() != null ? entry.signerLabel() : vr.signerDisplayName())
+                        ? "name:" + entry.signerLabel()
                         : "key:" + (vr.signerIdentifier() != null ? vr.signerIdentifier() : "?");
                 signerSubGroups.computeIfAbsent(key, k -> new ArrayList<>(2)).add(entry);
             }
@@ -242,8 +249,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                 VerifyResult first = signerSub.get(0).verifyResult();
                 boolean identified;
                 if (first.signerDisplayName() != null) {
-                    String label = signerSub.get(0).signerLabel();
-                    getLog().info("Signer: " + (label != null ? label : first.signerDisplayName()));
+                    getLog().info("Signer: " + signerSub.get(0).signerLabel());
                     identified = true;
                 } else if (signerSub.stream().allMatch(
                         e -> e.verifyResult().isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE))) {
@@ -1164,14 +1170,12 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
     }
 
     /**
-     * Shows the user ID a key carries as a comment on its fingerprint, never as config: it is
-     * self-certified, so it helps a reviewer recognize the key but proves nothing. It is left out
-     * for a signer named by the address it shows, which the directory verified.
-     */
-    /**
      * Warns about signers written to the file none of whose signatures could be checked here:
      * their requirements hold the key that signed, and are indeterminate until it can be used.
-     * Each is named once with why, and the remedy is said once, so the file only marks them.
+     * Each is named once with why, and the remedy is said once for each cause, so the file only
+     * marks them: for a key Bouncy Castle cannot read, importing it into a store a tool that reads
+     * it uses, as another keyserver serves the same key; for any other, listing a keyserver that
+     * serves the key in full.
      */
     private void warnNotCheckedHere(Collection<SignerInfo> written) {
         List<SignerInfo> notChecked = written.stream()
@@ -1184,10 +1188,31 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
         getLog().warn("The signatures of " + notChecked.size() + " signer(s) written could not be checked here; "
                 + "sigmund:verify reports their artifacts INDETERMINATE until a usable copy of each key is available:");
         notChecked.forEach(info -> getLog().warn("  " + info.id + ": " + info.notCheckedBecause));
-        getLog().warn(
-                "List a keyserver that serves these keys in full under verification.keyservers in sigmund.yaml; for a key none does, see \"Keys Served Without User IDs\" in the signature verification docs.");
+        if (notChecked.stream().anyMatch(info -> !unreadableByBouncyCastle(info))) {
+            getLog().warn(KEYSERVER_ADVICE);
+        }
+        if (notChecked.stream().anyMatch(DependencySignersMojo::unreadableByBouncyCastle)) {
+            getLog().warn(IMPORT_ADVICE);
+        }
     }
 
+    /**
+     * Whether a signer's reason is a key Bouncy Castle cannot read. Keyed off the text of
+     * {@code BcRunner}'s detail {@code "its user ID is not valid UTF-8, which Bouncy Castle cannot
+     * read"}, so a change to that wording must keep {@link #BOUNCY_CASTLE_CANNOT_READ} in it; the
+     * mojo's tests pin it. {@code BcRunner}'s other such detail, {@code "Bouncy Castle cannot read
+     * the copy from …"}, comes with {@code UNSUPPORTED_ALGORITHM}, a claim attributed to no
+     * signer, so it never reaches this check.
+     */
+    private static boolean unreadableByBouncyCastle(SignerInfo info) {
+        return info.notCheckedBecause.contains(BOUNCY_CASTLE_CANNOT_READ);
+    }
+
+    /**
+     * Shows the user ID a key carries as a comment on its fingerprint, never as config: it is
+     * self-certified, so it helps a reviewer recognize the key but proves nothing. It is left out
+     * for a signer named by the address it shows, which the directory verified.
+     */
     private static String userIdComment(String userId) {
         return userId == null ? "" : "  # user ID on the key, unverified: " + userId.replaceAll("\\R", " ");
     }

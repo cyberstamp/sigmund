@@ -213,6 +213,20 @@ class SignatureEvidenceAdapterTest {
             assertThat(results.get(0).isIndeterminateBecause(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
         }
 
+        /**
+         * Why a fetch failed is known only after it: the result reported is the tool's answer
+         * once the fetch was tried, not the one it gave before.
+         */
+        @Test
+        void aFailedFetchReportsTheToolsAnswerAfterIt() {
+            var importingTool = mockImportingTool("bc", false);
+            var adapter = adapterWith(singleClaimFormat(), List.of(importingTool));
+
+            List<ClaimResult> results = adapter.verify(ARTIFACT, Evidence.read(EVIDENCE, Evidence.SOURCE_SIDECAR));
+
+            assertThat(results.get(0).detail()).isEqualTo(ImportingTool.AFTER_A_FAILED_FETCH);
+        }
+
         @Test
         void noKeyContinuesToNextTool() {
             var failingTool = mockTool("gpg", true, true, noKeyVerifyResult(), List.of());
@@ -531,9 +545,11 @@ class SignatureEvidenceAdapterTest {
     }
 
     private static class ImportingTool implements SignatureTool, KeyImporter {
+        static final String AFTER_A_FAILED_FETCH = "no keyserver could be asked";
         private final String name;
         private final boolean importSucceeds;
         private boolean imported;
+        private boolean fetchTried;
 
         ImportingTool(String name, boolean importSucceeds) {
             this.name = name;
@@ -581,7 +597,7 @@ class SignatureEvidenceAdapterTest {
                 return new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "Test", "RSA", 4, FP, FP);
             }
             return new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE, null, null, 4, FP,
-                    FP);
+                    FP).withDetail(fetchTried ? AFTER_A_FAILED_FETCH : null);
         }
 
         @Override
@@ -599,6 +615,7 @@ class SignatureEvidenceAdapterTest {
 
         @Override
         public boolean fetchKey(String keyId) {
+            fetchTried = true;
             imported = importSucceeds;
             return importSucceeds;
         }
