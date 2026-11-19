@@ -101,6 +101,23 @@ public enum IssuerKind {
     }
 
     /**
+     * Returns the known directory a keyserver URL belongs to.
+     *
+     * <p>
+     * A directory is reached through its keyserver endpoint, which may be written with the
+     * {@code hkps://} scheme as keyserver settings do; the scheme, the case of the host and a
+     * trailing slash do not matter.
+     *
+     * @param keyserverUrl the keyserver URL as configured
+     * @return the directory's canonical name, or {@code null} when the URL is not a known
+     *         directory's
+     */
+    public static String directoryServing(String keyserverUrl) {
+        String canonical = canonicalName(keyserverUrl.trim().replaceFirst("(?i)^hkps://", ""));
+        return KNOWN_DIRECTORIES.contains(canonical) ? canonical : null;
+    }
+
+    /**
      * Classifies an issuer by its name.
      *
      * @param name the issuer name, in any form {@link #canonicalName(String)} accepts

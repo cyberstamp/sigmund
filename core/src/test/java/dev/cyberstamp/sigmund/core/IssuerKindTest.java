@@ -31,6 +31,17 @@ class IssuerKindTest {
         }
 
         @Test
+        void aKeyserverUrlNamesItsDirectory() {
+            assertThat(IssuerKind.directoryServing("hkps://keys.openpgp.org"))
+                    .isEqualTo(IssuerKind.KEYS_OPENPGP_ORG);
+            assertThat(IssuerKind.directoryServing("https://keys.openpgp.org"))
+                    .isEqualTo(IssuerKind.KEYS_OPENPGP_ORG);
+            assertThat(IssuerKind.directoryServing("HKPS://Keys.OpenPGP.org/"))
+                    .isEqualTo(IssuerKind.KEYS_OPENPGP_ORG);
+            assertThat(IssuerKind.directoryServing("hkps://keyserver.ubuntu.com")).isNull();
+        }
+
+        @Test
         void anyOtherHttpsUrlIsAnOidcIssuer() {
             assertThat(IssuerKind.of("https://token.actions.githubusercontent.com"))
                     .isEqualTo(IssuerKind.OIDC);

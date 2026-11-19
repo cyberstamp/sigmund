@@ -18,9 +18,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
+import org.bouncycastle.bcpg.BCPGOutputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
 import org.bouncycastle.bcpg.PublicKeyAlgorithmTags;
 import org.bouncycastle.bcpg.PublicKeyPacket;
+import org.bouncycastle.bcpg.UserIDPacket;
 import org.bouncycastle.bcpg.sig.KeyFlags;
 import org.bouncycastle.bcpg.sig.RevocationReasonTags;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -33,6 +35,7 @@ import org.bouncycastle.openpgp.PGPSecretKeyRing;
 import org.bouncycastle.openpgp.PGPSignature;
 import org.bouncycastle.openpgp.PGPSignatureGenerator;
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator;
+import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPDigestCalculatorProviderBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyPair;
@@ -217,7 +220,169 @@ class KeyValidityAgreementTest {
         Map<String, VerifyResult> answers = answers(cert, artifact, claim);
         assertThat(outcomes(answers))
                 .isEqualTo(everywhere("INDETERMINATE(" + IndeterminateReason.KEY_UNAVAILABLE + ")"));
-        assertThat(answers.get("bc").detail()).isEqualTo("its self-signatures do not bind it");
+        assertThat(answers.get("bc").detail())
+                .isEqualTo("the copy from hkps://keys.example.org carries no self-signature binding the key");
+    }
+
+    /**
+     * A user ID certification revocation changes which user IDs a key shows, never whether the
+     * key signs: GnuPG and Sequoia verify with a key whose first user ID was revoked while a
+     * second binds it. Bouncy Castle derives the binding from the first user ID alone.
+     */
+    @Test
+    void aRevokedFirstUserIdWithAValidSecondVerifiesEverywhere() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact);
+
+        PGPPublicKeyRing cert = certificate(key,
+                userId(A, userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, A, FOUR_HOURS_AGO),
+                        userIdSignature(key, key, PGPSignature.CERTIFICATION_REVOCATION, A, TWO_HOURS_AGO)),
+                userId(B, userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, B, FOUR_HOURS_AGO)));
+
+        assertThat(outcomes(cert, artifact, claim)).isEqualTo(everywhere("VERIFIED"));
+    }
+
+    @Test
+    void anOnlyUserIdRevokedBeforeTheSignatureVerifiesEverywhere() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact);
+
+        assertThat(outcomes(soleRevokedUserId(key), artifact, claim)).isEqualTo(everywhere("VERIFIED"));
+    }
+
+    @Test
+    void anOnlyUserIdRevokedAfterTheSignatureVerifiesEverywhere() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact, Instant.now().minus(Duration.ofHours(3)));
+
+        assertThat(outcomes(soleRevokedUserId(key), artifact, claim)).isEqualTo(everywhere("VERIFIED"));
+    }
+
+    /**
+     * A revocation made by another key is a forgery a keyserver can add. It is never the attack
+     * signal and revokes nothing.
+     */
+    @Test
+    void aForgedUserIdRevocationVerifiesEverywhere() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        PGPSecretKeyRing other = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact);
+
+        PGPPublicKeyRing cert = certificate(key,
+                userId(A, userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, A, FOUR_HOURS_AGO),
+                        userIdSignature(other, key, PGPSignature.CERTIFICATION_REVOCATION, A, TWO_HOURS_AGO)));
+
+        assertThat(outcomes(cert, artifact, claim)).isEqualTo(everywhere("VERIFIED"));
+    }
+
+    @Test
+    void anUnsignedFirstUserIdWithAValidSecondVerifiesEverywhere() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact);
+
+        PGPPublicKeyRing cert = certificate(key, userId(A),
+                userId(B, userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, B, FOUR_HOURS_AGO)));
+
+        assertThat(outcomes(cert, artifact, claim)).isEqualTo(everywhere("VERIFIED"));
+    }
+
+    @Test
+    void aForgedCertificationOnTheFirstUserIdWithAValidSecondVerifiesEverywhere() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        PGPSecretKeyRing other = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact);
+
+        PGPPublicKeyRing cert = certificate(key,
+                userId(A, userIdSignature(other, key, PGPSignature.POSITIVE_CERTIFICATION, A, FOUR_HOURS_AGO)),
+                userId(B, userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, B, FOUR_HOURS_AGO)));
+
+        assertThat(outcomes(cert, artifact, claim)).isEqualTo(everywhere("VERIFIED"));
+    }
+
+    @Test
+    void aValidFirstUserIdWithANewerForgedCertificationAndAValidSecondVerifiesEverywhere() throws Exception {
+        PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        PGPSecretKeyRing other = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+        Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
+        OpenPgpClaim claim = sign(key, artifact);
+
+        PGPPublicKeyRing cert = certificate(key,
+                userId(A, userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, A, FOUR_HOURS_AGO),
+                        userIdSignature(other, key, PGPSignature.POSITIVE_CERTIFICATION, A, TWO_HOURS_AGO)),
+                userId(B, userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, B, FOUR_HOURS_AGO)));
+
+        assertThat(outcomes(cert, artifact, claim)).isEqualTo(everywhere("VERIFIED"));
+    }
+
+    private static final byte[] A = "A <a@example.org>".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] B = "B <b@example.org>".getBytes(StandardCharsets.UTF_8);
+    private static final Instant FOUR_HOURS_AGO = Instant.now().minus(Duration.ofHours(4));
+
+    private record UserIdPackets(byte[] id, List<PGPSignature> signatures) {
+    }
+
+    private static UserIdPackets userId(byte[] id, PGPSignature... signatures) {
+        return new UserIdPackets(id, List.of(signatures));
+    }
+
+    private static PGPPublicKeyRing soleRevokedUserId(PGPSecretKeyRing key) throws Exception {
+        return certificate(key,
+                userId(A, userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, A, FOUR_HOURS_AGO),
+                        userIdSignature(key, key, PGPSignature.CERTIFICATION_REVOCATION, A,
+                                Instant.now().minus(Duration.ofHours(2)))));
+    }
+
+    /** The primary key with the given user IDs and their signatures, in the given order. */
+    private static PGPPublicKeyRing certificate(PGPSecretKeyRing key, UserIdPackets... userIds) throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        BCPGOutputStream out = new BCPGOutputStream(bytes);
+        out.writePacket(key.getPublicKey().getPublicKeyPacket());
+        for (UserIdPackets userId : userIds) {
+            out.writePacket(new UserIDPacket(userId.id()));
+            for (PGPSignature signature : userId.signatures()) {
+                signature.encode(out);
+            }
+        }
+        out.close();
+        return new PGPPublicKeyRing(bytes.toByteArray(), new JcaKeyFingerprintCalculator());
+    }
+
+    /**
+     * A signature of the given type over a user ID of {@code subject}'s primary key, made by
+     * {@code signer}; a forgery when the signer is not the subject, though it names the subject
+     * as its issuer.
+     */
+    private static PGPSignature userIdSignature(PGPSecretKeyRing signer, PGPSecretKeyRing subject, int type,
+            byte[] userId, Instant at) throws Exception {
+        PGPSecretKey secret = signer.getSecretKey();
+        PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                new JcaPGPContentSignerBuilder(PublicKeyAlgorithmTags.RSA_GENERAL, HashAlgorithmTags.SHA256),
+                secret.getPublicKey());
+        generator.init(type, secret.extractPrivateKey(null));
+        PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+        hashed.setSignatureCreationTime(true, Date.from(at));
+        hashed.setIssuerFingerprint(false, subject.getPublicKey());
+        if (type == PGPSignature.CERTIFICATION_REVOCATION) {
+            hashed.setRevocationReason(false, RevocationReasonTags.USER_NO_LONGER_VALID, "retired");
+        } else {
+            hashed.setKeyFlags(false, KeyFlags.CERTIFY_OTHER | KeyFlags.SIGN_DATA);
+        }
+        generator.setHashedSubpackets(hashed.generate());
+        byte[] keyBody = subject.getPublicKey().getPublicKeyPacket().getEncodedContents();
+        generator.update((byte) 0x99);
+        generator.update((byte) (keyBody.length >> 8));
+        generator.update((byte) keyBody.length);
+        generator.update(keyBody);
+        generator.update((byte) 0xB4);
+        generator.update(ByteBuffer.allocate(4).putInt(userId.length).array());
+        generator.update(userId);
+        return generator.generate();
     }
 
     private static Map<String, String> everywhere(String outcome) {

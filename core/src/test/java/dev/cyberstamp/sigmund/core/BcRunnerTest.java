@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPairGenerator;
@@ -14,14 +15,17 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
+import org.bouncycastle.bcpg.BCPGOutputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
 import org.bouncycastle.bcpg.PublicKeyAlgorithmTags;
 import org.bouncycastle.bcpg.PublicKeyPacket;
 import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags;
+import org.bouncycastle.bcpg.UserIDPacket;
 import org.bouncycastle.bcpg.sig.KeyFlags;
 import org.bouncycastle.bcpg.sig.RevocationReasonTags;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -35,6 +39,7 @@ import org.bouncycastle.openpgp.PGPSecretKeyRing;
 import org.bouncycastle.openpgp.PGPSignature;
 import org.bouncycastle.openpgp.PGPSignatureGenerator;
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator;
+import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPDigestCalculatorProviderBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyPair;
@@ -331,6 +336,185 @@ class BcRunnerTest {
                                 HashAlgorithmTags.SHA256));
             }
             return generator;
+        }
+    }
+
+    @Nested
+    class DisplayedUserId {
+
+        private static final String DIRECTORY = "hkps://keys.openpgp.org";
+
+        @Test
+        void anUnboundUserIdIsNeverShown(@TempDir Path tempDir) throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            PGPPublicKeyRing certificate = certificate(primary,
+                    userId("Intruder <intruder@example.org>", null),
+                    userId("Signer <signer@example.org>", certify(primary, "Signer <signer@example.org>", false)));
+
+            assertThat(displayedFor(tempDir, primary, Map.of(DIRECTORY, certificate)))
+                    .isEqualTo("Signer <signer@example.org>");
+        }
+
+        @Test
+        void aRevokedUserIdIsNeverShown(@TempDir Path tempDir) throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            byte[] revoked = bytes("Old <old@example.org>");
+            PGPPublicKeyRing certificate = certificate(primary,
+                    userId("Old <old@example.org>", certify(primary, "Old <old@example.org>", false),
+                            revokeCertification(primary, revoked)),
+                    userId("Signer <signer@example.org>", certify(primary, "Signer <signer@example.org>", false)));
+
+            assertThat(displayedFor(tempDir, primary, Map.of(DIRECTORY, certificate)))
+                    .isEqualTo("Signer <signer@example.org>");
+        }
+
+        @Test
+        void aDirectoryServedUserIdIsPreferredOverThePrimary(@TempDir Path tempDir) throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            PGPPublicKeyRing directoryCopy = certificate(primary,
+                    userId("Verified <verified@example.org>", certify(primary, "Verified <verified@example.org>", false)));
+            PGPPublicKeyRing otherCopy = certificate(primary,
+                    userId("Verified <verified@example.org>", certify(primary, "Verified <verified@example.org>", false)),
+                    userId("Primary <primary@example.org>", certify(primary, "Primary <primary@example.org>", true)));
+            Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
+            copies.put("hkps://keyserver.example.org", otherCopy);
+            copies.put(DIRECTORY, directoryCopy);
+
+            assertThat(displayedFor(tempDir, primary, copies)).isEqualTo("Verified <verified@example.org>");
+        }
+
+        @Test
+        void thePrimaryIsShownForAKeyFromALocalStore(@TempDir Path tempDir) throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            PGPPublicKeyRing certificate = certificate(primary,
+                    userId("First <first@example.org>", certify(primary, "First <first@example.org>", false)),
+                    userId("Primary <primary@example.org>", certify(primary, "Primary <primary@example.org>", true)));
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+            store.storeCert(certificate);
+
+            assertThat(displayed(tempDir, store, primary)).isEqualTo("Primary <primary@example.org>");
+        }
+
+        @Test
+        void aUserIdThatIsNotUtf8IsSkipped(@TempDir Path tempDir) throws Exception {
+            PGPKeyPair primary = rsaKeyPair();
+            byte[] latin1 = new byte[] { 'J', 'o', 's', (byte) 0xE9 };
+            PGPPublicKeyRing certificate = certificate(primary,
+                    userId(latin1, certify(primary, latin1, false)),
+                    userId("Signer <signer@example.org>", certify(primary, "Signer <signer@example.org>", false)));
+
+            assertThat(displayedFor(tempDir, primary, Map.of(DIRECTORY, certificate)))
+                    .isEqualTo("Signer <signer@example.org>");
+        }
+
+        private static String displayedFor(Path tempDir, PGPKeyPair primary,
+                Map<String, PGPPublicKeyRing> copies) throws Exception {
+            BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+            store.addFetched(copies);
+            return displayed(tempDir, store, primary);
+        }
+
+        private static String displayed(Path tempDir, BcKeyStore store, PGPKeyPair primary) throws Exception {
+            Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
+            OpenPgpClaim claim = lowLevelSignature(primary.getPublicKey(), primary.getPrivateKey(),
+                    artifact, HashAlgorithmTags.SHA256, Instant.now());
+            try (BcRunner runner = new BcRunner(store, null, null)) {
+                VerifyResult result = runner.verify(artifact, claim);
+                assertThat(result.isVerified()).as(result.outcome() + " " + result.reason()).isTrue();
+                return result.signerDisplayName();
+            }
+        }
+
+        private record UserIdEntry(byte[] id, List<PGPSignature> signatures) {
+        }
+
+        private static UserIdEntry userId(String id, PGPSignature certification, PGPSignature... more) {
+            return userId(bytes(id), certification, more);
+        }
+
+        private static UserIdEntry userId(byte[] id, PGPSignature certification, PGPSignature... more) {
+            List<PGPSignature> signatures = new ArrayList<>();
+            if (certification != null) {
+                signatures.add(certification);
+            }
+            signatures.addAll(List.of(more));
+            return new UserIdEntry(id, signatures);
+        }
+
+        private static byte[] bytes(String id) {
+            return id.getBytes(StandardCharsets.UTF_8);
+        }
+
+        private static PGPPublicKeyRing certificate(PGPKeyPair primary, UserIdEntry... entries) throws Exception {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            BCPGOutputStream out = new BCPGOutputStream(bytes);
+            out.writePacket(primary.getPublicKey().getPublicKeyPacket());
+            for (UserIdEntry entry : entries) {
+                out.writePacket(new UserIDPacket(entry.id()));
+                for (PGPSignature signature : entry.signatures()) {
+                    signature.encode(out);
+                }
+            }
+            out.close();
+            return new PGPPublicKeyRing(bytes.toByteArray(), new JcaKeyFingerprintCalculator());
+        }
+
+        private static PGPSignature certify(PGPKeyPair primary, String id, boolean primaryUserId) throws Exception {
+            return certify(primary, bytes(id), primaryUserId);
+        }
+
+        private static PGPSignature certify(PGPKeyPair primary, byte[] id, boolean primaryUserId) throws Exception {
+            PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+            hashed.setSignatureCreationTime(true, Date.from(Instant.now().minusSeconds(3000)));
+            hashed.setIssuerFingerprint(false, primary.getPublicKey());
+            hashed.setKeyFlags(false, KeyFlags.CERTIFY_OTHER | KeyFlags.SIGN_DATA);
+            if (primaryUserId) {
+                hashed.setPrimaryUserID(true, true);
+            }
+            return userIdSignature(primary, PGPSignature.POSITIVE_CERTIFICATION, id, hashed);
+        }
+
+        private static PGPSignature revokeCertification(PGPKeyPair primary, byte[] id) throws Exception {
+            PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+            hashed.setSignatureCreationTime(true, Date.from(Instant.now().minusSeconds(2000)));
+            hashed.setIssuerFingerprint(false, primary.getPublicKey());
+            hashed.setRevocationReason(false, RevocationReasonTags.USER_NO_LONGER_VALID, "retired");
+            return userIdSignature(primary, PGPSignature.CERTIFICATION_REVOCATION, id, hashed);
+        }
+
+        private static PGPSignature userIdSignature(PGPKeyPair primary, int type, byte[] id,
+                PGPSignatureSubpacketGenerator hashed) throws Exception {
+            PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                    new JcaPGPContentSignerBuilder(PublicKeyAlgorithmTags.RSA_GENERAL, HashAlgorithmTags.SHA256),
+                    primary.getPublicKey());
+            generator.init(type, primary.getPrivateKey());
+            generator.setHashedSubpackets(hashed.generate());
+            generator.update(certifiedKey(primary.getPublicKey()));
+            generator.update(userIdHeader(id));
+            generator.update(id);
+            return generator.generate();
+        }
+
+        private static byte[] certifiedKey(PGPPublicKey key) throws Exception {
+            byte[] body = key.getPublicKeyPacket().getEncodedContents();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            out.write(0x99);
+            out.write(body.length >> 8);
+            out.write(body.length);
+            out.write(body);
+            return out.toByteArray();
+        }
+
+        private static byte[] userIdHeader(byte[] id) {
+            return new byte[] { (byte) 0xB4, (byte) (id.length >> 24), (byte) (id.length >> 16),
+                    (byte) (id.length >> 8), (byte) id.length };
+        }
+
+        private static PGPKeyPair rsaKeyPair() throws Exception {
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA", new BouncyCastleProvider());
+            generator.initialize(2048, new SecureRandom());
+            return new JcaPGPKeyPair(PublicKeyPacket.VERSION_4, PublicKeyAlgorithmTags.RSA_GENERAL,
+                    generator.generateKeyPair(), Date.from(Instant.now().minusSeconds(3600)));
         }
     }
 

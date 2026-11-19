@@ -335,6 +335,17 @@ class BcKeyStore {
                 .toList();
     }
 
+    /**
+     * Returns the keyservers that served a copy of a certificate this session.
+     *
+     * @param fingerprint the fingerprint of the certificate's primary key or a subkey
+     * @return the keyserver URLs, in the order the copies were given; empty when the
+     *         certificate came from a local store
+     */
+    List<String> keyserversServing(String fingerprint) {
+        return List.copyOf(servedCopiesOf(fingerprint).keySet());
+    }
+
     private PGPPublicKeyRing servedCopy(String fingerprint, String keyserver) {
         return servedCopiesOf(fingerprint).get(keyserver);
     }

@@ -23,6 +23,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
@@ -64,6 +65,7 @@ import org.bouncycastle.openpgp.operator.bc.BcAEADSecretKeyEncryptorBuilder;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 import org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyDecryptorBuilder;
 import org.bouncycastle.openpgp.operator.bc.BcPGPContentSignerBuilder;
+import org.bouncycastle.openpgp.operator.bc.BcPGPContentVerifierBuilderProvider;
 import org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPDigestCalculatorProviderBuilder;
@@ -462,11 +464,19 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * {@inheritDoc}
      *
      * <p>
-     * Looks up the primary user ID from the key store.
+     * Looks up a user ID the key's holder bound and has not revoked, chosen as the user ID shown
+     * for a verified signature is, never one a keyserver added to a copy; {@code null} when the
+     * key is not in the store or binds none.
      */
     @Override
     public String lookupKeyUserId(String keyId) {
-        return keyStore.findPrimaryUserId(keyId);
+        BcKeyStore.KeyLookup found = keyStore.findPublicKey(keyId);
+        if (found == null) {
+            return null;
+        }
+        OpenPGPCertificate certificate = new OpenPGPCertificate(found.ring(),
+                api.getImplementation(), VERIFICATION_POLICY);
+        return displayedUserId(certificate, keyId, new Date());
     }
 
     /**
@@ -622,8 +632,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             return keyNotFound(opgu, fingerprint, algorithm, version, unreadableCopy(search, fingerprint));
         }
 
-        return verifySignature(artifactFile, opgu, found, version, fingerprint, algorithm,
-                keyStore.primaryUserIdOf(found.ring()));
+        return verifySignature(artifactFile, opgu, found, version, fingerprint, algorithm);
     }
 
     /**
@@ -707,22 +716,24 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      */
     private OpenPgpVerifyResult verifySignature(Path artifactFile, OpenPgpClaim opgu,
             BcKeyStore.KeyLookup found, int version, String fingerprint,
-            String algorithm, String userId) {
-        PGPPublicKeyRing pubKeyRing = found.ring();
+            String algorithm) {
         try {
+            PGPPublicKeyRing pubKeyRing = bindingViewOf(found.ring());
             byte[] sigBytes = AscCombiner.dearmor(opgu.armoredBlock());
             PGPSignature signature = parseSignature(sigBytes);
             if (signature == null) {
-                return OpenPgpVerifyResult.indeterminate(IndeterminateReason.EVIDENCE_MALFORMED, userId,
+                return OpenPgpVerifyResult.indeterminate(IndeterminateReason.EVIDENCE_MALFORMED, null,
                         algorithm, version, fingerprint, fingerprint);
             }
+            OpenPGPCertificate certificate = new OpenPGPCertificate(pubKeyRing,
+                    api.getImplementation(), VERIFICATION_POLICY);
+            OpenPGPCertificate unfiltered = new OpenPGPCertificate(found.ring(),
+                    api.getImplementation(), VERIFICATION_POLICY);
+            String userId = displayedUserId(unfiltered, fingerprint, signature.getCreationTime());
             if (findVerificationKey(pubKeyRing, signature) == null) {
                 return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId, algorithm, version,
                         fingerprint, fingerprint).withDetail("the certificate found does not contain the signing key");
             }
-
-            OpenPGPCertificate certificate = new OpenPGPCertificate(pubKeyRing,
-                    api.getImplementation(), VERIFICATION_POLICY);
             OpenPGPDocumentSignature document = verifyAgainst(certificate, signature, artifactFile);
             if (document == null || document.getIssuer() == null || !document.isTestedCorrect()) {
                 return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint)
@@ -738,9 +749,111 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
                             primaryFingerprintOf(pubKeyRing, signingKey))
                     .withKeySource(found.source());
         } catch (Exception e) {
-            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.TOOL_UNAVAILABLE, userId,
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.TOOL_UNAVAILABLE, null,
                     algorithm, version, fingerprint, fingerprint);
         }
+    }
+
+    /**
+     * The certificate as Bouncy Castle must see it to decide whether the key is bound: with
+     * only the user ID certifications that verify against the primary key, no user ID
+     * certification revocations, and no user ID left without a verifying certification.
+     *
+     * <p>
+     * Bouncy Castle 1.86 derives the primary key's binding from its first user ID alone and
+     * takes a revocation without checking its type or signature. A first user ID that is unsigned,
+     * certified by a forgery or revoked would so reject a key that GnuPG and Sequoia accept, and
+     * a forged revocation would be read as one. The view is for this question only: a user ID
+     * revocation does not touch the key, and a user ID is never a credential. Key-level
+     * signatures (key revocation, direct-key, subkey bindings) are left as they are, and the
+     * user ID to show is chosen from the certificate unfiltered.
+     */
+    private static PGPPublicKeyRing bindingViewOf(PGPPublicKeyRing ring) {
+        PGPPublicKey primary = ring.getPublicKey();
+        List<byte[]> userIds = new ArrayList<>();
+        primary.getRawUserIDs().forEachRemaining(userIds::add);
+        PGPPublicKey view = primary;
+        for (byte[] userId : userIds) {
+            view = withVerifyingCertificationsOnly(view, primary, userId);
+        }
+        return PGPPublicKeyRing.insertPublicKey(ring, view);
+    }
+
+    private static PGPPublicKey withVerifyingCertificationsOnly(PGPPublicKey view, PGPPublicKey primary,
+            byte[] userId) {
+        List<PGPSignature> signatures = new ArrayList<>();
+        primary.getSignaturesForID(userId).forEachRemaining(signatures::add);
+        boolean certified = false;
+        for (PGPSignature signature : signatures) {
+            if (isVerifyingCertification(signature, userId, primary)) {
+                certified = true;
+            } else {
+                view = PGPPublicKey.removeCertification(view, userId, signature);
+            }
+        }
+        return certified ? view : PGPPublicKey.removeCertification(view, userId);
+    }
+
+    private static boolean isVerifyingCertification(PGPSignature signature, byte[] userId, PGPPublicKey primary) {
+        if (signature.getSignatureType() == PGPSignature.CERTIFICATION_REVOCATION) {
+            return false;
+        }
+        try {
+            signature.init(new BcPGPContentVerifierBuilderProvider(), primary);
+            return signature.verifyCertification(userId, primary);
+        } catch (PGPException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * The user ID to show for a certificate: one its holder bound and has not revoked as of
+     * the moment of signing.
+     *
+     * <p>
+     * A user ID a keyserver added without the holder's self-signature is never shown, however
+     * many copies carried it. Among the bound ones, a user ID a known directory's copy carried is
+     * preferred, since the directory published it only after its owner proved the address; next
+     * the primary user ID, then the first. A user ID that is not UTF-8 is skipped.
+     *
+     * @return the user ID, or {@code null} when the certificate binds none
+     */
+    private String displayedUserId(OpenPGPCertificate certificate, String fingerprint, Date signedAt) {
+        List<String> bound = certificate.getValidUserIds(signedAt).stream()
+                .map(OpenPGPCertificate.OpenPGPUserId::getUserId)
+                .filter(Objects::nonNull)
+                .filter(BcRunner::isUtf8Text)
+                .toList();
+        if (bound.isEmpty()) {
+            return null;
+        }
+        String directoryServed = directoryServedAmong(bound, fingerprint);
+        if (directoryServed != null) {
+            return directoryServed;
+        }
+        OpenPGPCertificate.OpenPGPUserId primaryUserId = certificate.getPrimaryUserId(signedAt);
+        if (primaryUserId != null && bound.contains(primaryUserId.getUserId())) {
+            return primaryUserId.getUserId();
+        }
+        return bound.get(0);
+    }
+
+    private String directoryServedAmong(List<String> bound, String fingerprint) {
+        for (String keyserver : keyStore.keyserversServing(fingerprint)) {
+            if (IssuerKind.directoryServing(keyserver) == null) {
+                continue;
+            }
+            for (String userId : keyStore.userIdsServedBy(fingerprint, keyserver)) {
+                if (bound.contains(userId)) {
+                    return userId;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean isUtf8Text(String userId) {
+        return userId.indexOf('\uFFFD') < 0;
     }
 
     /**
