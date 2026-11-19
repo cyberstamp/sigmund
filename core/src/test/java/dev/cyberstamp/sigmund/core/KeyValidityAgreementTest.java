@@ -547,7 +547,7 @@ class KeyValidityAgreementTest {
         Path certFile = Files.writeString(dir.resolve("cert.asc"), armor(cert));
 
         BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc"));
-        store.addFetched(Map.of("hkps://keys.example.org", cert));
+        BcTestKeys.addFetched(store, Map.of("hkps://keys.example.org", cert));
         Path gpgHome = GpgTestKeys.home(dir.resolve("gpg-home"));
         CliTool.run(Map.of("GNUPGHOME", gpgHome.toString()),
                 "gpg", "--batch", "--import", certFile.toString());
@@ -574,7 +574,7 @@ class KeyValidityAgreementTest {
         copies.put("hkps://one.example.org", new PGPPublicKeyRing(encoded, new BcKeyFingerprintCalculator()));
         copies.put("hkps://two.example.org", new PGPPublicKeyRing(encoded, new BcKeyFingerprintCalculator()));
         BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc"));
-        store.addFetched(copies);
+        BcTestKeys.addFetched(store, copies);
         Path certFile = Files.writeString(dir.resolve("cert.asc"), armor(cert));
         Path sqHome = Files.createDirectories(dir.resolve("sq-home"));
         CliTool.run(SqRunner.envFor(sqHome), "sq", "cert", "import", certFile.toString());

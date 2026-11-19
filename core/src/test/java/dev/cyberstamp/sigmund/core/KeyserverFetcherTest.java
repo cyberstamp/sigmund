@@ -117,14 +117,14 @@ class KeyserverFetcherTest {
 
                 BcKeyStore verifierStore = new BcKeyStore(null, tempDir.resolve("verifier-cd"),
                         tempDir.resolve("verifier-bp"));
-                verifierStore.addFetched(Map.of("hkps://keys.example.org", strippedKey));
+                BcTestKeys.addFetched(verifierStore, Map.of("hkps://keys.example.org", strippedKey));
 
                 PGPPublicKeyRing cached = verifierStore.findPublicKey(fp).ring();
                 assertThat(cached).isNotNull();
                 assertThat(cached.getPublicKey().getUserIDs().hasNext())
                         .as("Cached key should have no UIDs initially").isFalse();
 
-                verifierStore.addFetched(Map.of("hkps://keys.example.org", fullKey));
+                BcTestKeys.addFetched(verifierStore, Map.of("hkps://keys.example.org", fullKey));
                 cached = verifierStore.findPublicKey(fp).ring();
                 assertThat(cached).isNotNull();
                 assertThat(cached.getPublicKey().getUserIDs().hasNext())
@@ -142,7 +142,7 @@ class KeyserverFetcherTest {
                 PGPPublicKeyRing strippedKey = stripUserIds(fullKey);
 
                 BcKeyStore verifierStore = createStore();
-                verifierStore.addFetched(Map.of("hkps://keys.example.org", strippedKey));
+                BcTestKeys.addFetched(verifierStore, Map.of("hkps://keys.example.org", strippedKey));
 
                 PGPPublicKeyRing found = verifierStore.findPublicKey(fp).ring();
                 assertThat(found).as("Key without UIDs should still be findable").isNotNull();
@@ -238,7 +238,7 @@ class KeyserverFetcherTest {
 
                 BcKeyStore fetchStore = new BcKeyStore(null,
                         tempDir.resolve("fetch-cd"), tempDir.resolve("fetch-bp"));
-                fetchStore.addFetched(Map.of("hkps://keys.example.org", genStore.findPublicKey(fp).ring()));
+                BcTestKeys.addFetched(fetchStore, Map.of("hkps://keys.example.org", genStore.findPublicKey(fp).ring()));
 
                 try (StubFetcher fetcher = new StubFetcher(fetchStore, Map.of(),
                         List.of("hkps://server1"))) {
@@ -340,7 +340,7 @@ class KeyserverFetcherTest {
 
         private String hex(PGPSignature signature) {
             try {
-                return BcKeyStore.bytesToHex(signature.getEncoded());
+                return KeyRingFiles.hex(signature.getEncoded());
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
@@ -455,7 +455,7 @@ class KeyserverFetcherTest {
         void aSubkeyFingerprintLookupJoinsCopiesOfItsCertificate() {
             Iterator<PGPPublicKey> keys = full.getPublicKeys();
             keys.next();
-            String subkeyFingerprint = BcKeyStore.bytesToHex(keys.next().getFingerprint());
+            String subkeyFingerprint = KeyRingFiles.hex(keys.next().getFingerprint());
             PGPPublicKeyRing stored = fetchFrom(fetchStore("fetch"), subkeyFingerprint, bodies(stripped(), full));
 
             assertThat(userIds(stored)).containsExactly(USER_ID);
@@ -466,7 +466,7 @@ class KeyserverFetcherTest {
             Iterator<PGPPublicKey> keys = full.getPublicKeys();
             keys.next();
             PGPPublicKey subkey = keys.next();
-            String keyId = BcKeyStore.bytesToHex(subkey.getFingerprint()).substring(24);
+            String keyId = KeyRingFiles.hex(subkey.getFingerprint()).substring(24);
             BcKeyStore otherStore = createStore();
             String otherFp = BcTestKeys.generate(otherStore, "Mallory <mallory@example.org>", "ed25519", "pgp4");
             PGPPublicKey otherPrimary = otherStore.findPublicKey(otherFp).ring().getPublicKey();
@@ -475,7 +475,7 @@ class KeyserverFetcherTest {
             BcKeyStore store = fetchStore("fetch");
             PGPPublicKeyRing stored = fetchFrom(store, keyId, bodies(full, impostor));
 
-            assertThat(BcKeyStore.bytesToHex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
+            assertThat(KeyRingFiles.hex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
             assertThat(store.findPublicKey(keyId).source()).isEqualTo(TrustRootRef.keyserver(SERVER1));
         }
 
@@ -491,7 +491,7 @@ class KeyserverFetcherTest {
             BcKeyStore store = fetchStore("fetch");
             PGPPublicKeyRing stored = fetchFrom(store, fp, bodies(impostorHolding(full.getPublicKey()), withRevocation()));
 
-            assertThat(BcKeyStore.bytesToHex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
+            assertThat(KeyRingFiles.hex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
             assertThat(store.findPublicKey(fp).source()).isEqualTo(TrustRootRef.keyserver(SERVER2));
             Path artifact = Files.writeString(dir.resolve("artifact.txt"), "content");
             try (BcRunner bc = new BcRunner(store, null, null)) {
@@ -507,12 +507,12 @@ class KeyserverFetcherTest {
             Iterator<PGPPublicKey> keys = full.getPublicKeys();
             keys.next();
             PGPPublicKey subkey = keys.next();
-            String subkeyFingerprint = BcKeyStore.bytesToHex(subkey.getFingerprint());
+            String subkeyFingerprint = KeyRingFiles.hex(subkey.getFingerprint());
 
             BcKeyStore store = fetchStore("fetch");
             PGPPublicKeyRing stored = fetchFrom(store, subkeyFingerprint, bodies(impostorHolding(subkey), full));
 
-            assertThat(BcKeyStore.bytesToHex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
+            assertThat(KeyRingFiles.hex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
             assertThat(store.findPublicKey(subkeyFingerprint).source()).isEqualTo(TrustRootRef.keyserver(SERVER2));
         }
 
@@ -528,7 +528,7 @@ class KeyserverFetcherTest {
 
             PGPPublicKeyRing stored = fetchFrom(store, fp, bodies);
 
-            assertThat(BcKeyStore.bytesToHex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
+            assertThat(KeyRingFiles.hex(stored.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
             assertThat(userIds(stored)).containsExactly(USER_ID);
         }
 
@@ -548,7 +548,7 @@ class KeyserverFetcherTest {
             try (StubFetcher fetcher = new StubFetcher(fetchStore("fetch"), BOTH, bodies, Duration.ofSeconds(10))) {
                 PGPPublicKeyRing copy = fetcher.downloadCopy(fp, SERVER1);
 
-                assertThat(BcKeyStore.bytesToHex(copy.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
+                assertThat(KeyRingFiles.hex(copy.getPublicKey().getFingerprint())).isEqualToIgnoringCase(fp);
                 assertThat(userIds(copy)).containsExactly(USER_ID);
             }
         }

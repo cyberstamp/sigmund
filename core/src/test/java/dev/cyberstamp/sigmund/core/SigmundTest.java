@@ -37,7 +37,7 @@ class SigmundTest {
                 SigningTests.signWithOnlyKey(signer, artifact, signature);
             }
             BcKeyStore verifying = new BcKeyStore(null, tempDir.resolve("b/cert-d"), tempDir.resolve("b/private"));
-            verifying.addFetched(Map.of("hkps://keys.openpgp.org", signing.findPublicKey(fingerprint).ring()));
+            BcTestKeys.addFetched(verifying, Map.of("hkps://keys.openpgp.org", signing.findPublicKey(fingerprint).ring()));
 
             try (BcRunner runner = new BcRunner(verifying, null, null);
                     var sigmund = Sigmund.builder().addTool(runner).issuers(List.of()).build()) {

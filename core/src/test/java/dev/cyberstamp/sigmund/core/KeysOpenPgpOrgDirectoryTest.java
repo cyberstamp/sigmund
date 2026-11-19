@@ -225,7 +225,7 @@ class KeysOpenPgpOrgDirectoryTest {
         Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
         copies.put("hkps://keys.openpgp.org", primaryOnly);
         copies.put("hkps://keyserver.ubuntu.com", full);
-        store.addFetched(copies);
+        BcTestKeys.addFetched(store, copies);
         directory.answerFrom(store);
 
         assertThat(directory.verifiedAddresses(subkey)).isEmpty();
@@ -235,7 +235,7 @@ class KeysOpenPgpOrgDirectoryTest {
 
     private BcKeyStore storeServing(String keyserver, PGPPublicKeyRing ring) {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        store.addFetched(Map.of(keyserver, ring));
+        BcTestKeys.addFetched(store, Map.of(keyserver, ring));
         return store;
     }
 

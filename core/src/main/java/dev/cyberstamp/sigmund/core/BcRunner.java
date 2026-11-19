@@ -18,7 +18,6 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
-import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -285,7 +284,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
 
     private SigningInfo describe(PGPSecretKeyRing ring) {
         PGPPublicKey pub = ring.getPublicKey();
-        String fp = BcKeyStore.bytesToHex(pub.getFingerprint());
+        String fp = KeyRingFiles.hex(pub.getFingerprint());
         String type = pub.getVersion() >= 6 ? Credential.TYPE_PGP6 : Credential.TYPE_PGP4;
         return new SigningInfo(NAME, fp, Algorithms.algorithmName(pub.getAlgorithm()),
                 keyStore.findPrimaryUserId(fp), type);
@@ -364,7 +363,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         try {
             PGPSecretKeyRing secretKeyRing = loadSigningKey(key);
             PGPPublicKeyRing certificate = certificateOf(secretKeyRing);
-            signingCertificates.put(BcKeyStore.bytesToHex(certificate.getPublicKey().getFingerprint()),
+            signingCertificates.put(KeyRingFiles.hex(certificate.getPublicKey().getFingerprint()),
                     certificate);
             return signWithKey(artifactFile, outputSig, secretKeyRing);
         } catch (IOException e) {
@@ -396,7 +395,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
                     cipherSuite != null ? cipherSuite : defaultCipherSuite, keyVersion(credentialType));
             PGPSecretKeyRing secretKeyRing = key.getPGPSecretKeyRing();
             PGPPublicKeyRing publicKeyRing = key.toCertificate().getPGPPublicKeyRing();
-            String fingerprint = BcKeyStore.bytesToHex(key.getFingerprint());
+            String fingerprint = KeyRingFiles.hex(key.getFingerprint());
             secretKeyRing = encryptKeyRing(secretKeyRing, fingerprint);
             keyStore.storeCert(publicKeyRing);
             keyStore.storeSecretKey(secretKeyRing);
@@ -541,7 +540,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
 
     private SignerInspectionResult extractKeyInfo(PGPPublicKeyRing keyRing) {
         PGPPublicKey primaryKey = keyRing.getPublicKey();
-        String fingerprint = BcKeyStore.bytesToHex(primaryKey.getFingerprint());
+        String fingerprint = KeyRingFiles.hex(primaryKey.getFingerprint());
         int version = primaryKey.getVersion();
         String algorithm = resolveAlgorithm(primaryKey.getAlgorithm());
         int bitStrength = primaryKey.getBitStrength();
@@ -571,7 +570,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             subkeys = new ArrayList<>();
             do {
                 PGPPublicKey subkey = keyIt.next();
-                String subFp = BcKeyStore.bytesToHex(subkey.getFingerprint());
+                String subFp = KeyRingFiles.hex(subkey.getFingerprint());
                 String subAlgo = resolveAlgorithm(subkey.getAlgorithm());
                 Set<String> caps = extractKeyCapabilities(subkey);
                 subkeys.add(new SubkeyInfo(subFp, subAlgo, subkey.getBitStrength(), caps));
@@ -745,7 +744,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             }
             PGPPublicKey signingKey = document.getIssuer().getPGPPublicKey();
             return OpenPgpVerifyResult.verified(userId, algorithm, version, fingerprint, fingerprint)
-                    .withKeyFingerprints(hex(signingKey.getFingerprint()),
+                    .withKeyFingerprints(KeyRingFiles.hex(signingKey.getFingerprint()),
                             primaryFingerprintOf(pubKeyRing, signingKey))
                     .withKeySource(found.source());
         } catch (Exception e) {
@@ -993,7 +992,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         PGPSignature signature = revocation.getSignature();
         String detail = "key revoked as " + revocationReason(signature) + " on "
                 + dateOf(revocation.getCreationTime());
-        List<String> servers = keyStore.revocationServedBy(hex(key.getPGPPublicKey().getFingerprint()),
+        List<String> servers = keyStore.revocationServedBy(KeyRingFiles.hex(key.getPGPPublicKey().getFingerprint()),
                 signature);
         return servers.isEmpty() ? detail : detail + "; revocation served by " + String.join(", ", servers);
     }
@@ -1096,11 +1095,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         PGPPublicKey primary = ring.getPublicKey();
         return primary == null || primary.getKeyID() == verifyKey.getKeyID()
                 ? null
-                : hex(primary.getFingerprint());
-    }
-
-    private static String hex(byte[] bytes) {
-        return HexFormat.of().withUpperCase().formatHex(bytes);
+                : KeyRingFiles.hex(primary.getFingerprint());
     }
 
     /**
@@ -1237,7 +1232,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     private SignResult signWithKey(Path artifactFile, Path outputSig,
             PGPSecretKeyRing secretKeyRing) throws IOException, PGPException {
         PGPSecretKey signingKey = findSigningSecretKey(secretKeyRing);
-        String primaryFingerprint = BcKeyStore.bytesToHex(
+        String primaryFingerprint = KeyRingFiles.hex(
                 secretKeyRing.getPublicKey().getFingerprint());
         PGPPrivateKey privateKey = extractPrivateKey(signingKey, primaryFingerprint);
         int hashAlgo = HashAlgorithmTags.SHA512;

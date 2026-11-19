@@ -9,7 +9,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -229,8 +228,7 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
     private static boolean holds(PGPPublicKeyRing ring, String fingerprint) {
         Iterator<PGPPublicKey> keys = ring.getPublicKeys();
         while (keys.hasNext()) {
-            String hex = HexFormat.of().withUpperCase().formatHex(keys.next().getFingerprint());
-            if (hex.equals(fingerprint)) {
+            if (KeyRingFiles.hex(keys.next().getFingerprint()).equals(fingerprint)) {
                 return true;
             }
         }

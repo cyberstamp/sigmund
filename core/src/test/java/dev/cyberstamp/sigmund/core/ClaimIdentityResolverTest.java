@@ -284,7 +284,7 @@ class ClaimIdentityResolverTest {
 
         private KeysOpenPgpOrgDirectory directoryServing(String keyserver, PGPPublicKeyRing ring) {
             BcKeyStore store = store();
-            store.addFetched(Map.of(keyserver, ring));
+            BcTestKeys.addFetched(store, Map.of(keyserver, ring));
             KeysOpenPgpOrgDirectory real = new KeysOpenPgpOrgDirectory("http://127.0.0.1:1");
             real.answerFrom(store);
             return real;
@@ -300,7 +300,7 @@ class ClaimIdentityResolverTest {
         }
 
         private static ClaimResult openPgpClaim(PGPPublicKeyRing ring, String displayed, String tool) {
-            String fingerprint = BcKeyStore.bytesToHex(ring.getPublicKey().getFingerprint());
+            String fingerprint = KeyRingFiles.hex(ring.getPublicKey().getFingerprint());
             OpenPgpVerifyResult result = OpenPgpVerifyResult.verified(displayed, "Ed25519", 4,
                     fingerprint.substring(24), fingerprint);
             return new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null,

@@ -66,7 +66,7 @@ class ForgedSubkeyBindingTest {
             OpenPgpClaim claim = keys.signWithAttackerSubkey(artifact);
 
             BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc"));
-            store.addFetched(Map.of("hkps://lenient.keyserver.example", keys.forgedCertificate()));
+            BcTestKeys.addFetched(store, Map.of("hkps://lenient.keyserver.example", keys.forgedCertificate()));
             try (BcRunner bc = new BcRunner(store, null, null)) {
                 VerifyResult result = bc.verify(artifact, claim);
 
@@ -86,7 +86,7 @@ class ForgedSubkeyBindingTest {
             OpenPgpClaim claim = keys.signWithAttackerSubkey(artifact);
 
             BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc"));
-            store.addFetched(Map.of("hkps://keys.example.org", keys.attackerCertificate()));
+            BcTestKeys.addFetched(store, Map.of("hkps://keys.example.org", keys.attackerCertificate()));
             try (BcRunner bc = new BcRunner(store, null, null)) {
                 VerifyResult result = bc.verify(artifact, claim);
 
@@ -111,7 +111,7 @@ class ForgedSubkeyBindingTest {
             String forged = armor(keys.forgedCertificate());
 
             BcKeyStore store = new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc"));
-            store.addFetched(Map.of("hkps://lenient.keyserver.example", keys.forgedCertificate()));
+            BcTestKeys.addFetched(store, Map.of("hkps://lenient.keyserver.example", keys.forgedCertificate()));
             Path gpgHome = GpgTestKeys.home(dir.resolve("gpg-home"));
             Path sqHome = Files.createDirectories(dir.resolve("sq-home"));
             Path certFile = Files.writeString(dir.resolve("forged.asc"), forged);

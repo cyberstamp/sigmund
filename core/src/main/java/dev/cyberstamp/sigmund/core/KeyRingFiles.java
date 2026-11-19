@@ -109,7 +109,7 @@ final class KeyRingFiles {
             return List.of();
         }
         KeyRingSplit split = splitKeyRings(data);
-        List<PGPPublicKeyRing> rings = new ArrayList<>();
+        List<PGPPublicKeyRing> rings = new ArrayList<>(split.rings.size());
         for (byte[] encoded : split.rings()) {
             PGPPublicKeyRing ring = readServedRing(encoded, source, keyId, unreadable);
             if (ring != null) {
@@ -348,7 +348,14 @@ final class KeyRingFiles {
         return digest.digest(body);
     }
 
-    private static String hex(byte[] bytes) {
+    /**
+     * Formats bytes, such as a fingerprint, as uppercase hex: the form fingerprints take throughout
+     * Sigmund, so two formatted fingerprints compare with {@code equals}.
+     *
+     * @param bytes the bytes to format
+     * @return their uppercase hex digits, two per byte
+     */
+    static String hex(byte[] bytes) {
         return HexFormat.of().withUpperCase().formatHex(bytes);
     }
 

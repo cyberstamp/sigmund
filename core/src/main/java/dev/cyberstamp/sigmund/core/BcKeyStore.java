@@ -224,33 +224,17 @@ class BcKeyStore {
      * @return the key ring and its source
      */
     private KeyLookup found(PGPPublicKeyRing ring, TrustRootRef store) {
-        TrustRootRef keyservers = fetchedFrom.get(fingerprintHex(ring).toUpperCase());
+        TrustRootRef keyservers = fetchedFromSource(ring);
         return new KeyLookup(keyservers != null ? keyservers : store, ring);
     }
 
     /**
-     * Names the keyserver a key held in memory came from: only fetched keys are kept there,
-     * and {@link #addFetched} records the keyserver as it adds them.
+     * Names the keyservers a fetched key came from, as {@link #addFetched} recorded them, or
+     * {@code null} for a key that was not fetched this session. Every key held in memory was
+     * fetched, so a key found there always has its keyservers recorded.
      */
     private TrustRootRef fetchedFromSource(PGPPublicKeyRing ring) {
-        return fetchedFrom.get(fingerprintHex(ring).toUpperCase());
-    }
-
-    /**
-     * Adds the copies of a certificate fetched by its primary key's fingerprint, as
-     * {@link #addFetched(String, Map)} does with one certificate per keyserver.
-     *
-     * @param copiesByKeyserver the copy each keyserver served, by keyserver URL, in the order
-     *        the keyservers are configured; must not be empty, and the first copy's primary key
-     *        is the key asked for
-     */
-    void addFetched(Map<String, PGPPublicKeyRing> copiesByKeyserver) {
-        if (copiesByKeyserver.isEmpty()) {
-            throw new IllegalArgumentException("at least one copy is required");
-        }
-        Map<String, List<PGPPublicKeyRing>> served = new LinkedHashMap<>();
-        copiesByKeyserver.forEach((keyserver, copy) -> served.put(keyserver, List.of(copy)));
-        addFetched(fingerprintHex(copiesByKeyserver.values().iterator().next()), served);
+        return fetchedFrom.get(fingerprintHex(ring));
     }
 
     /**
@@ -293,7 +277,7 @@ class BcKeyStore {
     void addFetched(String keyId, Map<String, List<PGPPublicKeyRing>> served) {
         Map<String, PGPPublicKeyRing> kept = copiesOfAskedCertificate(keyId, served);
         PGPPublicKeyRing joined = withLocalCopy(join(kept.values()));
-        String fingerprint = fingerprintHex(joined).toUpperCase();
+        String fingerprint = fingerprintHex(joined);
         if (persistFetched) {
             storeCert(joined);
         } else {
@@ -305,11 +289,11 @@ class BcKeyStore {
 
     private static Map<String, PGPPublicKeyRing> copiesOfAskedCertificate(String keyId,
             Map<String, List<PGPPublicKeyRing>> served) {
-        Map<String, PGPPublicKeyRing> kept = new LinkedHashMap<>();
         Map<String, List<PGPPublicKeyRing>> chosen = bestServedGroup(keyId, groupedByPrimary(keyId, served));
         if (chosen == null) {
             throw new IllegalArgumentException("no copy holds " + keyId);
         }
+        Map<String, PGPPublicKeyRing> kept = new LinkedHashMap<>(chosen.size());
         chosen.forEach((keyserver, copies) -> kept.put(keyserver, join(copies)));
         return kept;
     }
@@ -335,7 +319,7 @@ class BcKeyStore {
         Map<String, Map<String, List<PGPPublicKeyRing>>> groups = new LinkedHashMap<>();
         served.forEach((keyserver, copies) -> copies.stream()
                 .filter(copy -> matchesFingerprint(copy, keyId))
-                .forEach(copy -> groups.computeIfAbsent(fingerprintHex(copy).toUpperCase(), primary -> new LinkedHashMap<>())
+                .forEach(copy -> groups.computeIfAbsent(fingerprintHex(copy), primary -> new LinkedHashMap<>())
                         .computeIfAbsent(keyserver, server -> new ArrayList<>())
                         .add(copy)));
         return groups;
@@ -377,29 +361,29 @@ class BcKeyStore {
      * before {@link PGPPublicKeyRing#join} sees it: Bouncy Castle 1.86 rebuilds a signature it
      * finds in both from the signature's integers, which a native Ed25519 or Ed448 signature
      * (RFC 9580 algorithms 27 and 28) does not have, and the certificate it returns can then be
-     * neither encoded nor verified. A copy that still cannot be joined into a certificate that
-     * encodes is left out, with a warning, and the certificate joined so far is kept: one
-     * server's copy never makes the others unusable.
+     * neither encoded nor verified.
+     *
+     * <p>
+     * Copies that cannot be joined fail the fetch of that key, so a claim it signed is
+     * {@code INDETERMINATE}: leaving a copy out instead could leave out a revocation only that
+     * copy carries.
+     *
+     * @throws IllegalStateException if Bouncy Castle cannot join the copies
      */
     private static PGPPublicKeyRing join(Iterable<PGPPublicKeyRing> copies) {
         Iterator<PGPPublicKeyRing> iterator = copies.iterator();
         PGPPublicKeyRing joined = iterator.next();
         while (iterator.hasNext()) {
-            joined = joinedOrKept(joined, iterator.next());
+            joined = join(joined, iterator.next());
         }
         return joined;
     }
 
-    private static PGPPublicKeyRing joinedOrKept(PGPPublicKeyRing joined, PGPPublicKeyRing copy) {
+    private static PGPPublicKeyRing join(PGPPublicKeyRing joined, PGPPublicKeyRing copy) {
         try {
-            PGPPublicKeyRing result = PGPPublicKeyRing.join(joined, withoutSignaturesIn(copy, joined));
-            result.getEncoded();
-            return result;
-        } catch (PGPException | IOException | RuntimeException e) {
-            System.getLogger(BcKeyStore.class.getName()).log(System.Logger.Level.WARNING,
-                    "a copy of " + fingerprintHex(joined) + " could not be joined with the others and is left out ("
-                            + e + ")");
-            return joined;
+            return PGPPublicKeyRing.join(joined, withoutSignaturesIn(copy, joined));
+        } catch (PGPException e) {
+            throw new IllegalStateException("copies of " + fingerprintHex(joined) + " cannot be joined", e);
         }
     }
 
@@ -468,14 +452,14 @@ class BcKeyStore {
 
     private static int standingIn(PGPPublicKeyRing copy, String keyId) {
         PGPPublicKey primary = copy.getPublicKey();
-        if (sameKey(bytesToHex(primary.getFingerprint()), keyId)) {
+        if (sameKey(KeyRingFiles.hex(primary.getFingerprint()), keyId)) {
             return AS_PRIMARY;
         }
         int standing = HELD;
         Iterator<PGPPublicKey> keys = copy.getPublicKeys();
         while (keys.hasNext()) {
             PGPPublicKey key = keys.next();
-            if (!key.isMasterKey() && sameKey(bytesToHex(key.getFingerprint()), keyId)) {
+            if (!key.isMasterKey() && sameKey(KeyRingFiles.hex(key.getFingerprint()), keyId)) {
                 standing = Math.max(standing, bindingStanding(key, primary));
             }
         }
@@ -629,11 +613,8 @@ class BcKeyStore {
     private static boolean carries(PGPPublicKeyRing copy, PGPSignature wanted) {
         Iterator<PGPPublicKey> keys = copy.getPublicKeys();
         while (keys.hasNext()) {
-            Iterator<PGPSignature> signatures = keys.next().getSignatures();
-            while (signatures.hasNext()) {
-                if (sameSignature(signatures.next(), wanted)) {
-                    return true;
-                }
+            if (holdsSignature(keys.next(), wanted)) {
+                return true;
             }
         }
         return false;
@@ -929,12 +910,9 @@ class BcKeyStore {
      * Checks whether a public key ring contains a key matching the given fingerprint.
      */
     static boolean matchesFingerprint(PGPPublicKeyRing ring, String fingerprint) {
-        String upper = fingerprint.toUpperCase();
         Iterator<PGPPublicKey> keys = ring.getPublicKeys();
         while (keys.hasNext()) {
-            PGPPublicKey key = keys.next();
-            String keyFp = bytesToHex(key.getFingerprint()).toUpperCase();
-            if (keyFp.equals(upper) || keyFp.endsWith(upper) || upper.endsWith(keyFp)) {
+            if (sameKey(KeyRingFiles.hex(keys.next().getFingerprint()), fingerprint)) {
                 return true;
             }
         }
@@ -1038,24 +1016,14 @@ class BcKeyStore {
      * Extracts the primary key fingerprint as a hex string from a public key ring.
      */
     private static String fingerprintHex(PGPPublicKeyRing ring) {
-        return bytesToHex(ring.getPublicKey().getFingerprint());
+        return KeyRingFiles.hex(ring.getPublicKey().getFingerprint());
     }
 
     /**
      * Extracts the primary key fingerprint as a hex string from a secret key ring.
      */
     private static String fingerprintHex(PGPSecretKeyRing ring) {
-        return bytesToHex(ring.getPublicKey().getFingerprint());
+        return KeyRingFiles.hex(ring.getPublicKey().getFingerprint());
     }
 
-    /**
-     * Converts a byte array to an uppercase hex string.
-     */
-    static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder(bytes.length * 2);
-        for (byte b : bytes) {
-            sb.append(String.format("%02X", b));
-        }
-        return sb.toString();
-    }
 }

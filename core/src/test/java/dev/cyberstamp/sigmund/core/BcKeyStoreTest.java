@@ -51,7 +51,7 @@ class BcKeyStoreTest {
         PGPPublicKeyRing pubRing = key.toCertificate().getPGPPublicKeyRing();
         store.storeCert(pubRing);
 
-        String fingerprint = BcKeyStore.bytesToHex(key.getFingerprint());
+        String fingerprint = KeyRingFiles.hex(key.getFingerprint());
         PGPPublicKeyRing found = store.findPublicKey(fingerprint).ring();
         assertThat(found).isNotNull();
     }
@@ -75,7 +75,7 @@ class BcKeyStoreTest {
         PGPSecretKeyRing secretRing = key.getPGPSecretKeyRing();
         store.storeSecretKey(secretRing);
 
-        String fingerprint = BcKeyStore.bytesToHex(key.getFingerprint());
+        String fingerprint = KeyRingFiles.hex(key.getFingerprint());
         assertThat(store.findSecretKey(fingerprint)).isNotNull();
     }
 
@@ -89,14 +89,14 @@ class BcKeyStoreTest {
         PGPPublicKeyRing pubRing = key.toCertificate().getPGPPublicKeyRing();
         store.storeCert(pubRing);
 
-        String fingerprint = BcKeyStore.bytesToHex(key.getFingerprint());
+        String fingerprint = KeyRingFiles.hex(key.getFingerprint());
         String uid = store.findPrimaryUserId(fingerprint);
         assertThat(uid).isNotNull();
         assertThat(uid.contains("alice@example.com")).isTrue();
     }
 
     /**
-     * Verifies that a key added via {@link BcKeyStore#addFetched(Map)}
+     * Verifies that a key added via {@link BcKeyStore#addFetched(String, Map)}
      * is returned by {@link BcKeyStore#findPublicKey(String)} with the keyserver it came from.
      */
     @Test
@@ -105,9 +105,9 @@ class BcKeyStoreTest {
 
         OpenPGPKey key = generateEd25519Key("Ephemeral <ephemeral@example.com>");
         PGPPublicKeyRing pubRing = key.toCertificate().getPGPPublicKeyRing();
-        store.addFetched(Map.of("hkps://keys.example.org", pubRing));
+        BcTestKeys.addFetched(store, Map.of("hkps://keys.example.org", pubRing));
 
-        String fingerprint = BcKeyStore.bytesToHex(key.getFingerprint());
+        String fingerprint = KeyRingFiles.hex(key.getFingerprint());
         assertThat(store.findPublicKey(fingerprint).source())
                 .isEqualTo(TrustRootRef.keyserver("hkps://keys.example.org"));
     }
@@ -119,9 +119,9 @@ class BcKeyStoreTest {
         BcKeyStore store = new BcKeyStore(null, certD, tempDir.resolve("bc-private"), true);
 
         OpenPGPKey key = generateEd25519Key("Persisted <persisted@example.com>");
-        store.addFetched(Map.of("hkps://keys.example.org", key.toCertificate().getPGPPublicKeyRing()));
+        BcTestKeys.addFetched(store, Map.of("hkps://keys.example.org", key.toCertificate().getPGPPublicKeyRing()));
 
-        String fingerprint = BcKeyStore.bytesToHex(key.getFingerprint());
+        String fingerprint = KeyRingFiles.hex(key.getFingerprint());
         assertThat(Files.isDirectory(certD)).isTrue();
         BcKeyStore laterSession = new BcKeyStore(null, certD, tempDir.resolve("bc-private"));
         assertThat(laterSession.findPublicKey(fingerprint).source())
@@ -137,9 +137,9 @@ class BcKeyStoreTest {
         OpenPGPKey stored = generateEd25519Key("Stored <stored@example.com>");
         store.storeCert(stored.toCertificate().getPGPPublicKeyRing());
         OpenPGPKey fetched = generateEd25519Key("Fetched <fetched@example.com>");
-        store.addFetched(Map.of("hkps://keys.example.org", fetched.toCertificate().getPGPPublicKeyRing()));
+        BcTestKeys.addFetched(store, Map.of("hkps://keys.example.org", fetched.toCertificate().getPGPPublicKeyRing()));
 
-        List<BcKeyStore.KeyLookup> byFingerprint = store.inspect(BcKeyStore.bytesToHex(fetched.getFingerprint()), null);
+        List<BcKeyStore.KeyLookup> byFingerprint = store.inspect(KeyRingFiles.hex(fetched.getFingerprint()), null);
         assertThat(byFingerprint).extracting(BcKeyStore.KeyLookup::source)
                 .containsExactly(TrustRootRef.certD(certD), TrustRootRef.keyserver("hkps://keys.example.org"));
         assertThat(byFingerprint.get(0).ring()).isNull();
@@ -153,7 +153,7 @@ class BcKeyStoreTest {
     }
 
     /**
-     * Verifies that {@link BcKeyStore#addFetched(Map)} does not write
+     * Verifies that {@link BcKeyStore#addFetched(String, Map)} does not write
      * any files to the cert-d directory. The key exists only in memory.
      */
     @Test
@@ -163,7 +163,7 @@ class BcKeyStoreTest {
 
         OpenPGPKey key = generateEd25519Key("NoDisk <nodisk@example.com>");
         PGPPublicKeyRing pubRing = key.toCertificate().getPGPPublicKeyRing();
-        store.addFetched(Map.of("hkps://keys.example.org", pubRing));
+        BcTestKeys.addFetched(store, Map.of("hkps://keys.example.org", pubRing));
 
         assertThat(Files.exists(certD)).as("cert-d directory should not be created for ephemeral keys").isFalse();
     }
@@ -178,7 +178,7 @@ class BcKeyStoreTest {
         OpenPGPKey key = generateEd25519Key("Perm <perm@example.com>");
         store.storeSecretKey(key.getPGPSecretKeyRing());
 
-        String fp = BcKeyStore.bytesToHex(key.getFingerprint()).toLowerCase();
+        String fp = KeyRingFiles.hex(key.getFingerprint()).toLowerCase();
         Path keyFile = bcPrivate.resolve(fp.substring(0, 2)).resolve(fp.substring(2));
         assertThat(Files.exists(keyFile)).isTrue();
 
@@ -196,7 +196,7 @@ class BcKeyStoreTest {
         OpenPGPKey key = generateEd25519Key("Cert <cert@example.com>");
         store.storeCert(key.toCertificate().getPGPPublicKeyRing());
 
-        String fp = BcKeyStore.bytesToHex(key.getFingerprint()).toLowerCase();
+        String fp = KeyRingFiles.hex(key.getFingerprint()).toLowerCase();
         Path certFile = certD.resolve(fp.substring(0, 2)).resolve(fp.substring(2));
         assertThat(Files.exists(certFile)).isTrue();
 
@@ -212,11 +212,11 @@ class BcKeyStoreTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         PGPPublicKeyRing full = generateEd25519Key("Alice Example <alice@example.org>")
                 .toCertificate().getPGPPublicKeyRing();
-        String fingerprint = BcKeyStore.bytesToHex(full.getPublicKey().getFingerprint());
+        String fingerprint = KeyRingFiles.hex(full.getPublicKey().getFingerprint());
         Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
         copies.put("hkps://server1", withoutUserIds(full));
         copies.put("hkps://server2", full);
-        store.addFetched(copies);
+        BcTestKeys.addFetched(store, copies);
 
         assertThat(store.userIdsServedBy(fingerprint, "hkps://server1")).isEmpty();
         assertThat(store.userIdsServedBy(fingerprint, "hkps://server2"))
@@ -229,10 +229,10 @@ class BcKeyStoreTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         PGPPublicKeyRing full = generateEd25519Key("Alice Example <alice@example.org>")
                 .toCertificate().getPGPPublicKeyRing();
-        store.addFetched(Map.of("hkps://server1", full));
+        BcTestKeys.addFetched(store, Map.of("hkps://server1", full));
         Iterator<PGPPublicKey> keys = full.getPublicKeys();
         keys.next();
-        String subkeyFingerprint = BcKeyStore.bytesToHex(keys.next().getFingerprint());
+        String subkeyFingerprint = KeyRingFiles.hex(keys.next().getFingerprint());
 
         assertThat(store.userIdsServedBy(subkeyFingerprint, "hkps://server1"))
                 .containsExactly("Alice Example <alice@example.org>");
@@ -246,11 +246,11 @@ class BcKeyStoreTest {
         PGPPublicKeyRing primaryOnly = new PGPPublicKeyRing(List.of(full.getPublicKey()));
         Iterator<PGPPublicKey> keys = full.getPublicKeys();
         keys.next();
-        String subkeyFingerprint = BcKeyStore.bytesToHex(keys.next().getFingerprint());
+        String subkeyFingerprint = KeyRingFiles.hex(keys.next().getFingerprint());
         Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
         copies.put("hkps://server1", primaryOnly);
         copies.put("hkps://server2", full);
-        store.addFetched(copies);
+        BcTestKeys.addFetched(store, copies);
 
         assertThat(store.userIdsServedBy(subkeyFingerprint, "hkps://server2"))
                 .containsExactly("Alice Example <alice@example.org>");
@@ -264,11 +264,11 @@ class BcKeyStoreTest {
         PGPPublicKeyRing primaryOnly = new PGPPublicKeyRing(List.of(full.getPublicKey()));
         Iterator<PGPPublicKey> keys = full.getPublicKeys();
         keys.next();
-        String subkeyFingerprint = BcKeyStore.bytesToHex(keys.next().getFingerprint());
+        String subkeyFingerprint = KeyRingFiles.hex(keys.next().getFingerprint());
         Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
         copies.put("hkps://keys.openpgp.org", primaryOnly);
         copies.put("hkps://server2", full);
-        store.addFetched(copies);
+        BcTestKeys.addFetched(store, copies);
 
         assertThat(store.userIdsServedBy(subkeyFingerprint, "hkps://keys.openpgp.org")).isEmpty();
         assertThat(store.userIdsServedBy(subkeyFingerprint, "hkps://server2"))
@@ -286,8 +286,8 @@ class BcKeyStoreTest {
         Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
         copies.put("hkps://server1", full);
         copies.put("hkps://server2", revoked);
-        store.addFetched(copies);
-        String fingerprint = BcKeyStore.bytesToHex(full.getPublicKey().getFingerprint());
+        BcTestKeys.addFetched(store, copies);
+        String fingerprint = KeyRingFiles.hex(full.getPublicKey().getFingerprint());
 
         PGPSignature reparsed = new PGPSignature(new BCPGInputStream(new ByteArrayInputStream(revocation.getEncoded())));
         assertThat(store.revocationServedBy(fingerprint, reparsed)).containsExactly("hkps://server2");
@@ -300,7 +300,7 @@ class BcKeyStoreTest {
         PGPPublicKeyRing local = generateEd25519Key("Alice Example <alice@example.org>")
                 .toCertificate().getPGPPublicKeyRing();
         store.storeCert(local);
-        String fingerprint = BcKeyStore.bytesToHex(local.getPublicKey().getFingerprint());
+        String fingerprint = KeyRingFiles.hex(local.getPublicKey().getFingerprint());
 
         assertThat(store.userIdsServedBy(fingerprint, "hkps://server1")).isEmpty();
     }
@@ -316,14 +316,14 @@ class BcKeyStoreTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         OpenPGPKey victim = generateV4Key("Alice Example <alice@example.org>");
         PGPPublicKeyRing real = victim.toCertificate().getPGPPublicKeyRing();
-        String fingerprint = BcKeyStore.bytesToHex(victim.getFingerprint());
+        String fingerprint = KeyRingFiles.hex(victim.getFingerprint());
         Map<String, List<PGPPublicKeyRing>> served = new LinkedHashMap<>();
         served.put("hkps://impostor.example.org", List.of(impostorHolding(real.getPublicKey())));
         served.put("hkps://real.example.org", List.of(real));
         store.addFetched(fingerprint, served);
 
         BcKeyStore.KeyLookup found = store.findPublicKey(fingerprint);
-        assertThat(BcKeyStore.bytesToHex(found.ring().getPublicKey().getFingerprint())).isEqualTo(fingerprint);
+        assertThat(KeyRingFiles.hex(found.ring().getPublicKey().getFingerprint())).isEqualTo(fingerprint);
         assertThat(found.source()).isEqualTo(TrustRootRef.keyserver("hkps://real.example.org"));
         assertThat(store.keyserversServing(fingerprint)).containsExactly("hkps://real.example.org");
     }
@@ -334,7 +334,7 @@ class BcKeyStoreTest {
         PGPPublicKeyRing real = generateV4Key("Alice Example <alice@example.org>").toCertificate()
                 .getPGPPublicKeyRing();
         PGPPublicKey subkey = signingSubkeyOf(real);
-        String subkeyFingerprint = BcKeyStore.bytesToHex(subkey.getFingerprint());
+        String subkeyFingerprint = KeyRingFiles.hex(subkey.getFingerprint());
         Map<String, List<PGPPublicKeyRing>> served = new LinkedHashMap<>();
         served.put("hkps://impostor.example.org", List.of(impostorHolding(subkey)));
         served.put("hkps://real.example.org", List.of(real));
@@ -350,7 +350,7 @@ class BcKeyStoreTest {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
         OpenPGPKey victim = generateV4Key("Alice Example <alice@example.org>");
         PGPPublicKeyRing real = victim.toCertificate().getPGPPublicKeyRing();
-        String fingerprint = BcKeyStore.bytesToHex(victim.getFingerprint());
+        String fingerprint = KeyRingFiles.hex(victim.getFingerprint());
         store.addFetched(fingerprint, Map.of("hkps://keys.example.org",
                 List.of(impostorHolding(real.getPublicKey()), real)));
 
@@ -371,13 +371,13 @@ class BcKeyStoreTest {
         PGPPublicKeyRing real = generateV4Key("Alice Example <alice@example.org>").toCertificate()
                 .getPGPPublicKeyRing();
         PGPPublicKey subkey = signingSubkeyOf(real);
-        String subkeyFingerprint = BcKeyStore.bytesToHex(subkey.getFingerprint());
+        String subkeyFingerprint = KeyRingFiles.hex(subkey.getFingerprint());
         for (int i = 0; i < 4; i++) {
-            store.addFetched(Map.of("hkps://impostor" + i + ".example.org", impostorHolding(subkey)));
+            BcTestKeys.addFetched(store, Map.of("hkps://impostor" + i + ".example.org", impostorHolding(subkey)));
         }
-        store.addFetched(Map.of("hkps://real.example.org", real));
+        BcTestKeys.addFetched(store, Map.of("hkps://real.example.org", real));
         for (int i = 4; i < 8; i++) {
-            store.addFetched(Map.of("hkps://impostor" + i + ".example.org", impostorHolding(subkey)));
+            BcTestKeys.addFetched(store, Map.of("hkps://impostor" + i + ".example.org", impostorHolding(subkey)));
         }
 
         assertThat(store.keyserversServing(subkeyFingerprint)).containsExactly("hkps://real.example.org");
@@ -407,7 +407,7 @@ class BcKeyStoreTest {
                 PGPPublicKey.addCertification(full.getPublicKey(), revocation)))));
         copies.put("hkps://server2", reparsed(new PGPPublicKeyRing(List.of(
                 PGPPublicKey.addCertification(full.getPublicKey(), annotated)))));
-        store.addFetched(copies);
+        BcTestKeys.addFetched(store, copies);
         PGPSignature joined = store.findPublicKey(fingerprint).ring().getPublicKey()
                 .getSignaturesOfType(PGPSignature.KEY_REVOCATION).next();
 
@@ -422,8 +422,8 @@ class BcKeyStoreTest {
         PGPPublicKeyRing full = key.toCertificate().getPGPPublicKeyRing();
         store.storeCert(withoutUserIds(new PGPPublicKeyRing(List.of(
                 PGPPublicKey.addCertification(full.getPublicKey(), revocationOf(key))))));
-        store.addFetched(Map.of("hkps://keys.example.org", full));
-        String fingerprint = BcKeyStore.bytesToHex(full.getPublicKey().getFingerprint());
+        BcTestKeys.addFetched(store, Map.of("hkps://keys.example.org", full));
+        String fingerprint = KeyRingFiles.hex(full.getPublicKey().getFingerprint());
 
         PGPPublicKey found = store.findPublicKey(fingerprint).ring().getPublicKey();
         assertThat(found.hasRevocation()).isTrue();
@@ -438,8 +438,8 @@ class BcKeyStoreTest {
         PGPPublicKeyRing full = key.toCertificate().getPGPPublicKeyRing();
         store.storeCert(withoutUserIds(new PGPPublicKeyRing(List.of(
                 PGPPublicKey.addCertification(full.getPublicKey(), revocationOf(key))))));
-        store.addFetched(Map.of("hkps://keys.example.org", full));
-        String fingerprint = BcKeyStore.bytesToHex(full.getPublicKey().getFingerprint());
+        BcTestKeys.addFetched(store, Map.of("hkps://keys.example.org", full));
+        String fingerprint = KeyRingFiles.hex(full.getPublicKey().getFingerprint());
 
         PGPPublicKey persisted = new BcKeyStore(null, certD, tempDir.resolve("bc-private"))
                 .findPublicKey(fingerprint).ring().getPublicKey();
@@ -457,8 +457,8 @@ class BcKeyStoreTest {
         byte[] encoded = generateV4Key("Alice Example <alice@example.org>").toCertificate()
                 .getPGPPublicKeyRing().getEncoded();
         store.storeCert(parsed(encoded));
-        store.addFetched(Map.of("hkps://keys.example.org", parsed(encoded)));
-        PGPPublicKeyRing found = store.findPublicKey(BcKeyStore.bytesToHex(parsed(encoded).getPublicKey()
+        BcTestKeys.addFetched(store, Map.of("hkps://keys.example.org", parsed(encoded)));
+        PGPPublicKeyRing found = store.findPublicKey(KeyRingFiles.hex(parsed(encoded).getPublicKey()
                 .getFingerprint())).ring();
 
         assertThat(found.getEncoded()).isEqualTo(encoded);
@@ -474,8 +474,8 @@ class BcKeyStoreTest {
         Map<String, PGPPublicKeyRing> copies = new LinkedHashMap<>();
         copies.put("hkps://server1", parsed(encoded));
         copies.put("hkps://server2", parsed(encoded));
-        store.addFetched(copies);
-        String fingerprint = BcKeyStore.bytesToHex(parsed(encoded).getPublicKey().getFingerprint());
+        BcTestKeys.addFetched(store, copies);
+        String fingerprint = KeyRingFiles.hex(parsed(encoded).getPublicKey().getFingerprint());
 
         PGPPublicKeyRing persisted = new BcKeyStore(null, certD, tempDir.resolve("later"))
                 .findPublicKey(fingerprint).ring();
@@ -495,7 +495,7 @@ class BcKeyStoreTest {
         PGPPublicKeyRing corrupted = PGPPublicKeyRing.join(parsed(encoded), parsed(encoded));
         assertThatThrownBy(corrupted::getEncoded).isInstanceOf(RuntimeException.class);
         store.storeCert(parsed(encoded));
-        String fp = BcKeyStore.bytesToHex(parsed(encoded).getPublicKey().getFingerprint()).toLowerCase();
+        String fp = KeyRingFiles.hex(parsed(encoded).getPublicKey().getFingerprint()).toLowerCase();
         Path certFile = certD.resolve(fp.substring(0, 2)).resolve(fp.substring(2));
 
         assertThatThrownBy(() -> store.storeCert(corrupted)).isInstanceOf(RuntimeException.class);
