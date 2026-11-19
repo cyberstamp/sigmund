@@ -19,16 +19,16 @@ mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.2:dependency-signers
 Sample output:
 
 ```
-Signer: Alice Developer <alice@example.com>
+Signer: Alice Developer <alice@example.com> (unverified)
    PGP4 (EdDSA): 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
      com.example:lib-a:1.0
      com.example:lib-b:2.0
 
-Signer: Bob Maintainer (Code signing key) <bob@example.org>
+Signer: Bob Maintainer (Code signing key) <bob@example.org> (unverified)
    PGP4 (RSA): BBE7232D7991050B54C8EA0ADC08637CA615D22C
      org.example:parser:3.1
 
-Signer: Carol Release <carol@example.net>
+Signer: Carol Release <carol@example.net> (unverified)
    PGP4 (ECDSA): 9C1F2E7D4B6A08355E3D21C7A9B04F6E12D83A57
      net.example:tool:2.4
 
@@ -39,7 +39,7 @@ Summary: All clear: 5 dependencies, 4 PGP4 signature(s), 3 unique key(s)
 PQ coverage: 0/5 dependencies have a post-quantum signature
 ```
 
-In most projects some signers appear as `UNKNOWN (key unavailable)`, with the reason on the key line — most often that `keys.openpgp.org`, the default keyserver, served the key without its user IDs, which it publishes only once the key's owner verifies an email address. See the [Getting Started guide](docs/getting-started.md#why-some-signers-appear-as-unknown) for what each reason means and how to resolve more keys.
+Names read `(unverified)` until a `sigmund.yaml` lists a directory under `issuers` that vouches for them. Keys are fetched from `keys.openpgp.org` and `keyserver.ubuntu.com`, and the copies merged; a signer whose key no keyserver serves in usable form appears as `UNKNOWN (key unavailable)`, with the reason on the key line. See the [Getting Started guide](docs/getting-started.md#why-some-signers-appear-as-unknown) for what each reason means and how to choose keyservers.
 
 To shorten subsequent commands, add the plugin to your `pluginManagement`:
 

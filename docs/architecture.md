@@ -119,11 +119,11 @@ The key lookup algorithm in `BcKeyStore.findPublicKey()` returns the key togethe
 3. Check cert-d for matching fingerprint (primary key or subkey)
 4. Extract public keys from BC private store if a matching secret key exists
 
-A key fetched this session reports the keyserver that served it, wherever it was stored; otherwise the store it was found in is reported. Claims carry that source in their trust root.
+A key fetched this session reports the keyservers that served it (`TrustRootRef.keyservers`, their URLs in configured order), wherever it was stored; otherwise the store it was found in is reported. Claims carry that source in their trust root.
 
 Responsibilities are split three ways:
-- **`BcKeyStore`** — where keys live: lookup in order, per-store answers for `inspect-signer`, storing generated keys, and storing fetched keys (`addFetched`), which keeps them in memory or writes them to cert-d according to `import-to-keyring` and records the keyserver in the same step.
-- **`KeyserverFetcher`** — talking to HKP keyservers: the HTTP client, the per-build `KeyFetchCache` with its per-server circuit breaker, and the preference for a copy carrying user IDs, which are display text only. It hands what it fetches to the store. The factory creates one when `resolve-signers` is on and keyservers are configured.
+- **`BcKeyStore`** — where keys live: lookup in order, per-store answers for `inspect-signer`, storing generated keys, and storing fetched keys (`addFetched`), which joins the copies the keyservers served into one certificate, keeps it in memory or writes it to cert-d according to `import-to-keyring`, and records the contributing keyservers in the same step. It keeps each keyserver's copy beside the joined certificate, and answers which servers' copies carried a given user ID or revocation — the provenance behind the display label and the revocation detail.
+- **`KeyserverFetcher`** — talking to HKP keyservers: the HTTP client, which asks every configured keyserver for a missing key concurrently, the size limit per copy (1 MiB, against certificate flooding), and the per-build `KeyFetchCache` with its per-server circuit breaker. It hands the readable copies to the store; a copy of a different primary key, possible for a 64-bit key-ID lookup, is set aside. The factory creates one when `resolve-signers` is on and keyservers are configured.
 - **`BcRunner`** — signing, verification, key generation and signer inspection, using the store and, when keys may be fetched, the fetcher.
 
 ### Sequoia Keystore
@@ -250,10 +250,10 @@ BC handles any `OpenPgpClaim` (v4 or v6 classic algorithms). Verification steps:
 1. Extract issuer fingerprint from the signature packet's Issuer Fingerprint subpacket (type 33), or the 64-bit key ID when it carries none
 2. Search for the signer's certificate in the key store (`BcKeyStore.findPublicKey()`); if it is absent and key fetching is enabled, fetch it from keyservers (`KeyserverFetcher`)
 3. Parse the signature packet using Bouncy Castle's `BcPGPObjectFactory`
-4. Verify with Bouncy Castle's high-level API (`OpenPGPCertificate` and `OpenPGPDetachedSignatureProcessor`): the signature must be correct and made, at its creation time, by the primary key or a subkey validly bound to it — binding signature, signing flag, a signing subkey's back-signature, not revoked or expired, the primary key's expiry applying to the whole certificate
+4. Verify with Bouncy Castle's high-level API (`OpenPGPCertificate` and `OpenPGPDetachedSignatureProcessor`): the signature must be correct and made, at its creation time, by the primary key or a subkey validly bound to it — binding signature, signing flag, a signing subkey's back-signature, not revoked or expired, the primary key's expiry applying to the whole certificate. Validity is judged on a view of the certificate without the certifications and revocations that do not verify against its primary key, so a packet a keyserver added without the holder's key changes nothing
 5. Return `VERIFIED`, proving the signing key's and the primary key's full fingerprints, when the signature is correct and the key valid
-6. When the signature is correct (`isTestedCorrect()`) but the key is not valid, explain why: revoked or expired at the signature's time is `FAILED`; an algorithm the policy rejects is `INDETERMINATE [UNSUPPORTED_ALGORITHM]`; any other key the certificate does not bind — no self-signature, as keys.openpgp.org serves one without user IDs; a self-signature that does not verify; or one over a user ID that is not UTF-8, which Bouncy Castle's certificate API drops — is `INDETERMINATE [KEY_UNAVAILABLE]`, as GnuPG and Sequoia also report it ([ADR-009](../adr/009-an-unbound-key-is-never-failed.md))
-7. A signature that is not correct is `FAILED`; one that cannot be parsed is `INDETERMINATE [EVIDENCE_MALFORMED]`; an exception is `INDETERMINATE [TOOL_UNAVAILABLE]`
+6. When the signature is correct (`isTestedCorrect()`) but the key is not valid, explain why: revoked or expired at the signature's time is `FAILED`, with a detail naming the revocation's reason and date (and the keyservers that served it) or the expiry date; an algorithm the policy rejects is `INDETERMINATE [UNSUPPORTED_ALGORITHM]`; any other key the certificate does not bind — no self-signature, as keys.openpgp.org serves one without user IDs; a self-signature that does not verify; or one over a user ID that is not UTF-8, which Bouncy Castle's certificate API drops — is `INDETERMINATE [KEY_UNAVAILABLE]`, as GnuPG and Sequoia also report it ([ADR-009](../adr/009-an-unbound-key-is-never-failed.md))
+7. A signature that is not correct is `FAILED` with the detail "the artifact does not match the signature"; one that cannot be parsed is `INDETERMINATE [EVIDENCE_MALFORMED]`; an exception is `INDETERMINATE [TOOL_UNAVAILABLE]`
 
 The algorithm policy comes from `VerificationAlgorithms`, shared with the other backends: SHA-1 and RIPEMD-160 document signatures, SHA-1 and RIPEMD-160 self-signatures at any date, and RSA and DSA keys from 1024 bits, on top of Bouncy Castle's defaults. See [Accepted algorithms](verification.md#accepted-algorithms).
 
@@ -378,7 +378,13 @@ asserted signer's (`signing.signer`) when the parser loads the file, without com
 An OpenPGP user ID never becomes a credential. `ClaimIdentityResolver` asks a directory for
 the verified addresses of a signing key only when an expected signer has an email entry a
 named directory can vouch for and none of its fingerprints already matched; a failed lookup
-leaves the claim `INDETERMINATE` with `KEY_UNAVAILABLE`.
+leaves the claim `INDETERMINATE` with `KEY_UNAVAILABLE`. The directory answers from its own copy
+of the key when the fetcher got one this run and that copy holds the fingerprint asked about
+(`KeysOpenPgpOrgDirectory.answerFrom`), and asks its VKS endpoint otherwise. The resolver also
+tells each `ClaimResult` who vouches for its displayed identity (`displayNameVouchedBy`): a
+directory listed in `issuers` whose fetched copy carried exactly the displayed user ID, or a
+listed Sigstore OIDC issuer. It is display only — `labeledDisplayName` renders it as
+`(address verified by …)`, `(attested by …)` or `(unverified)` — and never a credential.
 
 Identity matching works via credential overlap: a claim satisfies a signer when one of the
 credentials it proved matches one the signer is configured with.

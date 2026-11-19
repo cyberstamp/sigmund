@@ -330,12 +330,9 @@ public final class VerificationReport {
     private static String headline(ClaimResult claim) {
         StringBuilder headline = new StringBuilder(claim.kind()).append(' ')
                 .append(claim.outcome());
-        if (claim.reason() != null) {
-            headline.append(" (").append(claim.reason());
-            if (claim.detail() != null) {
-                headline.append(": ").append(claim.detail());
-            }
-            headline.append(')');
+        String explanation = claim.explanation();
+        if (explanation != null) {
+            headline.append(" (").append(explanation).append(')');
         }
         if (claim.verifiedBy() != null) {
             headline.append(" by ").append(claim.verifiedBy());

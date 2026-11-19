@@ -48,16 +48,16 @@ mvn sigmund:dependency-signers
 Sample output:
 
 ```
-Signer: Alice Developer <alice@example.com>
+Signer: Alice Developer <alice@example.com> (unverified)
    PGP4 (EdDSA): 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
      com.example:lib-a:1.0
      com.example:lib-b:2.0
 
-Signer: Bob Maintainer (Code signing key) <bob@example.org>
+Signer: Bob Maintainer (Code signing key) <bob@example.org> (unverified)
    PGP4 (RSA): BBE7232D7991050B54C8EA0ADC08637CA615D22C
      org.example:parser:3.1
 
-Signer: Carol Release <carol@example.net>
+Signer: Carol Release <carol@example.net> (unverified)
    PGP4 (ECDSA): 9C1F2E7D4B6A08355E3D21C7A9B04F6E12D83A57
      net.example:tool:2.4
 
@@ -70,38 +70,41 @@ PQ coverage: 0/5 dependencies have a post-quantum signature
 
 The output groups artifacts by signer. Each signer shows their name and email (if known) and key fingerprints. Classical v4 signatures (RSA, EdDSA) and post-quantum v6 signatures (ML-DSA) are reported separately. Unsigned artifacts appear in their own section. When you add `sigmund-sigstore` as a plugin dependency ([Enabling Sigstore Support](maven-plugin.md#enabling-sigstore-support)), `.sigstore.json` bundles are also resolved and verified — Sigstore signers appear with their OIDC identity (email or workflow URI) instead of a PGP fingerprint.
 
-Sigmund fetches unknown keys from `keys.openpgp.org` by default to resolve signer identities. The fetched keys are only kept in memory for the duration of the build and are not persisted to disk.
+Sigmund fetches unknown keys from `keys.openpgp.org` and `keyserver.ubuntu.com` by default, asking both and merging the copies they serve. The fetched keys are only kept in memory for the duration of the build and are not persisted to disk.
+
+The label after a name says who vouches for it: `(address verified by keys.openpgp.org)` when that directory is listed under [`issuers`](configuration.md#issuers) in `sigmund.yaml` and served the user ID itself, `(unverified)` otherwise. A first run, with no `sigmund.yaml`, lists no issuers, so every name reads `(unverified)`.
 
 ### Why Some Signers Appear as UNKNOWN
 
-In most projects some signers appear like this:
+Some signers may appear like this:
 
 ```
 Signer: UNKNOWN (key unavailable)
-   PGP4 (RSA): C7BE5BCC9FEC15518CFDA882B0F3710FA64900E7 (key unavailable: the copy from hkps://keys.openpgp.org carries no self-signature binding the key)
+   PGP4 (RSA): C7BE5BCC9FEC15518CFDA882B0F3710FA64900E7 (key unavailable: its user ID is not valid UTF-8, which Bouncy Castle cannot read)
      com.google.code.gson:gson:2.11.0
 ```
 
 Sigmund found no usable copy of the signing key, so it could not check the signature. The reason in parentheses says why:
 
-- **`the copy from hkps://keys.openpgp.org carries no self-signature binding the key`** — the most common case. `keys.openpgp.org` is a **verifying keyserver**: it publishes a key's user IDs (name and email) only after the key's owner confirms the address through a verification link, and until then serves the key without them. Older keys carry their self-signatures — the signatures by which a key states what it may be used for — only on those user IDs, so the copy served cannot be used to check anything.
+- **`its user ID is not valid UTF-8, which Bouncy Castle cannot read`** — a Bouncy Castle limitation, which gson's release key meets; GnuPG and Sequoia verify it once it is in their own store (see [Limitations](limitations.md#bc-cannot-use-a-user-id-that-is-not-utf-8)).
+- **`the copy from hkps://keys.openpgp.org carries no self-signature binding the key`** — `keys.openpgp.org` is a **verifying keyserver**: it publishes a key's user IDs (name and email) only after the key's owner confirms the address through a verification link, and until then serves the key without them. Older keys carry their self-signatures — the signatures by which a key states what it may be used for — only on those user IDs, so that copy alone cannot be used to check anything. `keyserver.ubuntu.com` usually serves such keys in full and the copies are merged, so this appears only when no configured keyserver does.
 - **`no local key store or configured keyserver has it`** — the key is not published where Sigmund looked.
 - **`the signature names only a key ID, which is not looked up on keyservers`** — the signature carries a short key ID rather than a full fingerprint, and Sigmund fetches keys by fingerprint.
 
-`keys.openpgp.org` is the default because the names it does publish are backed by a verified email address. Keyservers such as `keyserver.ubuntu.com` accept uploads from anyone, so anyone can upload a key claiming to be `Alice Developer <alice@example.com>`.
+The two default keyservers differ in what backs a name. The names `keys.openpgp.org` publishes are backed by a verified email address. `keyserver.ubuntu.com` accepts uploads from anyone, so anyone can upload a key claiming to be `Alice Developer <alice@example.com>`; Sigmund takes key material from it — the signature proves the key whoever served it — and shows the names it serves as `(unverified)`.
 
-### Resolving More Keys
+### Choosing Keyservers
 
-Which keyservers to ask is your choice: each one learns which keys your build looks up. To resolve more keys, add a keyserver such as `keyserver.ubuntu.com`:
+Which keyservers to ask is your choice: each one learns which keys your build looks up. To ask `keys.openpgp.org` alone, or to add another keyserver, list them:
 
 ```bash
 mvn sigmund:dependency-signers \
-  -Dsigmund.keyservers=hkps://keys.openpgp.org,hkps://keyserver.ubuntu.com
+  -Dsigmund.keyservers=hkps://keys.openpgp.org
 ```
 
-Keys it serves with their user IDs become usable, and their signers show a name and email. A key you hold in GnuPG's or Sequoia's own store (`gpg --import`, `sq cert import`) is used too.
+A key you hold in GnuPG's or Sequoia's own store (`gpg --import`, `sq cert import`) is used too.
 
-**Important:** The names and emails returned by keyservers other than `keys.openpgp.org` are **not verified**. Anyone can upload a key to those servers claiming any identity. Treat these as hints for investigation, not proof of who signed an artifact. Trust decisions in `sigmund.yaml` should be based on key fingerprints, not on self-reported names.
+**Important:** The names and emails returned by keyservers other than `keys.openpgp.org` are **not verified**, which is why they are labelled `(unverified)`. Anyone can upload a key to those servers claiming any identity. Treat these as hints for investigation, not proof of who signed an artifact. Trust decisions in `sigmund.yaml` should be based on key fingerprints, not on self-reported names.
 
 ## Generate a Trust Policy
 
@@ -162,7 +165,7 @@ mvn sigmund:verify
 
 ```
 [INFO] SATISFIED (2)
-[INFO]   openpgp VERIFIED by bc (EdDSA) - Alice Developer <alice@example.com>
+[INFO]   openpgp VERIFIED by bc (EdDSA) - Alice Developer <alice@example.com> (address verified by keys.openpgp.org)
 [INFO]     com.example:lib-a:1.0
 [INFO]     com.example:lib-b:2.0
 [INFO]
@@ -179,7 +182,7 @@ the trust root it was checked against, and the evidence file behind each artifac
 
 ```
 [ERROR] UNSATISFIED (1)
-[ERROR]   openpgp VERIFIED by bc (RSA) - Bob Malicious <bob@evil.com>
+[ERROR]   openpgp VERIFIED by bc (RSA) - Bob Malicious <bob@malicious.example.org> (unverified)
 [ERROR]     com.example:lib-c:1.0 [blocks]
 
 [ERROR] Verification blocked the build for 1 artifact(s): com.example:lib-c:1.0 (UNSATISFIED)

@@ -299,6 +299,27 @@ class DependencySignersMojoTest {
     }
 
     @Nested
+    class FailedSignatures {
+
+        @Test
+        void theKeyLineSaysWhyTheSignatureFailed() {
+            RecordingLog log = new RecordingLog();
+            DependencySignersMojo mojo = new DependencySignersMojo();
+            mojo.setLog(log);
+            SignedArtifact revoked = new SignedArtifact(LIB_COORDS, "central",
+                    new OpenPgpVerifyResult(ClaimOutcome.FAILED, null, "User <user@example.com>",
+                            "RSA", 4, "ABCD1234", FULL_FP)
+                            .withDetail("key revoked as compromised on 2026-10-02"),
+                    null, null, "User <user@example.com> (unverified)");
+
+            mojo.logReport(List.of(revoked));
+
+            assertThat(log.lines).anyMatch(line -> line.startsWith("warn: ") && line.contains(
+                    FULL_FP + " (failed: key revoked as compromised on 2026-10-02)"));
+        }
+    }
+
+    @Nested
     class ArtifactsWithNoClaim {
 
         /**

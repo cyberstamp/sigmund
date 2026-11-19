@@ -161,6 +161,15 @@ class SignatureVerificationReportTest {
                     .contains("[signer: Bob Example <bob@example.org> (unverified)]");
         }
 
+        @Test
+        void formatSaysWhyABlockFailed() {
+            var result = new OpenPgpVerifyResult(ClaimOutcome.FAILED, null, null, "EdDSA", 4, null, null)
+                    .withDetail("key expired on 2025-01-31, before it signed");
+
+            assertThat(reportWith(result).format())
+                    .contains("[1] FAILED [key expired on 2025-01-31, before it signed] (EdDSA)");
+        }
+
         private OpenPgpVerifyResult signedBy(String userId) {
             return new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, userId, "RSA", 4, null, null);
         }

@@ -81,18 +81,24 @@ store and on no keyserver:
 
 ```
 Signature Verification Report:
-  [1] VERIFIED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org>]
+  [1] VERIFIED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org> (unverified)]
   [2] INDETERMINATE [KEY_UNAVAILABLE: no local key store or configured keyserver has it] (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA]
   Overall: 1 VERIFIED, 1 INDETERMINATE
 ```
 
 Each line shows:
 - **Index** — signature block number
-- **Outcome** — `VERIFIED`, `FAILED`, or `INDETERMINATE`, the last followed by the
-  reason it could not be decided and, when the tool says, why
+- **Outcome** — `VERIFIED`, `FAILED`, or `INDETERMINATE`; `INDETERMINATE` is followed by the
+  reason it could not be decided, and either is followed by why when the tool says (see
+  [`FAILED`](#failed) for the details Bouncy Castle gives)
 - **Algorithm** — the signing key's algorithm (e.g., `RSA`, `EdDSA`, `ML-DSA-65+Ed25519`)
 - **Key** — the fingerprint of the key the signature names (when it names one)
-- **Signer** — the signer's user ID, when a tool found the key; display text only, never an identity
+- **Signer** — the signer's user ID, when a tool found the key, and who vouches for it:
+  `(address verified by keys.openpgp.org)` when that directory is listed in
+  [`issuers`](configuration.md#issuers) and its copy of the key, fetched this run, carried the user
+  ID — it vouches for the address, not the name beside it; `(attested by <issuer>)` for a Sigstore
+  identity whose OIDC issuer is listed; otherwise `(unverified)`. Display text only, never an
+  identity: the label changes no outcome
 
 **Overall** counts the outcomes rather than naming a verdict of its own: a
 hybrid signature whose PQC block could not be checked reads as
@@ -347,7 +353,7 @@ verification:
 ## Key Discovery
 
 When a signature is left `INDETERMINATE` with `KEY_UNAVAILABLE` because no local keyring has
-its key, Sigmund can fetch the key from a keyserver and verify again. Whether it does, where it
+its key, Sigmund can fetch the key from keyservers and verify again. Whether it does, where it
 looks and whether it keeps what it fetches are set by `resolve-signers`, `import-to-keyring` and
 `keyservers`; see [`verification`](configuration.md#verification) for each setting and its
 default.
@@ -356,11 +362,16 @@ default.
 
 1. Every tool in the toolchain returns `KEY_UNAVAILABLE` for the signature
 2. Sigmund takes the issuer fingerprint from the signature packet
-3. It asks each keyserver in order, and stops at the first copy that carries user IDs; a copy
-   without them is kept only if no keyserver has a fuller one
-4. The key is added to the fetching tool's store — in memory for the session, or persisted when
-   `import-to-keyring: true`
-5. Verification is retried with the key now available
+3. It asks every configured keyserver at once — by default `keys.openpgp.org` and
+   `keyserver.ubuntu.com` — skipping one that has already failed to answer this build. A copy
+   over 1 MiB is not read (certificate flooding), and one whose primary key is not the key asked
+   for is set aside
+4. The readable copies are merged into one certificate, as GnuPG and Sequoia merge on import, so
+   a user ID, self-signature, subkey or revocation any server serves counts; the key counts as
+   missing only when no server served a readable copy
+5. The merged key is added to the fetching tool's store — in memory for the session, or persisted
+   when `import-to-keyring: true` — recording every keyserver that contributed a copy
+6. Verification is retried with the key now available
 
 Only BC and GPG fetch keys; `sq` uses only the certificates already in its own store.
 
@@ -371,30 +382,51 @@ Only BC and GPG fetch keys; `sq` uses only the certificates already in its own s
 | sq | not fetched | not fetched |
 
 Keyservers supply key material only. The signature proves the key whoever served it, and the
-claim records which keyserver supplied it. A user ID a keyserver serves is display text, never an
-identity, so adding a keyserver such as `keyserver.ubuntu.com` does not widen what is accepted;
-identities come only from the [`issuers`](configuration.md#issuers) a policy names.
+claim records which keyservers supplied it. Merging copies from several servers is safe because
+a server can withhold packets but not forge them: a self-signature, user-ID certification or
+revocation counts only if it verifies against the key's primary key, so only the key's holder
+could have made it, and a revocation the key's holder did not make — a forged one, served by any
+keyserver — is ignored, never `FAILED`, as `sq` and `gpg` ignore it (`gpg` alone also honours a
+revocation by a designated revoker whose key it holds; see
+[Limitations](limitations.md#designated-revokers-are-not-honoured-by-bc-or-sequoia)). A packet one server withholds, such as
+a revocation or a newer, shorter expiry, is restored by any server that serves it, so merging can
+make a key less valid and makes it more valid only with data its holder signed.
+
+A user ID a keyserver serves is display text, never an identity, so asking `keyserver.ubuntu.com`
+— which does not verify addresses — does not widen what is accepted; identities come only from
+the [`issuers`](configuration.md#issuers) a policy names. A displayed user ID is labelled
+`(address verified by keys.openpgp.org)` only when that directory is listed in `issuers` and its
+own copy of the key carried the user ID; a user ID only another keyserver served, or one from a
+local keyring, is `(unverified)`. The directory's answer for `email:` entries comes from the same
+copy: when keys.openpgp.org's copy of the key was fetched this run, the addresses it carried are
+used without asking the directory again, and only when it holds the fingerprint asked about.
 
 ### Keys Served Without User IDs
 
 `keys.openpgp.org` serves a key without its user IDs until the owner verifies an address. Without
 the self-signatures on those user IDs no tool can use the key — they carry its expiry, what it may
 be used for, and the binding of its subkeys — so its signatures are `INDETERMINATE` with
-`KEY_UNAVAILABLE`, not `FAILED`; GnuPG refuses to import such a copy at all. A fuller copy
-resolves it:
+`KEY_UNAVAILABLE`, not `FAILED`; GnuPG refuses to import such a copy at all. The same happens
+to a key its owner rotated away from, since an address belongs to one key at a time there.
 
-1. **List a keyserver that serves the full key**, in the project's `sigmund.yaml`:
+The default keyservers cover the common case: `keyserver.ubuntu.com` serves such keys in full, and
+its copy is merged with keys.openpgp.org's (see [How Key Fetching Works](#how-key-fetching-works)).
+The user IDs it serves are the key owner's claims alone and are shown as `(unverified)`. For a key
+neither default keyserver serves in full:
+
+1. **List another keyserver that serves the full key**, in the project's `sigmund.yaml`:
    ```yaml
    verification:
      keyservers:
        - hkps://keys.openpgp.org
        - hkps://keyserver.ubuntu.com
+       - hkps://pgp.example.org
    ```
    A keyserver supplies key material only: the signature proves the key, and identities come only
-   from [`issuers`](configuration.md#issuers), so this never widens what is accepted. The user
-   IDs it serves are the key owner's claims alone, unverified, and which keyservers to take key
-   material from is your choice. Keys are fetched afresh each build, so a revocation reaches every
-   machine the same way.
+   from [`issuers`](configuration.md#issuers), so this never widens what is accepted. Which
+   keyservers to take key material from is your choice; each one learns which keys your build
+   looks up. Keys are fetched afresh each build, so a revocation reaches every machine the same
+   way.
 2. **Import the key into GnuPG's or Sequoia's store** (`gpg --import`, `sq cert import`), taken from
    where the publisher announces it — its project's `KEYS` file or release page — for a key no
    keyserver serves usefully, or one Bouncy Castle cannot read (see
@@ -410,8 +442,8 @@ them in its last line.
 
 ```
 Signature Verification Report:
-  [1] VERIFIED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org>]
-  [2] VERIFIED (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA] [signer: <alice@example.org>]
+  [1] VERIFIED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org> (unverified)]
+  [2] VERIFIED (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA] [signer: <alice@example.org> (unverified)]
   Overall: 2 VERIFIED
 ```
 
@@ -419,7 +451,7 @@ Signature Verification Report:
 
 ```
 Signature Verification Report:
-  [1] VERIFIED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org>]
+  [1] VERIFIED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org> (unverified)]
   [2] INDETERMINATE [KEY_UNAVAILABLE: no local key store or configured keyserver has it] (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA]
   Overall: 1 VERIFIED, 1 INDETERMINATE
 ```
@@ -434,7 +466,7 @@ The same file verified with `toolchain: [gpg]`, which does not read the PQC bloc
 
 ```
 Signature Verification Report:
-  [1] VERIFIED (EDDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org>]
+  [1] VERIFIED (EDDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org> (unverified)]
   [2] INDETERMINATE [UNSUPPORTED_ALGORITHM] (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA]
   Overall: 1 VERIFIED, 1 INDETERMINATE
 ```
@@ -448,8 +480,8 @@ The artifact changed after it was signed:
 
 ```
 Signature Verification Report:
-  [1] FAILED (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org>]
-  [2] FAILED (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA] [signer: <alice@example.org>]
+  [1] FAILED [the artifact does not match the signature] (EdDSA) [key: B9708CEF29D52FAF0783A5B0442ECAFFC2204CA2] [signer: Alice <alice@example.org> (unverified)]
+  [2] FAILED (ML-DSA-65+Ed25519) [key: 010940A63349D8D99F0CE7445F3EEDE307F9FCCE2158A7C7FD0C04EC8546F3EA] [signer: <alice@example.org> (unverified)]
   Overall: 2 FAILED
 ```
 
@@ -478,7 +510,7 @@ The block was not checked because no usable copy of its key was found. The detai
 | `no local key store or configured keyserver has it` | The key is published nowhere Sigmund looks. Add a keyserver that serves it under [`verification.keyservers`](configuration.md#verification), or import it into a tool's store: `gpg --import`, `sq cert import`. |
 | `no local key store has it, and key fetching is off` | Set `verification.resolve-signers: true` (the default), or import the key. |
 | `the signature names only a key ID, which is not looked up on keyservers` | The signature carries a 64-bit key ID rather than a fingerprint, as older signers wrote. Import the key by hand. |
-| `the copy from <source> carries no self-signature binding the key` | Usually a key from `keys.openpgp.org` whose owner has not verified an address, served without its user IDs; list another keyserver after it — see [Keys Served Without User IDs](#keys-served-without-user-ids). |
+| `the copy from <source> carries no self-signature binding the key` | Usually a key `keys.openpgp.org` served without its user IDs, which no other configured keyserver served in full; list one that does — see [Keys Served Without User IDs](#keys-served-without-user-ids). |
 | `its self-signatures do not bind it` | The certificate found holds the key but does not bind it, for example a subkey without a valid binding signature. Get the owner's complete certificate. |
 | `its user ID is not valid UTF-8, which Bouncy Castle cannot read` | A Bouncy Castle limitation; keep `sq` or `gpg` in the toolchain with the key in its store ([Limitations](limitations.md)). |
 | `the certificate found does not contain the signing key` | A certificate matched the key ID the signature names, but none of its keys made it. Get the certificate of the key the signature names. |
@@ -511,6 +543,17 @@ again.
 The artifact's bytes do not match the signature, or the key that made it had expired when it
 signed, or was revoked. First check that the artifact and signature are the pair that was
 published; if they are, treat it as tampering and do not use the artifact. No mode tolerates it.
+
+Bouncy Castle says which check failed; `sq` and `gpg` do not, and their `FAILED` carries no
+detail:
+
+| Detail | Meaning |
+|---|---|
+| `the artifact does not match the signature` | The bytes changed after signing, or the signature belongs to another file |
+| `key revoked as <compromised\|superseded\|retired\|no reason given> on <yyyy-MM-dd>` | The key's holder revoked it, with that reason; `; revocation served by <keyservers>` follows when the revocation came from a fetched copy |
+| `key expired on <yyyy-MM-dd>, before it signed` | The signature was made after the key's expiry |
+
+The detail never changes the outcome.
 
 ### Checking with gpg directly
 

@@ -239,6 +239,25 @@ public record ClaimResult(
         return attesterDisplayName + voucherLabel();
     }
 
+    /**
+     * Says why this claim reached its outcome, as the reports print it: the reason followed by the
+     * tool's detail, or the reason alone when there is no detail. A claim without a reason yields
+     * its detail alone; by the constructor's rules only an {@code INDETERMINATE} claim carries a
+     * reason and a {@code VERIFIED} one carries no detail, so today that is a {@code FAILED} claim's
+     * detail.
+     *
+     * @return the explanation, or {@code null} when the claim carries neither reason nor detail
+     */
+    String explanation() {
+        if (reason == null) {
+            return detail;
+        }
+        if (detail == null) {
+            return reason.name();
+        }
+        return reason + ": " + detail;
+    }
+
     private String voucherLabel() {
         if (displayNameVouchedBy == null) {
             return " (unverified)";

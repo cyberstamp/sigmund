@@ -263,7 +263,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
                     String ver = SignatureInspector.versionLabel(pgpVersion);
                     String keyId = vr.signerIdentifier() != null ? vr.signerIdentifier() : "-";
                     String keyLine = "   " + ver + formatAlgorithm(vr) + ": " + keyId;
-                    if (identified) {
+                    if (identified && !vr.isFailed()) {
                         getLog().info(keyLine);
                     } else {
                         keyLine += formatOutcome(vr);
@@ -370,7 +370,7 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
 
     private static String formatOutcome(VerifyResult result) {
         if (result.isFailed()) {
-            return " (bad signature)";
+            return result.detail() != null ? " (failed: " + result.detail() + ")" : " (bad signature)";
         }
         if (!result.isIndeterminate()) {
             return "";

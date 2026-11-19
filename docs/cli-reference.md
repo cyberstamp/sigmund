@@ -216,8 +216,8 @@ Sample output:
 
 ```
 Signature Verification Report:
-  [1] VERIFIED (EdDSA) [key: 8B1C2D3E4F5A6B7C8D9E0F1A2B3C4D5E6F7A8B9C] [signer: Alice <alice@example.com>]
-  [2] VERIFIED (ML-DSA-87+Ed448) [key: D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F] [signer: Alice <alice@example.com>]
+  [1] VERIFIED (EdDSA) [key: 8B1C2D3E4F5A6B7C8D9E0F1A2B3C4D5E6F7A8B9C] [signer: Alice <alice@example.com> (unverified)]
+  [2] VERIFIED (ML-DSA-87+Ed448) [key: D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F] [signer: Alice <alice@example.com> (unverified)]
   Overall: 2 VERIFIED
 ```
 
@@ -225,7 +225,12 @@ Blocks are listed in file order, classic first. `key` is the key that verified t
 
 The last line counts outcomes rather than naming a verdict of its own. A block
 left undecided reads as `INDETERMINATE` followed by the reason and, when the tool says, why —
-for example `INDETERMINATE [KEY_UNAVAILABLE: no local key store or configured keyserver has it]`.
+for example `INDETERMINATE [KEY_UNAVAILABLE: no local key store or configured keyserver has it]`;
+a failed one reads as `FAILED`, followed by why when the tool says, such as
+`FAILED [the artifact does not match the signature]`. The label after a signer says who vouches
+for it: `(address verified by keys.openpgp.org)` when that directory, listed in `issuers`, served
+the user ID; `(attested by <issuer URL>)` for a Sigstore identity whose OIDC issuer is listed;
+otherwise `(unverified)`.
 
 Exit codes:
 - `0` — Verification passed
@@ -250,7 +255,7 @@ The identifier is auto-detected by default: hex strings are treated as fingerpri
 | `<identifier>` | Yes | — | Signer identifier: a full fingerprint or an email, auto-detected |
 | `--fingerprint` | No | — | Treat identifier as a fingerprint |
 | `--email` | No | — | Treat identifier as an email |
-| `--keyservers`, `--keyserver` | No | `verification.keyservers`, else `hkps://keys.openpgp.org` | Keyservers to query, comma-separated; giving them turns fetching on even when `resolve-signers` is `false` |
+| `--keyservers`, `--keyserver` | No | `verification.keyservers`, else `hkps://keys.openpgp.org,hkps://keyserver.ubuntu.com` | Keyservers to query, comma-separated; giving them turns fetching on even when `resolve-signers` is `false` |
 | `--tool` | No | all | Restrict inspection to a specific tool (`bc`, `sq`, `gpg`) |
 | `--sq-home` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 

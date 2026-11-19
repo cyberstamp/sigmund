@@ -13,6 +13,8 @@ This page documents known limitations, ecosystem maturity notes, and caveats for
 - [GnuPG does not honour revocation reasons](#gnupg-does-not-honour-revocation-reasons)
 - [BC cannot use a user ID that is not UTF-8](#bc-cannot-use-a-user-id-that-is-not-utf-8)
 - [keys.openpgp.org alone cannot serve keys without a verified address](#keysopenpgporg-alone-cannot-serve-keys-without-a-verified-address)
+- [Designated revokers are not honoured by BC or Sequoia](#designated-revokers-are-not-honoured-by-bc-or-sequoia)
+- [A user ID is labelled verified only from a copy BC fetched](#a-user-id-is-labelled-verified-only-from-a-copy-bc-fetched)
 - [Key passphrase protection caveats](#key-passphrase-protection-caveats)
   - [BC keys: decrypted material on the Java heap](#bc-keys-decrypted-material-on-the-java-heap)
 - [PQC ecosystem maturity](#pqc-ecosystem-maturity)
@@ -113,7 +115,11 @@ This reaches two kinds of key:
   alone — even under a policy that pins the old key's fingerprint, since the copy itself cannot be
   used.
 
-Listing a keyserver that serves the full key resolves both; see
+This is mitigated by default: `keyserver.ubuntu.com`, the second default keyserver, serves such
+keys in full, and Sigmund merges the copies every keyserver serves, so both kinds verify. A user
+ID only `keyserver.ubuntu.com` served is shown as `(unverified)`, since it does not verify
+addresses. What remains is a key no configured keyserver serves in full; listing a keyserver
+that does resolves it — see
 [Keys Served Without User IDs](verification.md#keys-served-without-user-ids). A publisher keeps
 old signatures verifiable from `keys.openpgp.org` by leaving a verified address on the old key,
 or by publishing the old key's full certificate where verifiers can find it, such as the
@@ -122,6 +128,26 @@ project's `KEYS` file.
 Verifiers that check a signature against the key alone, without the key's validity —
 pgpverify-maven-plugin does — are not affected, and do not check the key's expiry or the
 binding of its subkeys either.
+
+## Designated revokers are not honoured by BC or Sequoia
+
+A key can name another key as a designated revoker (RFC 4880's revocation key subpacket), which
+may then revoke it. Bouncy Castle and Sequoia ignore such a revocation: a key revocation counts
+only when it verifies against the key's own primary key, which also keeps a revocation forged by
+any keyserver from making a signature `FAILED`. GnuPG honours it, but only when the revoker's key
+is in its keyring. So a signature by a key revoked this way is `VERIFIED` under `bc` and `sq`, and
+`FAILED` under `gpg` when it holds the revoker's key. RFC 9580 deprecates the subpacket;
+making the backends agree is roadmap task P4.12.
+
+## A user ID is labelled verified only from a copy BC fetched
+
+A displayed user ID is labelled `(address verified by keys.openpgp.org)` only when that
+directory's copy of the key, fetched into Bouncy Castle's key store this run, carried it. A key
+`gpg` fetched into its own keyring (`import-to-keyring: true` with `gpg` answering), or one
+answered from `sq`'s or `gpg`'s own store, has no such copy, so its user ID is labelled
+`(unverified)` even when the directory publishes it. The label only understates: it never shows
+a name as verified that the directory did not serve, and it never changes an outcome — matching
+`email:` entries goes through the directory's own answer.
 
 ## Key passphrase protection caveats
 

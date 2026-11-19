@@ -255,15 +255,16 @@ verification:
   import-to-keyring: false
   keyservers:
     - hkps://keys.openpgp.org
+    - hkps://keyserver.ubuntu.com
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `resolve-signers` | `true` | Fetch unknown keys from keyservers, and ask directories named in `issuers` for verified addresses |
 | `import-to-keyring` | `false` | Import fetched keys to the local keyring |
-| `keyservers` | `hkps://keys.openpgp.org` | List of keyservers for fetching OpenPGP keys |
+| `keyservers` | `hkps://keys.openpgp.org`, `hkps://keyserver.ubuntu.com` | Keyservers for fetching OpenPGP keys; all are asked and their copies merged |
 
-**Keyservers supply key material only.** The signature proves the key whoever served it, and a user ID a keyserver serves never becomes an identity, so adding a keyserver such as `keyserver.ubuntu.com` cannot widen what is accepted. Identities come only from `issuers`; `keys.openpgp.org` is both the default keyserver and the directory Sigmund can ask for verified addresses.
+**Keyservers supply key material only.** The signature proves the key whoever served it, and a user ID a keyserver serves never becomes an identity, so asking a keyserver that does not verify addresses, such as `keyserver.ubuntu.com`, cannot widen what is accepted. Identities come only from `issuers`; `keys.openpgp.org` is both a default keyserver and the directory Sigmund can ask for verified addresses, and it vouches for nothing until it is listed there.
 
 ## Complete Example
 
@@ -351,12 +352,12 @@ A project with six dependencies, a policy requiring `alice` for `org.example.*` 
 
 ```
 [INFO] SATISFIED (2)
-[INFO]   openpgp VERIFIED by bc (EdDSA) - Alice Example <alice@example.org>
+[INFO]   openpgp VERIFIED by bc (EdDSA) - Alice Example <alice@example.org> (address verified by keys.openpgp.org)
 [INFO]     org.example:core:1.0
 [INFO]     org.example:util:1.0
 [ERROR]
 [ERROR] UNSATISFIED (1)
-[ERROR]   openpgp VERIFIED by bc (EdDSA) - Mallory Example <mallory@example.org>
+[ERROR]   openpgp VERIFIED by bc (EdDSA) - Mallory Example <mallory@example.org> (unverified)
 [ERROR]     org.example:extra:1.0 [blocks]
 [INFO]
 [INFO] NO_CLAIM (1) — ignored: 1 by rules[2] 'com.acme:internal'
@@ -366,7 +367,7 @@ A project with six dependencies, a policy requiring `alice` for `org.example.*` 
 [ERROR]     com.acme:widget:1.0 [blocks]
 [ERROR]
 [ERROR] NOT_CONFIGURED (1)
-[ERROR]   openpgp VERIFIED by bc (EdDSA) - Bob Example <bob@example.org>
+[ERROR]   openpgp VERIFIED by bc (EdDSA) - Bob Example <bob@example.org> (unverified)
 [ERROR]     net.other:lib:1.0 [blocks]
 ```
 
@@ -374,6 +375,9 @@ The build then fails with `Verification blocked the build for 3 artifact(s): org
 (UNSATISFIED), com.acme:widget:1.0 (INDETERMINATE), net.other:lib:1.0 (NOT_CONFIGURED)`. The name
 after a verified claim is the user ID on the key — display text, never what the policy matched:
 `extra` is `UNSATISFIED` because Mallory's key is not one `alice` holds, whatever its user ID says.
+The label after it says who vouches for the name: `(address verified by keys.openpgp.org)` when
+that directory, listed under `issuers`, served the user ID itself — it vouches for the address,
+not the name — and `(unverified)` otherwise, such as a user ID only `keyserver.ubuntu.com` served.
 
 Results are grouped by outcome, and within an outcome by who attested them. Each artifact line
 says what its outcome does — `[blocks]`, `[warning]` or `[ignored]` — and is logged at that
@@ -462,10 +466,11 @@ assumed by Sigmund, and removing that line and the `email:` lines leaves fingerp
 
 **A key whose signatures could not be checked here is still pinned, and marked.** The signature
 names its key, so the rule requires the key that signed; but when no copy of it could be used —
-such as a key `keys.openpgp.org` serves without the self-signatures that bind it, until its owner
-verifies an address — `verify` reports the artifact `INDETERMINATE` until a usable copy is
-available. The file marks the key, and the run ends with a warning naming each such signer with
-the reason, once:
+now rare, since the default keyservers' copies are merged: a key no configured keyserver serves
+with the self-signatures that bind it, or one Bouncy Castle cannot read, such as gson's release key
+with its user ID that is not UTF-8 — `verify` reports the artifact `INDETERMINATE` until a usable
+copy is available. The file marks the key, and the run ends with a warning naming each such signer
+with the reason, once:
 
 ```yaml
   signer-2:
@@ -473,15 +478,21 @@ the reason, once:
 ```
 
 ```
-[WARNING] The signatures of 2 signer(s) written could not be checked here; sigmund:verify reports their artifacts INDETERMINATE until a usable copy of each key is available:
-[WARNING]   signer-2: the copy from hkps://keys.openpgp.org carries no self-signature binding the key
-[WARNING]   signer-3: the copy from hkps://keys.openpgp.org carries no self-signature binding the key
+[WARNING] The signatures of 1 signer(s) written could not be checked here; sigmund:verify reports their artifacts INDETERMINATE until a usable copy of each key is available:
+[WARNING]   signer-2: its user ID is not valid UTF-8, which Bouncy Castle cannot read
 [WARNING] List a keyserver that serves these keys in full under verification.keyservers in sigmund.yaml; for a key none does, see "Keys Served Without User IDs" in the signature verification docs.
 ```
 
-A keyserver that serves the full key, listed under `verification.keyservers`, resolves it for
-every machine; see [Keys Served Without User IDs](verification.md#keys-served-without-user-ids),
-which also covers a key no keyserver serves usefully.
+For a key Bouncy Castle cannot read, such as this one, another keyserver does not help: importing
+the key into GnuPG's or Sequoia's store, the second route in
+[Keys Served Without User IDs](verification.md#keys-served-without-user-ids), is the one that
+applies.
+
+A keyserver that serves the full key, listed under `verification.keyservers`, resolves a key
+served without its user IDs for every machine; see
+[Keys Served Without User IDs](verification.md#keys-served-without-user-ids), which also covers a
+key no keyserver serves usefully, and [Limitations](limitations.md) for keys Bouncy Castle cannot
+read.
 
 ### Generated File Structure
 
@@ -536,7 +547,7 @@ IDs are unverified.
 | `sigmund.generateTrustConfig` | Generate a new `sigmund.yaml`. Set to `true` for project root, or provide a file path. |
 | `sigmund.overwrite` | Allow overwriting an existing file (default: `false`) |
 | `sigmund.resolveSigners` | Overrides `verification.resolve-signers`, default `true`. `false` works offline: keys are not fetched and the directory is not asked, so no `email:` is written |
-| `sigmund.keyservers` | Comma-separated keyserver list (default: `hkps://keys.openpgp.org`) |
+| `sigmund.keyservers` | Comma-separated keyserver list (default: `hkps://keys.openpgp.org,hkps://keyserver.ubuntu.com`) |
 
 ## Updating Trust Configuration
 

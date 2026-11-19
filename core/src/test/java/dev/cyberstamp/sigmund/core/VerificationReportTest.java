@@ -284,6 +284,19 @@ class VerificationReportTest {
                     "openpgp INDETERMINATE (KEY_UNAVAILABLE: no local key store or configured keyserver has it) by bc");
         }
 
+        @Test
+        void aFailedClaimCarriesWhyItFailed() {
+            ClaimResult failed = new ClaimResult("openpgp", ClaimOutcome.FAILED, null, List.of(), null,
+                    TrustRootRef.unknown(), REF, null, ClaimTimeSource.SIGNER, Instant.EPOCH,
+                    "RSA", "bc", null, "the artifact does not match the signature", null, null);
+
+            List<VerificationReport.AttesterGroup> groups = VerificationReport.groupByAttester(
+                    List.of(result("lib", ArtifactOutcome.FAILED, null, failed)));
+
+            assertThat(groups.get(0).summary()).containsExactly(
+                    "openpgp FAILED (the artifact does not match the signature) by bc (RSA)");
+        }
+
         /** Without it an operator told the signer is not accepted cannot tell which key to add. */
         @Test
         void anUncheckableClaimNamesTheKeyItDeclaresAsUnverified() {

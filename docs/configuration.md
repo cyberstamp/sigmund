@@ -577,6 +577,7 @@ verification:
   import-to-keyring: false
   keyservers:
     - hkps://keys.openpgp.org
+    - hkps://keyserver.ubuntu.com
 ```
 
 #### Fields
@@ -608,17 +609,16 @@ verification:
   - `false` (default) — Keys are cached in memory for the session. BC supports ephemeral key storage; GPG does not, so key fetch is skipped entirely for GPG when this is `false`.
   - `true` — Keys are permanently imported into the tool's keyring (BC cert-d or GPG keyring).
 
-  **Note:** `keys.openpgp.org` serves a key without its user IDs until the owner verifies an address. Without the self-signatures on its user IDs no tool can use the key, so its signatures are `INDETERMINATE` (`KEY_UNAVAILABLE`), and GPG refuses to import such a copy at all. A keyserver that serves the full key, listed under `keyservers`, resolves it; see [Keys Served Without User IDs](verification.md#keys-served-without-user-ids) for that and for keys no keyserver serves usefully.
+  **Note:** `keys.openpgp.org` serves a key without its user IDs until the owner verifies an address. Without the self-signatures on its user IDs no tool can use that copy alone, and GPG refuses to import it at all. The default `keyservers` include `keyserver.ubuntu.com`, which serves such keys in full, and the copies are merged; see [Keys Served Without User IDs](verification.md#keys-served-without-user-ids) for keys no keyserver serves usefully.
 
-- **`keyservers`** (array of strings, default: `[hkps://keys.openpgp.org]`)
+- **`keyservers`** (array of strings, default: `[hkps://keys.openpgp.org, hkps://keyserver.ubuntu.com]`)
 
-  Keyserver URLs for fetching missing keys, asked in order. The first copy that carries user IDs is used; a copy without them is used only when no keyserver has a fuller one. The result records which keyserver supplied the key. Keyservers supply key material only: the signature proves the key whoever served it, and a user ID a keyserver serves never becomes an identity — identities come only from [`issuers`](#issuers). That is why this is safe to change from the command line.
+  Keyserver URLs for fetching missing keys. Every listed keyserver is asked, concurrently, and the readable copies they serve are merged into one certificate, so a user ID, self-signature or revocation any of them carries counts and no copy can hide what another serves. The result records every keyserver that contributed a copy. Keyservers supply key material only: every self-signature and revocation in a copy is checked against the key itself, the signature proves the key whoever served it, and a user ID a keyserver serves never becomes an identity — identities come only from [`issuers`](#issuers). `keyserver.ubuntu.com` does not verify addresses, so a name it serves is shown as `(unverified)`. That is why this list is safe to change from the command line. Each listed keyserver learns which keys your build looks up; list only `hkps://keys.openpgp.org` to ask it alone.
 
   ```yaml
   verification:
     keyservers:
       - hkps://keys.openpgp.org
-      - hkps://keyserver.ubuntu.com
   ```
 
 ### `tools`

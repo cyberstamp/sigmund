@@ -160,7 +160,7 @@ The report groups results by outcome, then by who attested them. Each artifact l
 |----------|----------|---------|-------------|
 | `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
 | `sigmund.resolveSigners` | No | `true` | Fetch unknown keys from keyservers, and ask directories named in `issuers` for verified addresses. Overrides config file setting. |
-| `sigmund.keyservers` | No | `hkps://keys.openpgp.org` | Comma-separated keyserver list. Used when `resolveSigners` is enabled. |
+| `sigmund.keyservers` | No | `hkps://keys.openpgp.org,hkps://keyserver.ubuntu.com` | Comma-separated keyserver list; all are asked and their copies merged. Used when `resolveSigners` is enabled. |
 | `sigmund.verifyPomFiles` | No | `false` | Also verify signatures on POM files for each dependency |
 | `sigmund.detail` | No | `false` | Add the credentials proven and the trust root to each attester group, and the evidence file and claim time to each artifact, and list ignored artifacts. Results are grouped by outcome and then by attester either way |
 | `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
@@ -182,12 +182,12 @@ dependency tree signed by a handful of signers reads as a handful of blocks:
 
 ```
 SATISFIED (2)
-  openpgp VERIFIED by bc (EdDSA) - Jane Doe <jane@example.com>
+  openpgp VERIFIED by bc (EdDSA) - Jane Doe <jane@example.com> (unverified)
     com.example:lib:1.0
     com.example:lib-b:2.0
 
 UNSATISFIED (1)
-  openpgp VERIFIED by gpg (RSA) - Unknown <unknown@example.com>
+  openpgp VERIFIED by gpg (RSA) - Unknown <unknown@example.com> (unverified)
     com.other:tool:3.0 [blocks]
 
 NO_CLAIM (1)
@@ -207,7 +207,7 @@ checked against, and each artifact the evidence it was read from:
 
 ```
 SATISFIED (2)
-  openpgp VERIFIED by bc (EdDSA) - Jane Doe <jane@example.com>
+  openpgp VERIFIED by bc (EdDSA) - Jane Doe <jane@example.com> (unverified)
     credential pgp4 DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF
     trust root openpgp-cert-d /home/jane/.local/share/pgp.cert.d
     com.example:lib:1.0
@@ -270,7 +270,7 @@ Dependencies are grouped by signer, sorted alphabetically. Unsigned artifacts an
 |----------|----------|---------|-------------|
 | `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
 | `sigmund.resolveSigners` | No | `true` | Fetch unknown GPG keys from keyservers to resolve signer identities |
-| `sigmund.keyservers` | No | `hkps://keys.openpgp.org` | Comma-separated list of keyservers for fetching GPG keys |
+| `sigmund.keyservers` | No | `hkps://keys.openpgp.org,hkps://keyserver.ubuntu.com` | Comma-separated list of keyservers for fetching OpenPGP keys |
 | `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
 | `sigmund.gpgHome` | No | — | GnuPG home directory: overrides `tools.gpg.home`, which BC also reads public keys from unless `tools.bc.gnupg-home` is set |
 | `sigmund.importToKeyring` | No | — | Persist fetched keys to keyrings. Overrides config file setting. |
@@ -298,16 +298,16 @@ mvn sigmund:dependency-signers \
 **Output:**
 
 ```
-Signer: Alice Developer <alice@example.com>
+Signer: Alice Developer <alice@example.com> (unverified)
    PGP4 (EdDSA): 4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12
      com.example:lib-a:1.0
      com.example:lib-b:2.0
 
-Signer: Bob Maintainer (Code signing key) <bob@example.org>
+Signer: Bob Maintainer (Code signing key) <bob@example.org> (unverified)
    PGP4 (RSA): BBE7232D7991050B54C8EA0ADC08637CA615D22C
      org.example:parser:3.1
 
-Signer: Carol Release <carol@example.net>
+Signer: Carol Release <carol@example.net> (unverified)
    PGP4 (ECDSA): 9C1F2E7D4B6A08355E3D21C7A9B04F6E12D83A57
      net.example:tool:2.4
 
@@ -341,7 +341,7 @@ Inspects a signer identity across all available sources (local keystores and key
 | `sigmund.fingerprint` | No | — | Full signer fingerprint to inspect |
 | `sigmund.email` | No | — | Signer email to inspect |
 | `sigmund.tool` | No | all | Restrict inspection to a specific tool (`bc`, `sq`, `gpg`) |
-| `sigmund.keyservers` | No | `verification.keyservers`, else `hkps://keys.openpgp.org` | Comma-separated keyserver list |
+| `sigmund.keyservers` | No | `verification.keyservers`, else `hkps://keys.openpgp.org,hkps://keyserver.ubuntu.com` | Comma-separated keyserver list |
 | `sigmund.resolveSigners` | No | `verification.resolve-signers`, else `true` | Fetch keys from keyservers |
 | `sigmund.trustConfig` | No | `${project.basedir}/sigmund.yaml`, else `~/.config/sigmund/sigmund.yaml` | Configuration file; a named file that does not exist is an error |
 | `sigmund.sqHome` | No | — | Sequoia home directory: overrides `tools.sq.home`; unset, sq uses `SEQUOIA_HOME` or its own default |
