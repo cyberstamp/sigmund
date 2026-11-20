@@ -11,6 +11,9 @@
   <properties>
     <resolver.version>2.0.25</resolver.version>
     <maven.version>3.10.1</maven.version>
+    <!-- The Maven distributions the ITs run on, whatever Maven runs this build -->
+    <it.maven3.version>3.10.1</it.maven3.version>
+    <it.maven4.version>4.0.0-rc-7</it.maven4.version>
     <sisu.version>1.1.2</sisu.version>
     <sl4j.version>2.0.20</sl4j.version>
   </properties>
@@ -90,6 +93,94 @@
 
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.11.0</version>
+        <executions>
+          <execution>
+            <id>unpack-it-maven</id>
+            <phase>pre-integration-test</phase>
+            <goals>
+              <goal>unpack</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/it-maven</outputDirectory>
+              <artifactItems>
+                <artifactItem>
+                  <groupId>org.apache.maven</groupId>
+                  <artifactId>apache-maven</artifactId>
+                  <version>${it.maven3.version}</version>
+                  <classifier>bin</classifier>
+                  <type>tar.gz</type>
+                </artifactItem>
+                <artifactItem>
+                  <groupId>org.apache.maven</groupId>
+                  <artifactId>apache-maven</artifactId>
+                  <version>${it.maven4.version}</version>
+                  <classifier>bin</classifier>
+                  <type>tar.gz</type>
+                </artifactItem>
+              </artifactItems>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-invoker-plugin</artifactId>
+        <version>${maven-invoker-plugin.version}</version>
+        <configuration>
+          <settingsFile>src/it/settings.xml</settingsFile>
+          <pomIncludes>
+            <pomInclude>*/pom.xml</pomInclude>
+          </pomIncludes>
+          <projectsDirectory>src/it</projectsDirectory>
+          <properties>
+            <maven.repo.local.tail>${settings.localRepository}</maven.repo.local.tail>
+          </properties>
+          <filterProperties>
+            <itRepositoryUrl>${project.baseUri}src/it/fixtures/repo</itRepositoryUrl>
+          </filterProperties>
+          <scriptVariables>
+            <projectVersion>${project.version}</projectVersion>
+            <fixtures>${project.basedir}/src/it/fixtures</fixtures>
+          </scriptVariables>
+          <preBuildHookScript>setup</preBuildHookScript>
+          <postBuildHookScript>verify</postBuildHookScript>
+          <streamLogs>true</streamLogs>
+          <!-- An empty user home, so extensions from the developer's ~/.m2/extensions.xml do not load -->
+          <mavenOpts>-Duser.home=${project.build.directory}/it-home</mavenOpts>
+        </configuration>
+        <executions>
+          <execution>
+            <id>it-maven3</id>
+            <goals>
+              <goal>install</goal>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <mavenHome>${project.build.directory}/it-maven/apache-maven-${it.maven3.version}</mavenHome>
+              <cloneProjectsTo>${project.build.directory}/it/maven3</cloneProjectsTo>
+              <localRepositoryPath>${project.build.directory}/it-repo/maven3</localRepositoryPath>
+              <reportsDirectory>${project.build.directory}/invoker-reports/maven3</reportsDirectory>
+            </configuration>
+          </execution>
+          <execution>
+            <id>it-maven4</id>
+            <goals>
+              <goal>install</goal>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <mavenHome>${project.build.directory}/it-maven/apache-maven-${it.maven4.version}</mavenHome>
+              <cloneProjectsTo>${project.build.directory}/it/maven4</cloneProjectsTo>
+              <localRepositoryPath>${project.build.directory}/it-repo/maven4</localRepositoryPath>
+              <reportsDirectory>${project.build.directory}/invoker-reports/maven4</reportsDirectory>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <artifactId>maven-javadoc-plugin</artifactId>
         <configuration>
