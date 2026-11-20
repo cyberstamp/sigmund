@@ -1,9 +1,11 @@
 package dev.cyberstamp.sigmund.resolver.generator;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.cyberstamp.sigmund.core.ArtifactOutcome;
 import dev.cyberstamp.sigmund.core.Sigmund;
+import dev.cyberstamp.sigmund.core.SigmundException;
 import dev.cyberstamp.sigmund.resolver.SigmundConfigurationKeys;
 import dev.cyberstamp.sigmund.resolver.SigmundSessionVerifier;
 import dev.cyberstamp.sigmund.resolver.TestKeys;
@@ -119,9 +121,49 @@ class SigmundSignatureArtifactGeneratorTest {
 
         @Test
         void deploysAreSignedWithTheConfiguredKey() throws IOException {
+            enableSigning(null);
+
+            try (ArtifactGenerator generator = factory.newInstance(session, deploy())) {
+                assertThat(generator.generate(List.of())).extracting(Artifact::getExtension).containsExactly("jar.asc");
+            }
+        }
+
+        @Test
+        void aProfileSelectsTheKeysThatSign() throws IOException {
+            enableSigning("classic");
+
+            try (ArtifactGenerator generator = factory.newInstance(session, deploy())) {
+                assertThat(generator.generate(List.of())).extracting(Artifact::getExtension).containsExactly("jar.asc");
+            }
+        }
+
+        @Test
+        void anUnknownProfileFailsBeforeAnythingIsDeployed() throws IOException {
+            enableSigning("no-such-profile");
+
+            assertThatThrownBy(() -> factory.newInstance(session, deploy()))
+                    .isInstanceOf(SigmundException.class)
+                    .hasMessageContaining("no-such-profile");
+        }
+
+        @Test
+        void aSigningFailureFailsTheDeploy() throws IOException {
+            enableSigning("modern");
+
+            try (ArtifactGenerator generator = factory.newInstance(session, deploy())) {
+                assertThatThrownBy(() -> generator.generate(List.of()))
+                        .isInstanceOf(SigmundException.class)
+                        .hasMessageContaining("pgp6");
+            }
+        }
+
+        private void enableSigning(String profile) throws IOException {
             Path config = Files.writeString(dir.resolve("signing.yaml"), """
                     signing:
                       toolchain: [bc]
+                      profiles:
+                        classic: [pgp4]
+                        modern: [pgp6]
                     tools:
                       bc:
                         cert-d-home: "%s"
@@ -132,10 +174,13 @@ class SigmundSignatureArtifactGeneratorTest {
                     dir.resolve("keys/gnupg"), fixture.fingerprint()));
             session.setConfigProperty(SigmundConfigurationKeys.CONFIG_PROP_SIGN_ENABLED, "true");
             session.setConfigProperty(SigmundConfigurationKeys.CONFIG_PROP_CONFIG, config.toString());
-
-            try (ArtifactGenerator generator = factory.newInstance(session, new DeployRequest().setArtifacts(List.of(jar)))) {
-                assertThat(generator.generate(List.of())).extracting(Artifact::getExtension).containsExactly("jar.asc");
+            if (profile != null) {
+                session.setConfigProperty(SigmundConfigurationKeys.CONFIG_PROP_SIGN_PROFILE, profile);
             }
+        }
+
+        private DeployRequest deploy() {
+            return new DeployRequest().setArtifacts(List.of(jar));
         }
     }
 
@@ -147,6 +192,6 @@ class SigmundSignatureArtifactGeneratorTest {
                         "gnupg-home", dir.resolve("keys/gnupg").toString(),
                         "signing-fingerprint", fixture.fingerprint()))
                 .build();
-        return new SigmundSignatureArtifactGenerator(artifacts, SIGNABLE::hasChecksums, sigmund);
+        return new SigmundSignatureArtifactGenerator(artifacts, SIGNABLE::hasChecksums, sigmund, sigmund.signer());
     }
 }

@@ -49,6 +49,7 @@ Set as user properties (`-D…` or `.mvn/maven.config`):
 | `sigmund.resolver.verify.enabled` | Boolean | `false` | Verify downloaded artifacts. |
 | `sigmund.resolver.config` | String | unset | Path of the `sigmund.yaml` to use. Unset, it is `sigmund.yaml` in the build's root directory (the one holding `.mvn`), then the user config (`~/.config/sigmund/sigmund.yaml`). |
 | `sigmund.resolver.sign.enabled` | Boolean | `false` | Sign deployed artifacts (see [Signing](#signing)). |
+| `sigmund.resolver.sign.profile` | String | unset | The `signing.profiles` entry whose credential types choose the keys that sign, as `-Dsigmund.profile` does for `sigmund:sign`. Unset, `signing.credential-types` chooses them, or every key signs. |
 
 A `sigmund.yaml` that cannot be loaded fails the build; it never disables verification. The
 file in use is logged at INFO. When none is found, a warning says so, and verification only
@@ -99,7 +100,12 @@ format a configured tool produces) beside it. Nothing is signed on `install`.
 The keys come from the `signing` and `tools` sections of the same `sigmund.yaml`, as for
 `mvn sigmund:sign`; see [the signing guide](../docs/signing.md). Without a `sigmund.yaml`,
 Sigmund's default signing tools sign, so a CI runner with `SIGMUND_BC_SIGNING_KEY` set needs no
-configuration. A key's passphrase is read from `SIGMUND_BC_PASSPHRASE`; nothing prompts.
+configuration. A protected key's passphrase comes the same way as for `sigmund:sign`: from the
+environment variable `passphrase-env` names (`SIGMUND_BC_PASSPHRASE` by default for BC), else a
+prompt when Maven runs in a terminal.
+
+A signing failure — a profile `sigmund.yaml` does not define, a credential type no key covers, a
+locked key — fails the deploy before anything is uploaded.
 
 When the build already attached signatures — maven-gpg-plugin, say — the extension signs
 nothing. Signing does not read the policy: a `sigmund.yaml` whose `rules` would fail to load for
