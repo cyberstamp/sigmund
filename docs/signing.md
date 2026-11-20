@@ -12,6 +12,7 @@ This guide covers artifact signing with Sigmund's backends: GPG (simplest, exist
   - [Passphrase Protection](#passphrase-protection)
   - [Passphrase Resolution Order](#passphrase-resolution-order)
 - [Ephemeral CI Signing](#ephemeral-ci-signing)
+- [Signing on Deploy with the Resolver Extension](#signing-on-deploy-with-the-resolver-extension)
 - [Hybrid PQC Signing](#hybrid-pqc-signing)
   - [Prerequisites](#prerequisites)
   - [Installing Sequoia sq](#installing-sequoia-sq)
@@ -272,6 +273,13 @@ tools:
 ```
 
 **Priority:** a key in the environment variable wins over `tsk-file` — a file holding an exported secret key (a Transferable Secret Key), such as the one `export-secret-key` writes — which wins over `signing-fingerprint`, so CI can override a file-based setup without editing `sigmund.yaml`.
+
+## Signing on Deploy with the Resolver Extension
+
+On Maven 3.10 or later, the `sigmund-resolver-connector` extension signs at deploy time instead of
+a `sigmund:sign` goal: with `-Dsigmund.resolver.sign.enabled=true`, each artifact `mvn deploy`
+uploads is signed with the keys configured here, and its signature deployed beside it. See
+[its README](../sigmund-resolver-connector/README.md#signing).
 
 ## Hybrid PQC Signing
 
