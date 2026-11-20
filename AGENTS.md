@@ -6,7 +6,7 @@ the docs it points to rather than a summary here.
 
 ## Project Overview
 
-Sigmund is a Maven plugin and CLI for artifact signing, signature verification, and dependency trust enforcement. Multi-module Maven project: `core`, `cli`, `maven-plugin`, `sigstore`, `sigmund-resolver-connector` (Maven Resolver extension verifying resolved artifacts).
+Sigmund is a Maven plugin and CLI for artifact signing, signature verification, and dependency trust enforcement. Multi-module Maven project: `core`, `cli`, `maven-plugin`, `sigstore`, `sigmund-resolver-connector` (Maven Resolver extension verifying resolved artifacts and signing deployed ones).
 
 Where to look:
 
