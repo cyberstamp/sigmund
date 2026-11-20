@@ -32,7 +32,7 @@ public final class SigmundPipelineRepositoryConnectorFactory implements Pipeline
                 session, SigmundConfigurationKeys.DEFAULT_VERIFY_ENABLED,
                 SigmundConfigurationKeys.CONFIG_PROP_VERIFY_ENABLED);
         if (enabled) {
-            return new SigmundRepositoryConnector(repository, delegate, SigmundSessionVerifier.get(session));
+            return new SigmundRepositoryConnector(session, repository, delegate, SigmundSessionVerifier.get(session));
         } else {
             return delegate;
         }

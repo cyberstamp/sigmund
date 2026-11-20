@@ -3,6 +3,7 @@ package dev.cyberstamp.sigmund.resolver;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.cyberstamp.sigmund.core.ArtifactOutcome;
+import dev.cyberstamp.sigmund.core.EnforcementAction;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,8 +55,30 @@ class SigmundSessionVerifierTest {
         SigmundSessionVerifier.Verdict verdict = verifier.verify(LIB, tampered, List.of(fixture.signature()));
 
         assertThat(verdict.outcome()).isEqualTo(ArtifactOutcome.FAILED);
+        assertThat(verdict.action()).isEqualTo(EnforcementAction.FAIL);
         assertThat(verdict.blocks()).isTrue();
-        assertThat(verdict.message()).isNotBlank();
+    }
+
+    @Test
+    void messageSaysWhatHappenedAndWhichRuleDecided() throws IOException {
+        Path tampered = Files.copy(fixture.artifact(), dir.resolve("tampered.jar"));
+        Files.write(tampered, new byte[] { 1 }, StandardOpenOption.APPEND);
+
+        String message = verifier.verify(LIB, tampered, List.of(fixture.signature())).message();
+
+        assertThat(message).contains("org.example:lib", "FAILED", "FAIL", "org.example:*", "evidence ");
+    }
+
+    @Test
+    void noClaimUnderAWarnPolicyWarnsWithoutBlocking() {
+        TestKeys.Fixture warning = TestKeys.create(dir.resolve("warn"), "defaults:\n  on-no-claim: warn\n");
+        try (SigmundSessionVerifier warnVerifier = SigmundSessionVerifier.create(warning.configFile())) {
+            SigmundSessionVerifier.Verdict verdict = warnVerifier.verify(LIB, warning.artifact(), List.of());
+
+            assertThat(verdict.outcome()).isEqualTo(ArtifactOutcome.NO_CLAIM);
+            assertThat(verdict.action()).isEqualTo(EnforcementAction.WARN);
+            assertThat(verdict.blocks()).isFalse();
+        }
     }
 
     @Test

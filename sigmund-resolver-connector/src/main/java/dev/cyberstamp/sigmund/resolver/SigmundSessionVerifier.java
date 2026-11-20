@@ -6,6 +6,8 @@ import dev.cyberstamp.sigmund.core.ArtifactCoords;
 import dev.cyberstamp.sigmund.core.ArtifactOutcome;
 import dev.cyberstamp.sigmund.core.ArtifactResult;
 import dev.cyberstamp.sigmund.core.ConfigLoader;
+import dev.cyberstamp.sigmund.core.EnforcementAction;
+import dev.cyberstamp.sigmund.core.MatchedRule;
 import dev.cyberstamp.sigmund.core.PolicyConfigException;
 import dev.cyberstamp.sigmund.core.RulePolicy;
 import dev.cyberstamp.sigmund.core.Sigmund;
@@ -19,6 +21,8 @@ import java.util.Set;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.util.ConfigUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Sigmund verification for one {@link RepositorySystemSession}: the configuration, the compiled trust policy and
@@ -26,13 +30,15 @@ import org.eclipse.aether.util.ConfigUtils;
  *
  * <p>
  * The configuration is the file named by {@link SigmundConfigurationKeys#CONFIG_PROP_CONFIG} or, when unset, the
- * {@code sigmund.yaml} located from the {@code maven.multiModuleProjectDirectory} config property (or the current
- * directory). A configuration that cannot be loaded or compiled fails the session rather than disabling
- * verification. Without {@code rules} there is no policy, and only a {@link ArtifactOutcome#FAILED} artifact
- * blocks.
+ * {@code sigmund.yaml} in the directory named by the {@code maven.multiModuleProjectDirectory} config property (or
+ * the current directory), else the user's {@code ~/.config/sigmund/sigmund.yaml}. A configuration that cannot be
+ * loaded or compiled fails the session rather than disabling verification. When no file is found, or the file has
+ * no {@code rules}, there is no policy: only a {@link ArtifactOutcome#FAILED} artifact blocks, and a warning says
+ * so.
  */
 public final class SigmundSessionVerifier implements AutoCloseable {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(SigmundSessionVerifier.class);
     private static final String SESSION_KEY = SigmundSessionVerifier.class.getName();
 
     private final Sigmund sigmund;
@@ -78,8 +84,15 @@ public final class SigmundSessionVerifier implements AutoCloseable {
 
     private static SigmundConfig loadConfig(RepositorySystemSession session) {
         String explicit = ConfigUtils.getString(session, null, SigmundConfigurationKeys.CONFIG_PROP_CONFIG);
-        String baseDir = ConfigUtils.getString(session, ".", "maven.multiModuleProjectDirectory");
-        return ConfigLoader.load(explicit == null ? null : Path.of(explicit), Path.of(baseDir));
+        Path baseDir = Path.of(ConfigUtils.getString(session, ".", "maven.multiModuleProjectDirectory"));
+        Path located = ConfigLoader.locate(explicit == null ? null : Path.of(explicit), baseDir);
+        if (located == null) {
+            LOGGER.warn("Sigmund verification is enabled but no sigmund.yaml was found in {} or the user config;"
+                    + " without a policy only signatures that do not match their artifact block", baseDir);
+            return SigmundConfig.EMPTY;
+        }
+        LOGGER.info("Sigmund verifies downloads with {}", located);
+        return ConfigLoader.load(located);
     }
 
     /**
@@ -100,12 +113,26 @@ public final class SigmundSessionVerifier implements AutoCloseable {
      * @param artifact the artifact, whose coordinates select the applicable rule
      * @param artifactFile the downloaded file
      * @param evidenceFiles the signature sidecars downloaded alongside it, possibly none
-     * @return the outcome, whether it blocks, and a description for the user
+     * @return the outcome, the policy's action for it, and a description for the user
      */
     public synchronized Verdict verify(Artifact artifact, Path artifactFile, List<Path> evidenceFiles) {
         ArtifactResult result = verifier.assess(coords(artifact), artifactFile, evidenceFiles);
-        VerificationReport report = VerificationReport.of(List.of(result), policy);
-        return new Verdict(result.outcome(), report.enforcement(result).blocks(), report.describe(result));
+        EnforcementAction action = VerificationReport.of(List.of(result), policy).enforcement(result);
+        return new Verdict(result.outcome(), action, message(result, action));
+    }
+
+    private static String message(ArtifactResult result, EnforcementAction action) {
+        StringBuilder message = new StringBuilder(result.subject().coords().toString())
+                .append(' ')
+                .append(result.outcome());
+        if (result.reason() != null) {
+            message.append(" (").append(result.reason()).append(')');
+        }
+        message.append(", action ").append(action);
+        MatchedRule rule = result.matchedRule();
+        message.append(rule == null ? ", no rule matched" : ", " + rule.location() + " '" + rule.pattern() + "'");
+        VerificationReport.explain(result).forEach(line -> message.append("; ").append(line));
+        return message.toString();
     }
 
     private static ArtifactCoords coords(Artifact a) {
@@ -124,9 +151,18 @@ public final class SigmundSessionVerifier implements AutoCloseable {
      * What verification established about one artifact.
      *
      * @param outcome the rolled-up outcome
-     * @param blocks whether the policy's enforcement makes the outcome fail resolution
-     * @param message the description of the result, for the user
+     * @param action what the policy does with the outcome: fail resolution, warn, or ignore it
+     * @param message the outcome, its reason, the rule that decided and the evidence read, for the user
      */
-    public record Verdict(ArtifactOutcome outcome, boolean blocks, String message) {
+    public record Verdict(ArtifactOutcome outcome, EnforcementAction action, String message) {
+
+        /**
+         * Whether the artifact fails resolution.
+         *
+         * @return {@code true} when the action is {@link EnforcementAction#FAIL}
+         */
+        public boolean blocks() {
+            return action.blocks();
+        }
     }
 }
