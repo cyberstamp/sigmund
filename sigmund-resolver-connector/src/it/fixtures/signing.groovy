@@ -10,7 +10,8 @@ def gnupg = new File(keys, 'gnupg')
 gnupg.mkdirs()
 def tools = ['cert-d-home': path(new File(keys, 'cert-d')), 'bc-private-home': path(new File(keys, 'bc-private')),
              'gnupg-home': path(gnupg)]
-def fingerprint = Sigmund.builder().addSigningTool('bc', tools).build().withCloseable {
+// Scripts run in the invoking Maven's JVM, which may hold the user's terminal: never ask for a passphrase
+def fingerprint = Sigmund.builder().interactive(false).addSigningTool('bc', tools).build().withCloseable {
     it.findTool(KeyGenerator).generateKey('Deploy IT <deploy@sigmund.example>', 'ed25519', 'pgp4')
 }
 
