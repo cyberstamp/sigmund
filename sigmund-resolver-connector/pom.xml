@@ -6,8 +6,8 @@
     <artifactId>sigmund-parent</artifactId>
     <version>0.0.3-SNAPSHOT</version>
   </parent>
-  <artifactId>sigmund-maven-resolver</artifactId>
-  <name>Sigmund :: Maven Resolver</name>
+  <artifactId>sigmund-resolver-connector</artifactId>
+  <name>Sigmund :: Resolver Connector</name>
   <properties>
     <resolver.version>2.0.25</resolver.version>
     <sisu.version>1.1.2</sisu.version>

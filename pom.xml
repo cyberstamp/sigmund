@@ -32,7 +32,7 @@
         <module>sigstore</module>
         <module>cli</module>
         <module>maven-plugin</module>
-        <module>maven-resolver</module>
+        <module>sigmund-resolver-connector</module>
     </modules>
     <properties>
         <project.build.outputTimestamp>2026-08-21T15:31:12Z</project.build.outputTimestamp>
