@@ -10,8 +10,8 @@
   <name>Sigmund :: Maven Resolver</name>
   <properties>
     <resolver.version>2.0.25</resolver.version>
-    <sisu.version>1.1.0</sisu.version>
-    <sl4j.version>2.0.18</sl4j.version>
+    <sisu.version>1.1.2</sisu.version>
+    <sl4j.version>2.0.20</sl4j.version>
   </properties>
   <dependencies>
     <dependency>
@@ -123,7 +123,7 @@
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
-        <version>3.6.3</version>
+        <version>3.7.0</version>
         <dependencies>
           <dependency>
             <groupId>org.apache.maven.resolver</groupId>
