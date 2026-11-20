@@ -1,5 +1,6 @@
 package dev.cyberstamp.sigmund.resolver.processor;
 
+import dev.cyberstamp.sigmund.resolver.SessionConfig;
 import dev.cyberstamp.sigmund.resolver.Sidecar;
 import dev.cyberstamp.sigmund.resolver.SigmundSessionVerifier;
 import dev.cyberstamp.sigmund.resolver.SigmundVerificationException;
@@ -49,7 +50,7 @@ public final class SigmundArtifactResolverPostProcessor implements ArtifactResol
      */
     @Inject
     public SigmundArtifactResolverPostProcessor(Provider<MavenSession> mavenSession) {
-        this(() -> SigmundSessionVerifier.rootDirectory(mavenSession.get()));
+        this(() -> SessionConfig.rootDirectory(mavenSession.get()));
     }
 
     SigmundArtifactResolverPostProcessor(Supplier<Path> rootDirectory) {

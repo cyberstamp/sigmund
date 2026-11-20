@@ -146,6 +146,8 @@
             <projectVersion>${project.version}</projectVersion>
             <fixtures>${project.basedir}/src/it/fixtures</fixtures>
           </scriptVariables>
+          <!-- Scripts use Sigmund core: the signing IT generates a key and verifies what was deployed -->
+          <addTestClassPath>true</addTestClassPath>
           <preBuildHookScript>setup</preBuildHookScript>
           <postBuildHookScript>verify</postBuildHookScript>
           <streamLogs>true</streamLogs>
