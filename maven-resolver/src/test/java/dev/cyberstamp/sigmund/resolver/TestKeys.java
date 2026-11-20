@@ -13,7 +13,7 @@ import java.util.Map;
  * A Bouncy Castle key, an artifact signed with it, and a {@code sigmund.yaml} that requires that key for
  * {@code org.example:*}, all under one directory.
  */
-final class TestKeys {
+public final class TestKeys {
 
     private TestKeys() {
     }
@@ -26,7 +26,7 @@ final class TestKeys {
      * @param signature the artifact's {@code .asc}
      * @param fingerprint the signing key's fingerprint
      */
-    record Fixture(Path configFile, Path artifact, Path signature, String fingerprint) {
+    public record Fixture(Path configFile, Path artifact, Path signature, String fingerprint) {
     }
 
     /**
@@ -35,7 +35,7 @@ final class TestKeys {
      * @param dir the directory holding the key stores and files
      * @return the fixture
      */
-    static Fixture create(Path dir) {
+    public static Fixture create(Path dir) {
         try {
             Map<String, String> tools = Map.of(
                     "cert-d-home", dir.resolve("cert-d").toString(),
