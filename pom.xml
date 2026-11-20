@@ -156,6 +156,8 @@
                         -->
                         <excludedEnvironmentVariables>
                             <excludedEnvironmentVariable>SIGMUND_BC_SIGNING_KEY</excludedEnvironmentVariable>
+                            <excludedEnvironmentVariable>SIGMUND_BC_PASSPHRASE</excludedEnvironmentVariable>
+                            <excludedEnvironmentVariable>SIGMUND_GPG_PASSPHRASE</excludedEnvironmentVariable>
                         </excludedEnvironmentVariables>
                     </configuration>
                 </plugin>

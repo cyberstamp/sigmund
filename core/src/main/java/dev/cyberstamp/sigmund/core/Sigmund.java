@@ -446,6 +446,7 @@ public class Sigmund implements AutoCloseable {
         private SignerIdentity expectedSigner;
         private List<SignatureToolFactory> factoryOverride;
         private PassphraseProvider bcPassphraseProvider;
+        private boolean interactive = true;
 
         /**
          * Sets per-tool configuration overrides from the top-level {@code tools} section.
@@ -573,6 +574,20 @@ public class Sigmund implements AutoCloseable {
         }
 
         /**
+         * Says whether signing tools may ask the user, such as for a key's passphrase on the console
+         * or through gpg-agent. A build that runs unattended — {@code mvn -B}, CI — passes
+         * {@code false}, and a tool needing a passphrase it was not given then fails instead of
+         * waiting for an answer. Defaults to {@code true}. Set before the signing tools are added.
+         *
+         * @param interactive whether the user may be asked
+         * @return this builder
+         */
+        public Builder interactive(boolean interactive) {
+            this.interactive = interactive;
+            return this;
+        }
+
+        /**
          * Adds the signing tools of {@code signing.toolchain}, each with its settings from the tools
          * configuration: the one {@link #config(SigmundConfig)} gave, or {@link #toolsConfig(ToolsConfig)}
          * set since. A tool the toolchain names must be known, or this fails. Without a
@@ -616,6 +631,9 @@ public class Sigmund implements AutoCloseable {
         private SignatureTool createFromFactory(String toolName, boolean signing,
                 Map<String, String> configured) {
             Map<String, String> settings = withSharedDefaults(toolName, configured);
+            if (signing) {
+                settings = withSessionSettings(settings);
+            }
             for (SignatureToolFactory factory : allFactories()) {
                 if (factory.toolName().equals(toolName)) {
                     if (signing && factory instanceof BcToolFactory bcFactory
@@ -1015,6 +1033,12 @@ public class Sigmund implements AutoCloseable {
          * @param toolSettings the base tool settings (may be mutated)
          * @return an immutable copy of the merged settings
          */
+        private Map<String, String> withSessionSettings(Map<String, String> toolSettings) {
+            var merged = new HashMap<>(toolSettings);
+            merged.put(SessionSetting.INTERACTIVE.key(), String.valueOf(interactive));
+            return Map.copyOf(merged);
+        }
+
         private Map<String, String> injectFetchSettings(Map<String, String> toolSettings) {
             var merged = new HashMap<>(toolSettings);
             merged.put(FetchSetting.RESOLVE_SIGNERS.key(), String.valueOf(verificationConfig.resolveSigners()));

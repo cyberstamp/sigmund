@@ -102,7 +102,9 @@ The keys come from the `signing` and `tools` sections of the same `sigmund.yaml`
 Sigmund's default signing tools sign, so a CI runner with `SIGMUND_BC_SIGNING_KEY` set needs no
 configuration. A protected key's passphrase comes the same way as for `sigmund:sign`: from the
 environment variable `passphrase-env` names (`SIGMUND_BC_PASSPHRASE` by default for BC), else a
-prompt when Maven runs in a terminal.
+prompt — but only when the session is interactive (`aether.interactive`, which Maven sets from its
+interactive mode). Under `mvn -B` or on CI nothing prompts, and gpg-agent is not allowed to
+either: a key whose passphrase is not to be had fails the deploy.
 
 A signing failure — a profile `sigmund.yaml` does not define, a credential type no key covers, a
 locked key — fails the deploy before anything is uploaded.

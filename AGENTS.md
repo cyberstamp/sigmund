@@ -117,7 +117,8 @@ Rules the code relies on; breaking one is a defect even if tests pass.
   also listed under `tools.<name>` in the schema, which `SchemaAgreementTest` holds to the
   factory, and in its table in `docs/configuration.md`. A setting that takes a list says so on its
   constant (`takesList()`), and `listSettings()` is derived from it with `ToolSetting.listKeysOf`.
-  The key-fetching settings Sigmund injects are `FetchSetting`, not accepted under `tools`.
+  The key-fetching settings Sigmund injects are `FetchSetting`, and whether the run may prompt is
+  `SessionSetting` (`Sigmund.Builder.interactive`); neither is accepted under `tools`.
 
 ## Testing
 

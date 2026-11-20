@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Factory for constructing {@link BcRunner} instances from configuration.
@@ -79,7 +80,7 @@ final class BcToolFactory implements SignatureToolFactory {
         List<String> fingerprints = tskBytes == null && tskFile == null ? configuredFingerprints : List.of();
         PassphraseProvider provider = explicitProvider != null
                 ? explicitProvider
-                : resolvePassphraseProvider(settings);
+                : resolvePassphraseProvider(settings, BcToolFactory::consolePrompt);
         return new BcRunner(keyStore, fingerprints, tskFile, tskBytes, provider,
                 null, Setting.CIPHER_SUITE.from(settings, BcRunner.DEFAULT_CIPHER_SUITE));
     }
@@ -246,9 +247,15 @@ final class BcToolFactory implements SignatureToolFactory {
      * Resolves a passphrase provider from settings.
      * <p>
      * Priority: {@code passphrase-env} setting (env var name, default
-     * {@code SIGMUND_BC_PASSPHRASE}), then interactive console prompt if available.
+     * {@code SIGMUND_BC_PASSPHRASE}), then {@code prompt} — unless the run is not interactive
+     * ({@link SessionSetting#INTERACTIVE}), when nothing prompts.
+     *
+     * @param settings the tool's settings
+     * @param prompt asks the user, or gives {@code null} when it cannot
+     * @return the provider, or {@code null} when there is no passphrase to be had
      */
-    private static PassphraseProvider resolvePassphraseProvider(Map<String, String> settings) {
+    static PassphraseProvider resolvePassphraseProvider(Map<String, String> settings,
+            Supplier<PassphraseProvider> prompt) {
         String configuredEnv = Setting.PASSPHRASE_ENV.from(settings);
         String envVar = configuredEnv != null ? configuredEnv : DEFAULT_PASSPHRASE_ENV;
         String envValue = System.getenv(envVar);
@@ -259,16 +266,20 @@ final class BcToolFactory implements SignatureToolFactory {
             throw new SigmundException(
                     "Environment variable " + configuredEnv + " is not set");
         }
+        return SessionSetting.interactive(settings) ? prompt.get() : null;
+    }
+
+    private static PassphraseProvider consolePrompt() {
         Console console = System.console();
-        if (console != null) {
-            Map<String, char[]> cache = new ConcurrentHashMap<>();
-            return fp -> {
-                char[] cached = cache.computeIfAbsent(fp,
-                        k -> console.readPassword("Passphrase for BC key %s: ", k));
-                return Arrays.copyOf(cached, cached.length);
-            };
+        if (console == null) {
+            return null;
         }
-        return null;
+        Map<String, char[]> cache = new ConcurrentHashMap<>();
+        return fp -> {
+            char[] cached = cache.computeIfAbsent(fp,
+                    k -> console.readPassword("Passphrase for BC key %s: ", k));
+            return Arrays.copyOf(cached, cached.length);
+        };
     }
 
     /** The settings {@code tools.bc} accepts, each read only through its constant. */

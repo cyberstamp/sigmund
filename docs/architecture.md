@@ -141,7 +141,7 @@ BC private keys can be encrypted at rest using AES-256 AEAD (OCB mode) with Argo
 Passphrase resolution order:
 1. Explicit `PassphraseProvider` via `Sigmund.Builder.bcPassphraseProvider()` (programmatic API)
 2. `passphrase-env` setting (env var name, default `SIGMUND_BC_PASSPHRASE`)
-3. Interactive console prompt (if a terminal is available)
+3. Interactive console prompt (only when the run is interactive and a terminal is available; never under `mvn -B` or on CI)
 4. No passphrase (works only for unencrypted keys)
 
 Private key files in `bc-private/` are created with owner-only (600) file permissions on POSIX systems.

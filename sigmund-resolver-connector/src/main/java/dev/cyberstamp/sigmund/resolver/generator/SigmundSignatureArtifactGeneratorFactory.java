@@ -13,6 +13,7 @@ import javax.inject.Named;
 import javax.inject.Provider;
 import javax.inject.Singleton;
 import org.apache.maven.execution.MavenSession;
+import org.eclipse.aether.ConfigurationProperties;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.deployment.DeployRequest;
 import org.eclipse.aether.installation.InstallRequest;
@@ -102,6 +103,8 @@ public final class SigmundSignatureArtifactGeneratorFactory implements ArtifactG
         LOGGER.info("Sigmund signs artifacts with {}", located == null ? "its default signing tools" : located);
         return Sigmund.builder()
                 .config(config)
+                .interactive(ConfigUtils.getBoolean(
+                        session, ConfigurationProperties.DEFAULT_INTERACTIVE, ConfigurationProperties.INTERACTIVE))
                 .addSigningTools(name -> LOGGER.debug("Signing tool '{}' not available, skipping", name))
                 .build();
     }
