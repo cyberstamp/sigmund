@@ -1,8 +1,9 @@
 # Sigmund Resolver Connector
 
-Verifies every artifact Maven downloads from a remote repository against the Sigmund trust
-policy in `sigmund.yaml`, before it reaches the local repository. An artifact whose outcome
-blocks fails resolution with a `SigmundVerificationException`, and its file is deleted.
+Verifies every artifact Maven resolves against the Sigmund trust policy in `sigmund.yaml`:
+downloads before they reach the local repository, and artifacts served from the local repository
+before a build uses them. An artifact whose outcome blocks fails resolution with a
+`SigmundVerificationException`.
 
 **Maven 3.10 or later only** (Maven 4 included), on Java 17. The extension is built on Maven
 Resolver 2 pipeline connectors (Resolver 2.0.8+), which Maven 3.9 and older do not have: it does
@@ -55,9 +56,15 @@ observes (see below).
 
 ## How it decides
 
-For each artifact download the extension also fetches its signature sidecars (`.asc`, …) to
-their place next to the artifact in the local repository, then hands the artifact and sidecars
-to Sigmund. The policy's enforcement for the outcome decides: `fail` blocks the artifact, `warn`
+Two components share one check:
+
+- **The repository connector** verifies downloads. For each artifact it also fetches the
+  signature sidecars (`.asc`, …) to their place next to the artifact in the local repository.
+- **The artifact resolver post-processor** verifies what resolution returns from the local
+  repository, against the signatures stored next to it. A file the connector verified in the
+  same build is not checked again; neither are the build's own modules.
+
+Either way the artifact and its signatures go to Sigmund. The policy's enforcement for the outcome decides: `fail` blocks the artifact, `warn`
 lets it through with a warning, `ignore` lets it through (logged at debug). See
 [the configuration reference](../docs/configuration.md#how-enforcement-is-resolved).
 
@@ -76,15 +83,20 @@ evidence read, for example `org.example:lib:1.0 FAILED, action FAIL, rules[0]
 - Existence checks and explicit requests for a signature file pass through unverified.
 - An artifact that passes keeps its signatures next to it in the local repository, registered
   like any downloaded artifact, so later requests for them are served locally.
-- A blocked artifact, or one that could not be verified, is deleted together with its
+- A blocked download, or one that could not be verified, is deleted together with its
   signatures, so no unverified file stays in the local repository.
+- A blocked artifact from the local repository fails resolution but stays where it is: it was
+  there before, and the policy may be what changed.
+- Artifacts installed locally (`mvn install`) are judged like any other: unsigned, they are no
+  claim.
 
 ## Limits
 
-- **Only remote downloads are verified.** An artifact already in the local repository is not
-  re-verified when a build uses it; start from an empty local repository to verify everything.
-  Verifying local hits against the stored signatures is a follow-up (an
-  `ArtifactResolverPostProcessor`).
+- **Signatures are not fetched for cached artifacts.** An artifact cached before verification
+  was enabled has no signature next to it and is no claim, which fails by default under a
+  policy. Delete such artifacts from the local repository (or start from an empty one) so they
+  are downloaded again with their signatures. Fetching them from the post-processor would
+  re-enter resolution while it holds the artifacts' locks.
 - **The extension's own dependencies are not verified**: Maven resolves them before the
   extension is active.
 - Verification of parallel downloads is serialized.

@@ -2,8 +2,9 @@ package dev.cyberstamp.sigmund.resolver.connector;
 
 import static java.util.Objects.requireNonNull;
 
-import dev.cyberstamp.sigmund.core.EnforcementAction;
+import dev.cyberstamp.sigmund.resolver.Sidecar;
 import dev.cyberstamp.sigmund.resolver.SigmundSessionVerifier;
+import dev.cyberstamp.sigmund.resolver.SigmundVerificationException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,7 +28,6 @@ import org.eclipse.aether.spi.connector.MetadataUpload;
 import org.eclipse.aether.spi.connector.RepositoryConnector;
 import org.eclipse.aether.transfer.ArtifactNotFoundException;
 import org.eclipse.aether.transfer.ArtifactTransferException;
-import org.eclipse.aether.util.artifact.SubArtifact;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -109,21 +109,19 @@ public final class SigmundRepositoryConnector implements RepositoryConnector {
         if (downloads == null) {
             return Map.of();
         }
-        Set<String> extensions = verifier.signatureExtensions();
         Map<ArtifactDownload, List<ArtifactDownload>> companions = new LinkedHashMap<>();
         for (ArtifactDownload download : downloads) {
-            if (isVerifiable(download, extensions)) {
-                companions.put(download, sidecars(download, extensions));
+            if (!download.isExistenceCheck() && !verifier.isSignature(download.getArtifact())) {
+                companions.put(download, sidecars(download));
             }
         }
         return companions;
     }
 
-    private List<ArtifactDownload> sidecars(ArtifactDownload download, Set<String> extensions) {
+    private List<ArtifactDownload> sidecars(ArtifactDownload download) {
         LocalRepositoryManager localRepository = session.getLocalRepositoryManager();
-        List<ArtifactDownload> sidecars = new ArrayList<>(extensions.size());
-        for (String extension : extensions) {
-            Artifact signature = new SubArtifact(download.getArtifact(), "*", "*" + extension);
+        List<ArtifactDownload> sidecars = new ArrayList<>();
+        for (Artifact signature : verifier.signaturesOf(download.getArtifact())) {
             Path path = localRepository.getAbsolutePathForRemoteArtifact(
                     signature, remoteRepository, download.getRequestContext());
             sidecars.add(new ArtifactDownload(
@@ -135,46 +133,34 @@ public final class SigmundRepositoryConnector implements RepositoryConnector {
         return sidecars;
     }
 
-    private static boolean isVerifiable(ArtifactDownload download, Set<String> extensions) {
-        String extension = "." + download.getArtifact().getExtension();
-        return !download.isExistenceCheck() && extensions.stream().noneMatch(extension::endsWith);
-    }
-
     private void judge(ArtifactDownload download, List<ArtifactDownload> sidecars) {
         if (download.getException() != null) {
             sidecars.forEach(sidecar -> delete(sidecar.getPath()));
             return;
         }
-        try {
-            verify(download, sidecars);
-        } catch (RuntimeException e) {
-            fail(download, sidecars, "Could not verify " + download.getArtifact() + ": " + e.getMessage(), e);
+        SigmundVerificationException refused = verifier.check(download.getArtifact(), download.getPath(), outcomes(sidecars),
+                remoteRepository);
+        if (refused != null) {
+            download.setException(refused);
+            discard(download, sidecars);
+            return;
         }
+        register(sidecars);
     }
 
-    private void verify(ArtifactDownload download, List<ArtifactDownload> sidecars) {
-        List<Path> evidence = new ArrayList<>(sidecars.size());
+    private static List<Sidecar> outcomes(List<ArtifactDownload> sidecars) {
+        List<Sidecar> outcomes = new ArrayList<>(sidecars.size());
         for (ArtifactDownload sidecar : sidecars) {
             ArtifactTransferException failure = sidecar.getException();
             if (failure == null) {
-                evidence.add(sidecar.getPath());
-            } else if (!(failure instanceof ArtifactNotFoundException)) {
-                fail(download, sidecars, "Could not fetch signature " + sidecar.getArtifact() + " to verify it",
-                        failure);
-                return;
+                outcomes.add(Sidecar.found(sidecar.getArtifact(), sidecar.getPath()));
+            } else if (failure instanceof ArtifactNotFoundException) {
+                outcomes.add(Sidecar.missing(sidecar.getArtifact()));
+            } else {
+                outcomes.add(Sidecar.failed(sidecar.getArtifact(), failure));
             }
         }
-        SigmundSessionVerifier.Verdict verdict = verifier.verify(download.getArtifact(), download.getPath(), evidence);
-        if (verdict.blocks()) {
-            fail(download, sidecars, verdict.message(), null);
-            return;
-        }
-        if (verdict.action() == EnforcementAction.WARN) {
-            LOGGER.warn(verdict.message());
-        } else {
-            LOGGER.debug(verdict.message());
-        }
-        register(sidecars);
+        return outcomes;
     }
 
     private void register(List<ArtifactDownload> sidecars) {
@@ -187,12 +173,6 @@ public final class SigmundRepositoryConnector implements RepositoryConnector {
                                 sidecar.getArtifact(), remoteRepository, sidecar.getSupportedContexts()));
             }
         }
-    }
-
-    private void fail(ArtifactDownload download, List<ArtifactDownload> sidecars, String message, Throwable cause) {
-        download.setException(
-                new SigmundVerificationException(download.getArtifact(), remoteRepository, message, cause));
-        discard(download, sidecars);
     }
 
     private static void discard(ArtifactDownload download, List<ArtifactDownload> sidecars) {

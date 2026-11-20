@@ -110,9 +110,9 @@ class SigmundSessionVerifierTest {
         session.setConfigProperty(SigmundConfigurationKeys.CONFIG_PROP_CONFIG, fixture.configFile().toString());
 
         Path elsewhere = dir.resolve("elsewhere");
-        SigmundSessionVerifier first = SigmundSessionVerifier.get(session, elsewhere);
+        SigmundSessionVerifier first = SigmundSessionVerifier.get(session, () -> elsewhere);
         try {
-            assertThat(SigmundSessionVerifier.get(session, elsewhere)).isSameAs(first);
+            assertThat(SigmundSessionVerifier.get(session, () -> elsewhere)).isSameAs(first);
             assertThat(first.verify(LIB, fixture.artifact(), List.of(fixture.signature())).outcome())
                     .isEqualTo(ArtifactOutcome.SATISFIED);
             assertThat(sessionEndedHandlers).hasSize(1);
@@ -126,7 +126,7 @@ class SigmundSessionVerifierTest {
         List<Runnable> sessionEndedHandlers = new ArrayList<>();
         DefaultRepositorySystemSession session = new DefaultRepositorySystemSession(sessionEndedHandlers::add);
 
-        SigmundSessionVerifier located = SigmundSessionVerifier.get(session, fixture.configFile().getParent());
+        SigmundSessionVerifier located = SigmundSessionVerifier.get(session, () -> fixture.configFile().getParent());
         try {
             assertThat(located.verify(LIB, fixture.artifact(), List.of()).outcome())
                     .as("the policy in the root directory applies")
