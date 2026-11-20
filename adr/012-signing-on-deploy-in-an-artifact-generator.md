@@ -42,6 +42,7 @@ The `sigmund-resolver-connector` extension signs in an `ArtifactGeneratorFactory
   supported.
 - A signing failure fails the deploy, before anything is uploaded.
 - A protected key's passphrase is found as for the goal: an environment variable, else a console
-  prompt, which an unattended build does not have.
+  prompt only when the session is interactive (`aether.interactive`); a batch build never
+  prompts, nor lets gpg-agent prompt.
 - The signer's tool selection is shared with the goal and the CLI through
   `Sigmund.Builder.addSigningTools`.

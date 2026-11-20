@@ -248,6 +248,7 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
     private final String gpgExecutable;
     private final List<String> signingFingerprints;
     private final String passphrase;
+    private final boolean interactive;
     private final Map<String, String> env;
     private final Path gpgHome;
     private final OpenPgpSignatureFormat format;
@@ -323,12 +324,34 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
     GpgRunner(String gpgExecutable, List<String> signingFingerprints, Path home,
             String passphrase, boolean signingCapable,
             boolean resolveSigners, boolean importToKeyring, List<String> keyservers) {
+        this(gpgExecutable, signingFingerprints, home, passphrase, true, signingCapable, resolveSigners,
+                importToKeyring, keyservers);
+    }
+
+    /**
+     * Constructs a GpgRunner that may or may not let gpg-agent ask the user for a passphrase.
+     *
+     * @param gpgExecutable the path to the gpg executable
+     * @param signingFingerprints the full fingerprints of the keys to sign with
+     * @param home the GPG home directory, or null to use the default
+     * @param passphrase the GPG passphrase, or null to rely on gpg-agent
+     * @param interactive whether gpg-agent may prompt for a passphrase it does not hold; when
+     *        {@code false} and no passphrase is given, signing fails instead
+     * @param signingCapable whether the runner signs
+     * @param resolveSigners whether to fetch missing keys from keyservers
+     * @param importToKeyring whether to persist fetched keys
+     * @param keyservers keyserver URLs to fetch from
+     */
+    GpgRunner(String gpgExecutable, List<String> signingFingerprints, Path home,
+            String passphrase, boolean interactive, boolean signingCapable,
+            boolean resolveSigners, boolean importToKeyring, List<String> keyservers) {
         if (gpgExecutable == null || gpgExecutable.isEmpty()) {
             throw new IllegalArgumentException("gpgExecutable cannot be null or empty");
         }
         this.gpgExecutable = gpgExecutable;
         this.signingFingerprints = List.copyOf(signingFingerprints);
         this.passphrase = passphrase;
+        this.interactive = interactive;
         this.signingCapable = signingCapable;
         this.env = home != null ? Map.of("GNUPGHOME", home.toString()) : null;
         this.gpgHome = home != null ? home : Path.of(System.getProperty("user.home"), ".gnupg");
@@ -914,9 +937,10 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
     /**
      * Builds the GPG sign command. When a passphrase is available,
      * adds {@code --pinentry-mode loopback --passphrase-fd 0} so the passphrase
-     * can be piped via stdin.
+     * can be piped via stdin. Otherwise, when the run is not interactive, adds
+     * {@code --pinentry-mode error}: gpg-agent uses a passphrase it holds but never prompts.
      */
-    private String[] buildSignCommand(Path artifactFile, Path outputSig, String localUser) {
+    String[] buildSignCommand(Path artifactFile, Path outputSig, String localUser) {
         List<String> command = new ArrayList<>();
         command.add(gpgExecutable);
         command.add("--batch");
@@ -929,6 +953,9 @@ class GpgRunner implements SignatureTool, KeyImporter, SignerIdentityResolver {
             command.add("loopback");
             command.add("--passphrase-fd");
             command.add("0");
+        } else if (!interactive) {
+            command.add("--pinentry-mode");
+            command.add("error");
         }
 
         if (localUser != null) {

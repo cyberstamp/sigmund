@@ -247,6 +247,54 @@ class SigmundTest {
     }
 
     @Nested
+    class InteractiveSigning {
+
+        private final List<Map<String, String>> received = new ArrayList<>();
+
+        private final SignatureToolFactory recording = new SignatureToolFactory() {
+            @Override
+            public String toolName() {
+                return "bc";
+            }
+
+            @Override
+            public Set<String> supportedCredentialTypes() {
+                return Set.of("pgp4");
+            }
+
+            @Override
+            public Set<String> acceptedSettings() {
+                return Set.of();
+            }
+
+            @Override
+            public SignatureTool createSigning(Map<String, String> settings, SignerIdentity expected) {
+                received.add(settings);
+                return mockTool("bc", true, true, Set.of("pgp4"));
+            }
+
+            @Override
+            public SignatureTool createVerifyOnly(Map<String, String> settings) {
+                throw new UnsupportedOperationException();
+            }
+        };
+
+        @Test
+        void signingToolsMayPromptByDefault() {
+            Sigmund.builder().factories(List.of(recording)).addSigningTool("bc", Map.of());
+
+            assertThat(received).singleElement().satisfies(s -> assertThat(s).containsEntry("interactive", "true"));
+        }
+
+        @Test
+        void aNonInteractiveBuilderTellsItsSigningTools() {
+            Sigmund.builder().factories(List.of(recording)).interactive(false).addSigningTool("bc", Map.of());
+
+            assertThat(received).singleElement().satisfies(s -> assertThat(s).containsEntry("interactive", "false"));
+        }
+    }
+
+    @Nested
     class SigningTools {
 
         @Test

@@ -718,7 +718,7 @@ Configured in the top-level `tools.bc` section.
 | `signing-fingerprint` | (none) | Full fingerprint of the key to sign with, or a list of them to sign with each: 40 hex characters for a v4 key, 64 for v6, the key's type coming from the length. Ignored when a key comes from `signing-key-env` or `tsk-file`, which sign with the first key they hold only |
 | `tsk-file` | (none) | Path to an exported Transferable Secret Key (TSK) file for signing |
 | `signing-key-env` | `SIGMUND_BC_SIGNING_KEY` | Environment variable name containing the ASCII-armored private key. For ephemeral CI runners. The default variable may be unset; a variable named here that is not set is an error |
-| `passphrase-env` | `SIGMUND_BC_PASSPHRASE` | Environment variable name containing the passphrase. When the default variable is not set, Sigmund falls back to an interactive prompt; a variable named here that is not set is an error |
+| `passphrase-env` | `SIGMUND_BC_PASSPHRASE` | Environment variable name containing the passphrase. When the default variable is not set, Sigmund falls back to an interactive prompt, which a batch run (`mvn -B`, CI) never shows; a variable named here that is not set is an error |
 | `cipher-suite` | `ed25519` | Algorithm `sigmund keygen` generates when `--cipher-suite` is not given (see supported values below) |
 
 **Supported cipher suites (BC):**
@@ -739,7 +739,7 @@ only v4 keys, and GnuPG signs and verifies only v4.
 
 1. Explicit `PassphraseProvider` via API (`Sigmund.Builder.bcPassphraseProvider()`)
 2. Environment variable specified by `passphrase-env` setting — an error when a variable named there is not set
-3. Interactive console prompt (if a terminal is available)
+3. Interactive console prompt (only when the run is interactive and a terminal is available; never under `mvn -B` or on CI)
 4. No passphrase (works only for unencrypted keys)
 
 **Example:**

@@ -216,7 +216,7 @@ export SIGMUND_BC_PASSPHRASE=mysecret
 mvn sigmund:sign
 ```
 
-If the environment variable is not set, Sigmund prompts interactively when a terminal is available. If neither is available, signing fails for encrypted keys.
+If the environment variable is not set, Sigmund prompts when the run is interactive and a terminal is available. A batch run (`mvn -B`, CI) never prompts: signing fails for an encrypted key instead of waiting. The same holds for GnuPG: without `SIGMUND_GPG_PASSPHRASE`, a batch run passes `--pinentry-mode error`, so gpg-agent signs with a passphrase it holds but never asks for one.
 
 To use a different environment variable name (e.g., to reuse an existing CI secret), set `passphrase-env` in `sigmund.yaml`:
 
@@ -233,7 +233,7 @@ When signing with BC, the passphrase is resolved in this order:
 
 1. **Programmatic `PassphraseProvider`** via `Sigmund.Builder.bcPassphraseProvider()` (API use only)
 2. **Environment variable** — `SIGMUND_BC_PASSPHRASE` by default, or the variable named in the `passphrase-env` setting, which is an error when it is not set
-3. **Interactive console prompt** — if a terminal is available
+3. **Interactive console prompt** — only when the run is interactive and a terminal is available; never under `mvn -B` or on CI
 4. **No passphrase** — works only for unencrypted keys
 
 Unencrypted keys continue to work without a passphrase. Private key files in `bc-private/` are created with owner-only (600) file permissions on POSIX systems.

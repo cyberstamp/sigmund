@@ -5,6 +5,7 @@ import dev.cyberstamp.sigmund.core.SigmundConfig;
 import dev.cyberstamp.sigmund.core.SigmundException;
 import dev.cyberstamp.sigmund.core.Signer;
 import dev.cyberstamp.sigmund.core.ToolsConfig;
+import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Parameter;
 
@@ -21,6 +22,13 @@ abstract class AbstractSigningMojo extends AbstractConfigLookupMojo {
      */
     @Parameter(property = "sigmund.profile")
     protected String profile;
+
+    /**
+     * The Maven session, whose interactive mode says whether a signing tool may ask for a key's
+     * passphrase: under {@code mvn -B}, as on CI, it never prompts.
+     */
+    @Parameter(defaultValue = "${session}", readonly = true, required = true)
+    protected MavenSession session;
 
     /**
      * Creates the signer for {@link #profile}, or the default signer when no profile is named.
@@ -43,6 +51,7 @@ abstract class AbstractSigningMojo extends AbstractConfigLookupMojo {
             return Sigmund.builder()
                     .config(config)
                     .toolsConfig(toolsConfig)
+                    .interactive(session.getRequest().isInteractiveMode())
                     .addSigningTools(name -> getLog().debug("Signing tool '" + name + "' not available, skipping"))
                     .build();
         } catch (SigmundException e) {
