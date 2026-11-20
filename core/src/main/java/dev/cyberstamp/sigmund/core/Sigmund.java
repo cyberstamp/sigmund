@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * The central facade for Sigmund — tool registry, signature verification, and session creation.
@@ -587,6 +588,38 @@ public class Sigmund implements AutoCloseable {
          */
         public Builder addSigningTool(String toolName, Map<String, String> settings) {
             return addTool(createFromFactory(toolName, true, settings));
+        }
+
+        /**
+         * Adds the signing tools of {@code signing.toolchain}, each with its settings from the tools
+         * configuration: the one {@link #config(SigmundConfig)} gave, or {@link #toolsConfig(ToolsConfig)}
+         * set since. A tool the toolchain names must be known, or this fails. Without a
+         * toolchain, each of {@link VerificationConfig#DEFAULT_TOOL_PRIORITY} that can be created is
+         * added, and the name of each one that cannot — no factory for it is registered — is passed
+         * to {@code skipped}. Whether a tool's executable exists is found out only when it signs.
+         *
+         * <p>
+         * Called after {@code config} and any {@code toolsConfig} override, as the CLI, the Maven
+         * plugin and the resolver extension do to build a signing instance.
+         *
+         * @param skipped receives the name of each default tool that cannot be created
+         * @return this builder
+         * @throws SigmundException if a tool the toolchain names cannot be created
+         */
+        public Builder addSigningTools(Consumer<String> skipped) {
+            List<String> toolchain = signingConfig == null ? List.of() : signingConfig.toolchain();
+            for (String toolName : toolchain.isEmpty() ? VerificationConfig.DEFAULT_TOOL_PRIORITY : toolchain) {
+                ToolConfig toolConfig = toolsConfig.get(toolName);
+                try {
+                    addSigningTool(toolName, toolConfig == null ? Map.of() : toolConfig.settings());
+                } catch (SigmundException e) {
+                    if (!toolchain.isEmpty()) {
+                        throw e;
+                    }
+                    skipped.accept(toolName);
+                }
+            }
+            return this;
         }
 
         private static SignerIdentity expectedSignerOf(SigmundConfig config) {
