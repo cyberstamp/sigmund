@@ -2,13 +2,7 @@ package dev.cyberstamp.sigmund.cli;
 
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SigmundConfig;
-import dev.cyberstamp.sigmund.core.SigmundException;
 import dev.cyberstamp.sigmund.core.Signer;
-import dev.cyberstamp.sigmund.core.ToolConfig;
-import dev.cyberstamp.sigmund.core.ToolsConfig;
-import dev.cyberstamp.sigmund.core.VerificationConfig;
-import java.util.List;
-import java.util.Map;
 
 /**
  * Shared logic for CLI commands that build a signing-capable Sigmund instance.
@@ -20,27 +14,12 @@ final class SigningSupport {
 
     static Sigmund buildSigningSigmund(SigmundConfig config, SqHomeMixin sqHomeMixin) {
         Sigmund.Builder builder = Sigmund.builder().config(config);
-
-        List<String> toolchain = config.signingConfig().toolchain();
-        ToolsConfig toolsConfig = sqHomeMixin != null ? sqHomeMixin.applyTo(config.toolsConfig()) : config.toolsConfig();
-        List<String> toolNames = toolchain.isEmpty()
-                ? VerificationConfig.DEFAULT_TOOL_PRIORITY
-                : toolchain;
-
-        for (String toolName : toolNames) {
-            ToolConfig toolConfig = toolsConfig.get(toolName);
-            Map<String, String> settings = toolConfig == null ? Map.of() : toolConfig.settings();
-            try {
-                builder.addSigningTool(toolName, settings);
-            } catch (SigmundException e) {
-                if (toolchain.contains(toolName)) {
-                    throw e;
-                }
-                System.err.println("Note: signing tool '" + toolName + "' not available, skipping");
-            }
+        if (sqHomeMixin != null) {
+            builder.toolsConfig(sqHomeMixin.applyTo(config.toolsConfig()));
         }
-
-        return builder.build();
+        return builder
+                .addSigningTools(name -> System.err.println("Note: signing tool '" + name + "' not available, skipping"))
+                .build();
     }
 
     /**

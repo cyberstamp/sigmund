@@ -640,11 +640,11 @@ class BcRunnerTest {
     }
 
     @Test
-    void canVerifyDeclinesPostQuantumSignatures() {
+    void canVerifyTakesMlDsaAndDeclinesOtherPostQuantumSignatures() {
         try (BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")))) {
             for (int algorithmId = 30; algorithmId <= 36; algorithmId++) {
                 assertThat(runner.canVerify(new OpenPgpClaim("block", 6, "FP", algorithmId, null)))
-                        .as("algorithm %d", algorithmId).isFalse();
+                        .as("algorithm %d", algorithmId).isEqualTo(algorithmId <= 31);
             }
         }
     }

@@ -41,12 +41,13 @@ final class KeyRingFiles {
     private static final int TAG_PUBLIC_SUBKEY = 14;
 
     /**
-     * The public-key algorithms Bouncy Castle 1.86 implements (RFC 9580 §9.1): RSA, Elgamal,
-     * DSA, ECDH, ECDSA, the legacy EdDSA, X25519, X448, Ed25519 and Ed448. A certificate it cannot
+     * The public-key algorithms Bouncy Castle 1.87 implements (RFC 9580 §9.1, RFC 9980): RSA,
+     * Elgamal, DSA, ECDH, ECDSA, the legacy EdDSA, X25519, X448, Ed25519, Ed448, and the
+     * post-quantum ML-DSA and SLH-DSA signature and ML-KEM encryption algorithms. A certificate it cannot
      * read that uses another is {@link UnreadableCertificate.Cause#UNKNOWN_ALGORITHM}.
      */
     private static final Set<Integer> IMPLEMENTED_ALGORITHMS = Set.of(1, 2, 3, 16, 17, 18, 19, 20, 22, 25,
-            26, 27, 28);
+            26, 27, 28, 30, 31, 32, 33, 34, 35, 36);
 
     private KeyRingFiles() {
     }

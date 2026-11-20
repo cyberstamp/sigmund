@@ -38,6 +38,8 @@ class RoundTripIntegrationTest {
 
     private static Path sqHome;
     private static String pqcFingerprint;
+    private static Path gpgHome;
+    private static String gpgFingerprint;
 
     /**
      * Sets up the test environment by creating a temporary Sequoia home directory
@@ -57,6 +59,8 @@ class RoundTripIntegrationTest {
         Files.createDirectories(sqHome);
         SqRunner sq = new SqRunner(sqHome);
         pqcFingerprint = sq.generateKey("PQC Test <test@sigmund.example>", SqRunner.DEFAULT_CIPHER_SUITE, "rfc9580");
+        gpgHome = GpgTestKeys.home(tempDir.resolve("gpg-home"));
+        gpgFingerprint = GpgTestKeys.generate(gpgHome, "Classic Test <classic@sigmund.example>", "ed25519");
     }
 
     /**
@@ -92,7 +96,7 @@ class RoundTripIntegrationTest {
 
             // Assert: Algorithms are detected correctly from the produced signatures
             assertThat(output.files().size()).isEqualTo(1);
-            assertThat(output.files().get(0).algorithm()).isEqualTo("RSA+ML-DSA-87+Ed448");
+            assertThat(output.files().get(0).algorithm()).isEqualTo("EdDSA+ML-DSA-87+Ed448");
 
             Path signature = output.files().get(0).path();
 
@@ -146,6 +150,8 @@ class RoundTripIntegrationTest {
             // Act: Verify with GPG command-line tool directly
             CliTool.Result result = CliTool.run(
                     "gpg",
+                    "--homedir",
+                    gpgHome.toString(),
                     "--verify",
                     signature.toString(),
                     artifact.toString());
@@ -247,7 +253,7 @@ class RoundTripIntegrationTest {
      * @return a configured Sigmund instance with signing capabilities
      */
     private Sigmund createSigningSigmund() {
-        GpgRunner gpg = new GpgRunner(); // use default GPG key
+        GpgRunner gpg = new GpgRunner("gpg", gpgFingerprint, gpgHome);
         SqRunner sq = new SqRunner("sq", sqHome, pqcFingerprint);
         return Sigmund.builder()
                 .addTool(gpg)
@@ -265,7 +271,7 @@ class RoundTripIntegrationTest {
      * @return a configured Sigmund instance for verification
      */
     private Sigmund createVerifySigmund() {
-        GpgRunner gpg = new GpgRunner();
+        GpgRunner gpg = new GpgRunner("gpg", null, gpgHome);
         SqRunner sq = new SqRunner(sqHome);
         return Sigmund.builder()
                 .addTool(gpg)

@@ -40,7 +40,7 @@ Sigmund supports three OpenPGP backends, each with distinct capabilities:
 
 | Tool | Availability | v4 Support | v6 Support | PQC Support | Process Deps |
 |------|--------------|------------|------------|-------------|--------------|
-| **BC** | Always (pure Java) | Sign, verify | Sign, verify (classic algos) | Phase 2 planned | None |
+| **BC** | Always (pure Java) | Sign, verify | Sign, verify (classic algos) | Verify ML-DSA (RFC 9980); signing planned | None |
 | **sq** | Optional | Verify | Sign, verify | Sign, verify (RFC 9980) | Sequoia CLI |
 | **gpg** | Optional | Sign, verify | None | None | GnuPG CLI |
 | **sigstore** | Optional (pure Java) | N/A | N/A | N/A | None |
@@ -141,7 +141,7 @@ BC private keys can be encrypted at rest using AES-256 AEAD (OCB mode) with Argo
 Passphrase resolution order:
 1. Explicit `PassphraseProvider` via `Sigmund.Builder.bcPassphraseProvider()` (programmatic API)
 2. `passphrase-env` setting (env var name, default `SIGMUND_BC_PASSPHRASE`)
-3. Interactive console prompt (if a terminal is available)
+3. Interactive console prompt (only when the run is interactive and a terminal is available; never under `mvn -B` or on CI)
 4. No passphrase (works only for unencrypted keys)
 
 Private key files in `bc-private/` are created with owner-only (600) file permissions on POSIX systems.
@@ -153,14 +153,14 @@ Private key files in `bc-private/` are created with owner-only (600) file permis
 | **BC v6 keys** | Yes | Yes | No (v6 not supported) |
 | **BC v4 keys** | Yes | Yes | Yes |
 | **sq v6 classic** | Yes | Yes | No |
-| **sq v6 PQC** | Phase 2 | Yes | No |
+| **sq v6 PQC** | Yes (ML-DSA) | Yes | No |
 | **gpg v4** | Yes | Yes | Yes |
 
 **BC → sq interop** works for v6 keys because both support RFC 9580 (OpenPGP v6). BC-generated public certs are written to the shared cert-d so `sq` can see them.
 
 **BC → gpg interop** works only for v4 keys. BC can read GPG's `pubring.kbx` (or legacy `pubring.gpg`) for verification. BC v6 keys cannot be imported into GPG because GPG follows LibrePGP and does not support v6.
 
-**sq → BC interop** works for v6 classic algorithm signatures (Ed25519, Ed448, RSA). PQC signatures (algorithm IDs 30-36) cannot be parsed by BC yet (Phase 2).
+**sq → BC interop** works for v6 classic algorithm signatures (Ed25519, Ed448, RSA) and, since Bouncy Castle 1.87, for the ML-DSA composites (ML-DSA-65+Ed25519, ML-DSA-87+Ed448; [ADR-011](../adr/011-bouncy-castle-verifies-ml-dsa.md)). SLH-DSA signatures are left to `sq`.
 
 ## Signing Pipeline
 
@@ -431,7 +431,7 @@ Classic algorithms supported by BC:
 
 ### Phase 2 (Planned for BC)
 
-PQC composite algorithms:
+BC verifies these since Bouncy Castle 1.87 ([ADR-011](../adr/011-bouncy-castle-verifies-ml-dsa.md)); generating and signing with them is planned:
 - `mldsa87-ed448` — ML-DSA-87 + Ed448 hybrid
 - `mldsa65-ed25519` — ML-DSA-65 + Ed25519 hybrid
 
@@ -454,4 +454,6 @@ core/              Core signing and verification library (pure Java, no CLI depe
 cli/               Command-line interface (picocli)
 maven-plugin/      Maven plugin for build integration
 sigstore/          Sigstore signing/verification backend (dev.sigstore:sigstore-java)
+sigmund-resolver-connector/
+                   Maven 3.10+ extension verifying downloads and local-repository hits at resolution time (ADR-010), signing deploys (ADR-012)
 ```

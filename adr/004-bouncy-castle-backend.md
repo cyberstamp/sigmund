@@ -2,6 +2,7 @@
 
 ## Status
 Accepted
+Amended by [ADR-011](011-bouncy-castle-verifies-ml-dsa.md): Phase 2 verification uses Bouncy Castle's own RFC 9980 support (1.87+), not custom packet handling.
 
 ## Context
 

@@ -32,10 +32,11 @@
         <module>sigstore</module>
         <module>cli</module>
         <module>maven-plugin</module>
+        <module>sigmund-resolver-connector</module>
     </modules>
     <properties>
         <project.build.outputTimestamp>2026-08-21T15:31:12Z</project.build.outputTimestamp>
-        <bouncycastle.version>1.86</bouncycastle.version>
+        <bouncycastle.version>1.87</bouncycastle.version>
         <sigstore-java.version>2.4.0</sigstore-java.version>
         <!-- The Protobuf runtime sigstore-java's generated classes were built with; the CLI imports
              it ahead of the Quarkus BOM, which would otherwise pin an older one. Raise it with
@@ -47,7 +48,7 @@
         <compiler-plugin.version>3.16.0</compiler-plugin.version>
         <formatter-plugin.version>2.29.0</formatter-plugin.version>
         <impsort-plugin.version>1.13.0</impsort-plugin.version>
-        <templating-plugin.version>3.1.1</templating-plugin.version>
+        <templating-plugin.version>3.2.0</templating-plugin.version>
         <assertj.version>3.27.7</assertj.version>
         <junit.version>6.1.3</junit.version>
         <maven-invoker-plugin.version>3.10.1</maven-invoker-plugin.version>
@@ -155,6 +156,8 @@
                         -->
                         <excludedEnvironmentVariables>
                             <excludedEnvironmentVariable>SIGMUND_BC_SIGNING_KEY</excludedEnvironmentVariable>
+                            <excludedEnvironmentVariable>SIGMUND_BC_PASSPHRASE</excludedEnvironmentVariable>
+                            <excludedEnvironmentVariable>SIGMUND_GPG_PASSPHRASE</excludedEnvironmentVariable>
                         </excludedEnvironmentVariables>
                     </configuration>
                 </plugin>

@@ -507,4 +507,32 @@ class GpgRunnerTest {
                     .isEqualTo(ToolVerdict.indeterminate(IndeterminateReason.TOOL_UNAVAILABLE));
         }
     }
+
+    @Nested
+    class SignCommand {
+
+        private final Path artifact = Path.of("artifact.jar");
+        private final Path signature = Path.of("artifact.jar.asc");
+
+        @Test
+        void anInteractiveRunLetsTheAgentPrompt() {
+            GpgRunner gpg = new GpgRunner("gpg", List.of(), null, null, true, true, false, false, List.of());
+
+            assertThat(gpg.buildSignCommand(artifact, signature, null)).doesNotContain("--pinentry-mode");
+        }
+
+        @Test
+        void aNonInteractiveRunNeverLetsTheAgentPrompt() {
+            GpgRunner gpg = new GpgRunner("gpg", List.of(), null, null, false, true, false, false, List.of());
+
+            assertThat(gpg.buildSignCommand(artifact, signature, null)).containsSubsequence("--pinentry-mode", "error");
+        }
+
+        @Test
+        void aGivenPassphraseIsPipedWhetherInteractiveOrNot() {
+            GpgRunner gpg = new GpgRunner("gpg", List.of(), null, "secret", false, true, false, false, List.of());
+
+            assertThat(gpg.buildSignCommand(artifact, signature, null)).containsSubsequence("--pinentry-mode", "loopback");
+        }
+    }
 }

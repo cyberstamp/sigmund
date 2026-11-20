@@ -212,6 +212,93 @@ class SigmundTest {
     }
 
     @Nested
+    class InteractiveSigning {
+
+        private final List<Map<String, String>> received = new ArrayList<>();
+
+        private final SignatureToolFactory recording = new SignatureToolFactory() {
+            @Override
+            public String toolName() {
+                return "bc";
+            }
+
+            @Override
+            public Set<String> supportedCredentialTypes() {
+                return Set.of("pgp4");
+            }
+
+            @Override
+            public Set<String> acceptedSettings() {
+                return Set.of();
+            }
+
+            @Override
+            public SignatureTool createSigning(Map<String, String> settings, SignerIdentity expected) {
+                received.add(settings);
+                return mockTool("bc", true, true, Set.of("pgp4"));
+            }
+
+            @Override
+            public SignatureTool createVerifyOnly(Map<String, String> settings) {
+                throw new UnsupportedOperationException();
+            }
+        };
+
+        @Test
+        void signingToolsMayPromptByDefault() {
+            Sigmund.builder().factories(List.of(recording)).addSigningTool("bc", Map.of());
+
+            assertThat(received).singleElement().satisfies(s -> assertThat(s).containsEntry("interactive", "true"));
+        }
+
+        @Test
+        void aNonInteractiveBuilderTellsItsSigningTools() {
+            Sigmund.builder().factories(List.of(recording)).interactive(false).addSigningTool("bc", Map.of());
+
+            assertThat(received).singleElement().satisfies(s -> assertThat(s).containsEntry("interactive", "false"));
+        }
+    }
+
+    @Nested
+    class SigningTools {
+
+        @Test
+        void aToolTheToolchainNamesMustBeKnown() {
+            String yaml = """
+                    signing:
+                      toolchain: [sq]
+                    """;
+            Sigmund.Builder builder = Sigmund.builder()
+                    .factories(List.of(new BcToolFactory()))
+                    .config(SigmundConfigParser.parse("<test>", new StringReader(yaml)));
+
+            assertThatThrownBy(() -> builder.addSigningTools(name -> {
+            })).isInstanceOf(SigmundException.class);
+        }
+
+        @Test
+        void withoutAToolchainUnknownDefaultToolsAreSkippedAndReported(@TempDir Path dir) {
+            String yaml = """
+                    tools:
+                      bc:
+                        cert-d-home: "%s"
+                        bc-private-home: "%s"
+                        gnupg-home: "%s"
+                    """.formatted(dir.resolve("cert-d"), dir.resolve("bc-private"), dir.resolve("gnupg"));
+            List<String> skipped = new ArrayList<>();
+
+            try (Sigmund sigmund = Sigmund.builder()
+                    .factories(List.of(new BcToolFactory()))
+                    .config(SigmundConfigParser.parse("<test>", new StringReader(yaml)))
+                    .addSigningTools(skipped::add)
+                    .build()) {
+                assertThat(skipped).containsExactly("sq", "gpg");
+                assertThat(sigmund.tools()).extracting(SignatureTool::name).containsExactly("bc");
+            }
+        }
+    }
+
+    @Nested
     class DirectVerification {
 
         @Test

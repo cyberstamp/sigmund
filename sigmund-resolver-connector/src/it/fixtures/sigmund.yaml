@@ -1,0 +1,21 @@
+signers:
+  it:
+    pgp4: "00C05E507E3CF2B57AB0A7F200480FF856DD9555"
+
+rules:
+  - match: ["org.example.sigmund.it:*"]
+    requires: [it]
+
+# The build's plugins are not covered by a rule; let them through with a warning
+defaults:
+  on-not-configured: warn
+
+verification:
+  toolchain: [bc]
+  resolve-signers: false
+
+tools:
+  bc:
+    cert-d-home: "@CERT_D@"
+    bc-private-home: "@BC_PRIVATE@"
+    gnupg-home: "@GNUPG@"

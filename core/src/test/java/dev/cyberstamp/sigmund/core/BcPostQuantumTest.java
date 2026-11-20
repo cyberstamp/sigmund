@@ -1,7 +1,6 @@
 package dev.cyberstamp.sigmund.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -10,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.bouncycastle.openpgp.PGPUtil;
@@ -18,111 +18,131 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * What Bouncy Castle does with a post-quantum signature, against a key and signature made by
- * {@code sq}.
- *
- * <p>
- * Bouncy Castle 1.86 cannot read an ML-DSA key, so {@link BcRunner#canVerify(Claim)} declines
- * post-quantum signatures. {@link #bouncyCastleCannotReadAnMlDsaCertificate()} pins the library's
- * limitation: when an upgrade reads such keys it fails, and BC can start verifying them.
+ * What Bouncy Castle does with a post-quantum signature, against keys and signatures made by
+ * {@code sq}: since 1.87 it reads ML-DSA composite keys and verifies their signatures, agreeing
+ * with {@code sq}. {@link #bouncyCastleReadsAnMlDsaCertificate()} pins the library's support.
  */
 @DisabledIfSystemProperty(named = "sigmund.test.skip-sq", matches = "true")
 class BcPostQuantumTest {
 
+    private static final String ML_DSA_65 = "mldsa65-ed25519";
+    private static final String ML_DSA_87 = "mldsa87-ed448";
+
+    private static final Map<String, String> ALGORITHM_NAMES = Map.of(
+            ML_DSA_65, "ML-DSA-65+Ed25519",
+            ML_DSA_87, "ML-DSA-87+Ed448");
+
     private static Path sqHome;
-    private static String fingerprint;
+    private static Map<String, String> fingerprints;
 
     @BeforeAll
-    static void generatePqcKey(@TempDir Path tempDir) throws Exception {
-        sqHome = tempDir.resolve("sq-home");
-        Files.createDirectories(sqHome);
-        fingerprint = new SqRunner(sqHome).generateKey("PQC Test <test@sigmund.example>",
-                SqRunner.DEFAULT_CIPHER_SUITE, "rfc9580");
+    static void generatePqcKeys(@TempDir Path tempDir) throws Exception {
+        sqHome = Files.createDirectories(tempDir.resolve("sq-home"));
+        SqRunner sq = new SqRunner(sqHome);
+        fingerprints = Map.of(
+                ML_DSA_65, sq.generateKey("PQC 65 <pqc65@sigmund.example>", ML_DSA_65, "rfc9580"),
+                ML_DSA_87, sq.generateKey("PQC 87 <pqc87@sigmund.example>", ML_DSA_87, "rfc9580"));
     }
 
     @Test
-    void bouncyCastleCannotReadAnMlDsaCertificate() {
-        byte[] certificate = new SqRunner(sqHome).exportCert(fingerprint).getBytes(StandardCharsets.US_ASCII);
+    void bouncyCastleReadsAnMlDsaCertificate() throws Exception {
+        byte[] certificate = new SqRunner(sqHome).exportCert(fingerprints.get(ML_DSA_87))
+                .getBytes(StandardCharsets.US_ASCII);
 
-        assertThatThrownBy(() -> {
-            try (InputStream in = PGPUtil.getDecoderStream(new ByteArrayInputStream(certificate))) {
-                new PGPPublicKeyRing(in, new BcKeyFingerprintCalculator());
-            }
-        }).hasMessageContaining("unknown signature key algorithm");
-    }
-
-    /**
-     * So a certificate Bouncy Castle cannot parse is reported only for the keys it holds: the
-     * v6 fingerprints are computed from the packets, which needs no knowledge of ML-DSA.
-     */
-    @Test
-    void theKeysOfAnMlDsaCertificateAreReadFromItsPackets(@TempDir Path dir) throws Exception {
-        Path file = Files.writeString(dir.resolve("cert.asc"), new SqRunner(sqHome).exportCert(fingerprint));
-        List<UnreadableCertificate> unreadable = new ArrayList<>();
-
-        assertThat(KeyRingFiles.readCertificate(file, TrustRootRef.unknown(), Set.of(), unreadable)).isNull();
-
-        assertThat(unreadable).singleElement().satisfies(certificate -> {
-            assertThat(certificate.keys()).contains(fingerprint).hasSizeGreaterThan(1);
-            assertThat(certificate.cause()).isEqualTo(UnreadableCertificate.Cause.UNKNOWN_ALGORITHM);
-        });
-    }
-
-    /**
-     * Asked directly, past {@link BcRunner#canVerify(Claim)}: a copy of the key it cannot read is
-     * reported as such, not as a key to go and find.
-     */
-    @Test
-    void anMlDsaCertificateInTheStoreIsReportedAsUnreadable(@TempDir Path dir) throws Exception {
-        Path artifact = Files.writeString(dir.resolve("artifact.jar"), "post-quantum");
-        Path signature = dir.resolve("artifact.jar.asc");
-        SigningTests.signWithOnlyKey(new SqRunner("sq", sqHome, fingerprint), artifact, signature);
-        Path certD = storeInCertD(dir);
-        String armored = Files.readString(signature);
-        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-
-        try (BcRunner bc = new BcRunner(new BcKeyStore(null, certD, dir.resolve("bc-private")), null, null)) {
-            VerifyResult result = bc.verify(artifact, new OpenPgpClaim(armored, info.version(),
-                    info.issuerFingerprint(), info.algorithmId(), null));
-
-            assertThat(result.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue();
-            assertThat(result.reasonDetail()).isEqualTo("Bouncy Castle cannot read the copy from " + certD
-                    + ": unknown signature key algorithm: " + info.algorithmId());
+        try (InputStream in = PGPUtil.getDecoderStream(new ByteArrayInputStream(certificate))) {
+            PGPPublicKeyRing ring = new PGPPublicKeyRing(in, new BcKeyFingerprintCalculator());
+            assertThat(ring.getPublicKey().getAlgorithm()).isEqualTo(31);
         }
     }
 
-    private Path storeInCertD(Path dir) throws Exception {
+    @Test
+    void anMlDsaCertificateIsReadFromTheStore(@TempDir Path dir) throws Exception {
+        Path file = Files.writeString(dir.resolve("cert.asc"),
+                new SqRunner(sqHome).exportCert(fingerprints.get(ML_DSA_87)));
+        List<UnreadableCertificate> unreadable = new ArrayList<>();
+
+        assertThat(KeyRingFiles.readCertificate(file, TrustRootRef.unknown(), Set.of(), unreadable)).isNotNull();
+        assertThat(unreadable).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { ML_DSA_65, ML_DSA_87 })
+    void aPostQuantumSignatureIsVerifiedByBcAlone(String suite, @TempDir Path dir) throws Exception {
+        Path artifact = Files.writeString(dir.resolve("artifact.jar"), "post-quantum");
+        Path signature = signWithSq(suite, artifact, dir);
+
+        ClaimResult result = verifyWithBcAlone(suite, artifact, signature, dir);
+
+        assertThat(result.outcome()).isEqualTo(ClaimOutcome.VERIFIED);
+        assertThat(result.verifiedBy()).isEqualTo("bc");
+        assertThat(result.algorithm()).isEqualTo(ALGORITHM_NAMES.get(suite));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { ML_DSA_65, ML_DSA_87 })
+    void aTamperedArtifactFailsAPostQuantumSignatureInBc(String suite, @TempDir Path dir) throws Exception {
+        Path artifact = Files.writeString(dir.resolve("artifact.jar"), "post-quantum");
+        Path signature = signWithSq(suite, artifact, dir);
+        Files.writeString(artifact, "tampered");
+
+        ClaimResult result = verifyWithBcAlone(suite, artifact, signature, dir);
+
+        assertThat(result.outcome()).isEqualTo(ClaimOutcome.FAILED);
+        assertThat(result.verifiedBy()).isEqualTo("bc");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { ML_DSA_65, ML_DSA_87 })
+    void bcAndSqProveTheSameKeyForAPostQuantumSignature(String suite, @TempDir Path dir) throws Exception {
+        Path artifact = Files.writeString(dir.resolve("artifact.jar"), "post-quantum");
+        OpenPgpClaim claim = claimOf(signWithSq(suite, artifact, dir));
+
+        OpenPgpVerifyResult bc;
+        try (BcRunner runner = new BcRunner(bcStore(suite, dir), null, null)) {
+            bc = (OpenPgpVerifyResult) runner.verify(artifact, claim);
+        }
+        OpenPgpVerifyResult sq = (OpenPgpVerifyResult) new SqRunner(sqHome).verify(artifact, claim);
+
+        assertThat(bc.isVerified()).isTrue();
+        assertThat(sq.isVerified()).isTrue();
+        assertThat(bc.signerIdentifier()).isEqualTo(sq.signerIdentifier());
+        assertThat(bc.primaryFingerprint()).isEqualTo(sq.primaryFingerprint()).isEqualTo(fingerprints.get(suite));
+    }
+
+    private static Path signWithSq(String suite, Path artifact, Path dir) {
+        Path signature = dir.resolve("artifact.jar.asc");
+        SigningTests.signWithOnlyKey(new SqRunner("sq", sqHome, fingerprints.get(suite)), artifact, signature);
+        return signature;
+    }
+
+    private static ClaimResult verifyWithBcAlone(String suite, Path artifact, Path signature, Path dir)
+            throws Exception {
+        try (BcRunner bc = new BcRunner(bcStore(suite, dir), null, null);
+                Sigmund sigmund = Sigmund.builder()
+                        .verificationConfig(new VerificationConfig(false, false, List.of(), List.of("bc")))
+                        .addTool(bc)
+                        .build()) {
+            return sigmund.verify(artifact, signature).files().get(0).results().get(0);
+        }
+    }
+
+    private static OpenPgpClaim claimOf(Path signature) throws Exception {
+        String armored = Files.readString(signature);
+        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+        return new OpenPgpClaim(armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
+    }
+
+    private static BcKeyStore bcStore(String suite, Path dir) throws Exception {
+        String fingerprint = fingerprints.get(suite);
         Path certD = dir.resolve("cert-d");
         String lower = fingerprint.toLowerCase();
         Path certFile = certD.resolve(lower.substring(0, 2)).resolve(lower.substring(2));
         Files.createDirectories(certFile.getParent());
         Files.writeString(certFile, new SqRunner(sqHome).exportCert(fingerprint));
-        return certD;
-    }
-
-    /**
-     * BC alone, with the certificate in the store it reads: the block is set aside as no installed
-     * tool's to check, permanently, rather than reported as a key to go and find.
-     */
-    @Test
-    void aPostQuantumBlockCheckedByBcAloneIsUnsupported(@TempDir Path dir) throws Exception {
-        Path artifact = Files.writeString(dir.resolve("artifact.jar"), "post-quantum");
-        Path signature = dir.resolve("artifact.jar.asc");
-        SigningTests.signWithOnlyKey(new SqRunner("sq", sqHome, fingerprint), artifact, signature);
-        BcKeyStore store = new BcKeyStore(null, storeInCertD(dir), dir.resolve("bc-private"));
-
-        try (BcRunner bc = new BcRunner(store, null, null);
-                Sigmund sigmund = Sigmund.builder().verificationConfig(
-                        new VerificationConfig(false, false, List.of(), List.of("bc")))
-                        .addTool(bc).build()) {
-
-            ClaimResult result = sigmund.verify(artifact, signature).files().get(0).results().get(0);
-
-            assertThat(result.isIndeterminateBecause(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue();
-            assertThat(result.verifiedBy()).as("no tool was asked").isNull();
-            assertThat(result.algorithm()).isEqualTo("ML-DSA-87+Ed448");
-        }
+        return new BcKeyStore(null, certD, dir.resolve("bc-private"));
     }
 }
