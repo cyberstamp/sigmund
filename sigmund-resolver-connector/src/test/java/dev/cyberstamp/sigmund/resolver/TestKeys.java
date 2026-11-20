@@ -36,6 +36,18 @@ public final class TestKeys {
      * @return the fixture
      */
     public static Fixture create(Path dir) {
+        return create(dir, "");
+    }
+
+    /**
+     * Generates a key into {@code dir}, signs an artifact with it and writes the config trusting it, with
+     * {@code extraConfig} appended to the config.
+     *
+     * @param dir the directory holding the key stores and files
+     * @param extraConfig top-level YAML appended to the config, such as a {@code defaults} section
+     * @return the fixture
+     */
+    public static Fixture create(Path dir, String extraConfig) {
         try {
             Map<String, String> tools = Map.of(
                     "cert-d-home", dir.resolve("cert-d").toString(),
@@ -44,7 +56,7 @@ public final class TestKeys {
             String fingerprint = generateKey(tools);
             Path artifact = Files.writeString(dir.resolve("artifact.jar"), "artifact bytes");
             Path signature = sign(tools, fingerprint, artifact, Files.createDirectories(dir.resolve("signed")));
-            Path configFile = Files.writeString(dir.resolve("sigmund.yaml"), config(tools, fingerprint));
+            Path configFile = Files.writeString(dir.resolve("sigmund.yaml"), config(tools, fingerprint) + extraConfig);
             return new Fixture(configFile, artifact, signature, fingerprint);
         } catch (IOException e) {
             throw new UncheckedIOException(e);

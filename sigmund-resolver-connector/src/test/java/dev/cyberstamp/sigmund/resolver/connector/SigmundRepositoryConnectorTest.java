@@ -12,11 +12,11 @@ import java.nio.file.StandardOpenOption;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.internal.test.util.TestLocalRepositoryManager;
+import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.repository.RepositoryPolicy;
 import org.eclipse.aether.spi.connector.ArtifactDownload;
@@ -39,11 +39,22 @@ class SigmundRepositoryConnectorTest {
 
     private TestKeys.Fixture fixture;
     private SigmundSessionVerifier verifier;
+    private TestLocalRepositoryManager localRepository;
+    private DefaultRepositorySystemSession session;
 
     @BeforeEach
     void setUp() {
         fixture = TestKeys.create(dir.resolve("fixture"));
         verifier = SigmundSessionVerifier.create(fixture.configFile());
+        LocalRepository local = new LocalRepository(dir.resolve("local"));
+        localRepository = new TestLocalRepositoryManager() {
+            @Override
+            public LocalRepository getRepository() {
+                return local;
+            }
+        };
+        session = new DefaultRepositorySystemSession(h -> false);
+        session.setLocalRepositoryManager(localRepository);
     }
 
     @AfterEach
@@ -52,7 +63,7 @@ class SigmundRepositoryConnectorTest {
     }
 
     @Test
-    void signedArtifactPasses() {
+    void signedArtifactPassesAndKeepsItsSignatureRegisteredNextToIt() {
         FakeConnector fake = new FakeConnector(signedFiles(fixture.artifact()));
         ArtifactDownload download = download(JAR);
 
@@ -60,31 +71,51 @@ class SigmundRepositoryConnectorTest {
 
         assertThat(download.getException()).isNull();
         assertThat(download.getPath()).exists();
+        assertThat(localPath(ASC)).hasSameTextualContentAs(fixture.signature());
+        assertThat(localPath(ASC).getParent()).isEqualTo(download.getPath().getParent());
+        assertThat(registered()).contains(ASC.toString());
         assertThat(fake.seen).hasSize(2);
     }
 
     @Test
-    void tamperedArtifactIsBlockedAndDeleted() throws IOException {
+    void tamperedArtifactIsBlockedAndItsFilesDeleted() throws IOException {
         FakeConnector fake = new FakeConnector(signedFiles(tampered()));
         ArtifactDownload download = download(JAR);
 
         get(fake, download);
 
         assertThat(download.getException()).isInstanceOf(SigmundVerificationException.class);
+        assertThat(download.getException().getMessage()).contains("FAILED");
         assertThat(download.getPath()).doesNotExist();
+        assertThat(localPath(ASC)).doesNotExist();
+        assertThat(registered()).doesNotContain(ASC.toString());
     }
 
     @Test
-    void missingSignatureIsNoClaimNotTransferError() {
+    void missingSignatureIsNoClaimWhichTheDefaultPolicyBlocks() {
         FakeConnector fake = new FakeConnector(Map.of(JAR.toString(), fixture.artifact()));
         ArtifactDownload download = download(JAR);
 
         get(fake, download);
 
-        assertThat(download.getException())
-                .as("on-no-claim defaults to fail with a policy")
-                .isInstanceOf(SigmundVerificationException.class);
+        assertThat(download.getException()).isInstanceOf(SigmundVerificationException.class);
+        assertThat(download.getException().getCause()).isNull();
+        assertThat(download.getException().getMessage()).contains("NO_CLAIM");
         assertThat(download.getPath()).doesNotExist();
+    }
+
+    @Test
+    void missingSignatureIsNotATransferErrorUnderAWarnPolicy() {
+        TestKeys.Fixture warning = TestKeys.create(dir.resolve("warn"), "defaults:\n  on-no-claim: warn\n");
+        try (SigmundSessionVerifier warnVerifier = SigmundSessionVerifier.create(warning.configFile())) {
+            FakeConnector fake = new FakeConnector(Map.of(JAR.toString(), warning.artifact()));
+            ArtifactDownload download = download(JAR);
+
+            new SigmundRepositoryConnector(session, REPO, fake, warnVerifier).get(List.of(download), List.of());
+
+            assertThat(download.getException()).isNull();
+            assertThat(download.getPath()).exists();
+        }
     }
 
     @Test
@@ -98,6 +129,39 @@ class SigmundRepositoryConnectorTest {
         assertThat(download.getException()).isInstanceOf(SigmundVerificationException.class);
         assertThat(download.getException().getCause()).isSameAs(timeout);
         assertThat(download.getPath()).doesNotExist();
+    }
+
+    @Test
+    void verificationErrorFailsTheArtifactClosed() throws IOException {
+        Path unreadable = Files.createDirectories(dir.resolve("unreadable.jar"));
+        FakeConnector fake = new FakeConnector(signedFiles(unreadable));
+        ArtifactDownload download = download(JAR);
+
+        get(fake, download);
+
+        assertThat(download.getException()).isInstanceOf(SigmundVerificationException.class);
+        assertThat(download.getException().getCause()).isNotNull();
+        assertThat(download.getPath()).doesNotExist();
+        assertThat(localPath(ASC)).doesNotExist();
+    }
+
+    @Test
+    void delegateFailingAfterWritingLeavesNoUnverifiedFile() {
+        FakeConnector failing = new FakeConnector(signedFiles(fixture.artifact())) {
+            @Override
+            public void get(
+                    Collection<? extends ArtifactDownload> artifactDownloads,
+                    Collection<? extends MetadataDownload> metadataDownloads) {
+                super.get(artifactDownloads, metadataDownloads);
+                throw new IllegalStateException("delegate broke");
+            }
+        };
+        ArtifactDownload download = download(JAR);
+
+        assertThatThrownBy(() -> get(failing, download)).isInstanceOf(IllegalStateException.class);
+
+        assertThat(download.getPath()).doesNotExist();
+        assertThat(localPath(ASC)).doesNotExist();
     }
 
     @Test
@@ -123,41 +187,22 @@ class SigmundRepositoryConnectorTest {
         assertThat(download.getException()).isNull();
     }
 
-    @Test
-    void tempDirCleanedUp() throws IOException {
-        Set<Path> before = sigmundTempDirs();
-
-        get(new FakeConnector(signedFiles(fixture.artifact())), download(JAR));
-        get(new FakeConnector(signedFiles(tampered())), download(JAR));
-
-        assertThat(sigmundTempDirs()).isEqualTo(before);
-    }
-
-    @Test
-    void tempDirCleanedUpWhenDelegateThrows() throws IOException {
-        Set<Path> before = sigmundTempDirs();
-        FakeConnector throwing = new FakeConnector(Map.of()) {
-            @Override
-            public void get(
-                    Collection<? extends ArtifactDownload> artifactDownloads,
-                    Collection<? extends MetadataDownload> md) {
-                throw new IllegalStateException("delegate broke");
-            }
-        };
-
-        assertThatThrownBy(() -> get(throwing, download(JAR))).isInstanceOf(IllegalStateException.class);
-
-        assertThat(sigmundTempDirs()).isEqualTo(before);
-    }
-
     private void get(FakeConnector fake, ArtifactDownload download) {
-        new SigmundRepositoryConnector(REPO, fake, verifier).get(List.of(download), List.of());
+        new SigmundRepositoryConnector(session, REPO, fake, verifier).get(List.of(download), List.of());
     }
 
     private ArtifactDownload download(Artifact artifact) {
-        Path path = dir.resolve("local").resolve(artifact.getArtifactId() + "-" + artifact.getVersion() + "."
-                + artifact.getExtension());
-        return new ArtifactDownload(artifact, "", path, RepositoryPolicy.CHECKSUM_POLICY_FAIL);
+        return new ArtifactDownload(artifact, "", localPath(artifact), RepositoryPolicy.CHECKSUM_POLICY_FAIL);
+    }
+
+    private Path localPath(Artifact artifact) {
+        return localRepository.getAbsolutePathForRemoteArtifact(artifact, REPO, "");
+    }
+
+    private List<String> registered() {
+        return localRepository.getArtifactRegistration().stream()
+                .map(Artifact::toString)
+                .toList();
     }
 
     private Map<String, Path> signedFiles(Path artifactFile) {
@@ -168,12 +213,5 @@ class SigmundRepositoryConnectorTest {
         Path tampered = Files.copy(fixture.artifact(), dir.resolve("tampered.jar"));
         Files.write(tampered, new byte[] { 1 }, StandardOpenOption.APPEND);
         return tampered;
-    }
-
-    private static Set<Path> sigmundTempDirs() throws IOException {
-        try (Stream<Path> entries = Files.list(Path.of(System.getProperty("java.io.tmpdir")))) {
-            return entries.filter(p -> p.getFileName().toString().startsWith("sigmund-"))
-                    .collect(Collectors.toSet());
-        }
     }
 }
