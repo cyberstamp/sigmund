@@ -1,6 +1,7 @@
 package dev.cyberstamp.sigmund.resolver.connector;
 
 import dev.cyberstamp.sigmund.resolver.SigmundConfigurationKeys;
+import dev.cyberstamp.sigmund.resolver.SigmundSessionVerifier;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Singleton;
@@ -31,7 +32,7 @@ public final class SigmundPipelineRepositoryConnectorFactory implements Pipeline
                 session, SigmundConfigurationKeys.DEFAULT_VERIFY_ENABLED,
                 SigmundConfigurationKeys.CONFIG_PROP_VERIFY_ENABLED);
         if (enabled) {
-            return new SigmundRepositoryConnector(session, repository, delegate);
+            return new SigmundRepositoryConnector(repository, delegate, SigmundSessionVerifier.get(session));
         } else {
             return delegate;
         }
