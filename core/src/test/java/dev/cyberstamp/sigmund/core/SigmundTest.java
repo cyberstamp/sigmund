@@ -212,6 +212,45 @@ class SigmundTest {
     }
 
     @Nested
+    class SigningTools {
+
+        @Test
+        void aToolTheToolchainNamesMustBeKnown() {
+            String yaml = """
+                    signing:
+                      toolchain: [sq]
+                    """;
+            Sigmund.Builder builder = Sigmund.builder()
+                    .factories(List.of(new BcToolFactory()))
+                    .config(SigmundConfigParser.parse("<test>", new StringReader(yaml)));
+
+            assertThatThrownBy(() -> builder.addSigningTools(name -> {
+            })).isInstanceOf(SigmundException.class);
+        }
+
+        @Test
+        void withoutAToolchainUnknownDefaultToolsAreSkippedAndReported(@TempDir Path dir) {
+            String yaml = """
+                    tools:
+                      bc:
+                        cert-d-home: "%s"
+                        bc-private-home: "%s"
+                        gnupg-home: "%s"
+                    """.formatted(dir.resolve("cert-d"), dir.resolve("bc-private"), dir.resolve("gnupg"));
+            List<String> skipped = new ArrayList<>();
+
+            try (Sigmund sigmund = Sigmund.builder()
+                    .factories(List.of(new BcToolFactory()))
+                    .config(SigmundConfigParser.parse("<test>", new StringReader(yaml)))
+                    .addSigningTools(skipped::add)
+                    .build()) {
+                assertThat(skipped).containsExactly("sq", "gpg");
+                assertThat(sigmund.tools()).extracting(SignatureTool::name).containsExactly("bc");
+            }
+        }
+    }
+
+    @Nested
     class DirectVerification {
 
         @Test
