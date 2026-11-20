@@ -2,9 +2,12 @@ package dev.cyberstamp.sigmund.resolver.connector;
 
 import dev.cyberstamp.sigmund.resolver.SigmundConfigurationKeys;
 import dev.cyberstamp.sigmund.resolver.SigmundSessionVerifier;
+import java.nio.file.Path;
 import javax.inject.Inject;
 import javax.inject.Named;
+import javax.inject.Provider;
 import javax.inject.Singleton;
+import org.apache.maven.execution.MavenSession;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.spi.connector.PipelineRepositoryConnectorFactory;
@@ -21,8 +24,16 @@ public final class SigmundPipelineRepositoryConnectorFactory implements Pipeline
      */
     private float priority = 20000;
 
+    private final Provider<MavenSession> mavenSession;
+
+    /**
+     * Creates the factory.
+     *
+     * @param mavenSession the Maven session, whose root directory holds the project's {@code sigmund.yaml}
+     */
     @Inject
-    public SigmundPipelineRepositoryConnectorFactory() {
+    public SigmundPipelineRepositoryConnectorFactory(Provider<MavenSession> mavenSession) {
+        this.mavenSession = mavenSession;
     }
 
     @Override
@@ -32,9 +43,20 @@ public final class SigmundPipelineRepositoryConnectorFactory implements Pipeline
                 session, SigmundConfigurationKeys.DEFAULT_VERIFY_ENABLED,
                 SigmundConfigurationKeys.CONFIG_PROP_VERIFY_ENABLED);
         if (enabled) {
-            return new SigmundRepositoryConnector(session, repository, delegate, SigmundSessionVerifier.get(session));
+            return new SigmundRepositoryConnector(
+                    session, repository, delegate, SigmundSessionVerifier.get(session, rootDirectory()));
         } else {
             return delegate;
+        }
+    }
+
+    private Path rootDirectory() {
+        MavenSession maven = mavenSession.get();
+        try {
+            return maven.getRootDirectory();
+        } catch (IllegalStateException noDotMvn) {
+            // Maven finds no root without a .mvn directory, which loading this extension from .mvn/extensions.xml implies
+            return maven.getTopDirectory();
         }
     }
 

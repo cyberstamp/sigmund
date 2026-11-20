@@ -30,8 +30,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>
  * The configuration is the file named by {@link SigmundConfigurationKeys#CONFIG_PROP_CONFIG} or, when unset, the
- * {@code sigmund.yaml} in the directory named by the {@code maven.multiModuleProjectDirectory} config property (or
- * the current directory), else the user's {@code ~/.config/sigmund/sigmund.yaml}. A configuration that cannot be
+ * {@code sigmund.yaml} in the build's root directory, else the user's {@code ~/.config/sigmund/sigmund.yaml}. A configuration
+ * that cannot be
  * loaded or compiled fails the session rather than disabling verification. When no file is found, or the file has
  * no {@code rules}, there is no policy: only a {@link ArtifactOutcome#FAILED} artifact blocks, and a warning says
  * so.
@@ -54,13 +54,14 @@ public final class SigmundSessionVerifier implements AutoCloseable {
     /**
      * Returns the verifier of the session, creating it on first use and closing it when the session ends.
      *
-     * @param session the session whose config properties locate the configuration
+     * @param session the session, whose config properties may name the configuration file
+     * @param rootDirectory the build's root directory, searched for {@code sigmund.yaml} when no file is named
      * @return the session's verifier
      * @throws PolicyConfigException if the configuration cannot be loaded or compiled
      */
-    public static SigmundSessionVerifier get(RepositorySystemSession session) {
+    public static SigmundSessionVerifier get(RepositorySystemSession session, Path rootDirectory) {
         return (SigmundSessionVerifier) session.getData().computeIfAbsent(SESSION_KEY, () -> {
-            SigmundSessionVerifier created = create(loadConfig(session));
+            SigmundSessionVerifier created = create(loadConfig(session, rootDirectory));
             session.addOnSessionEndedHandler(created::close);
             return created;
         });
@@ -82,13 +83,12 @@ public final class SigmundSessionVerifier implements AutoCloseable {
         return new SigmundSessionVerifier(config);
     }
 
-    private static SigmundConfig loadConfig(RepositorySystemSession session) {
+    private static SigmundConfig loadConfig(RepositorySystemSession session, Path rootDirectory) {
         String explicit = ConfigUtils.getString(session, null, SigmundConfigurationKeys.CONFIG_PROP_CONFIG);
-        Path baseDir = Path.of(ConfigUtils.getString(session, ".", "maven.multiModuleProjectDirectory"));
-        Path located = ConfigLoader.locate(explicit == null ? null : Path.of(explicit), baseDir);
+        Path located = ConfigLoader.locate(explicit == null ? null : Path.of(explicit), rootDirectory);
         if (located == null) {
             LOGGER.warn("Sigmund verification is enabled but no sigmund.yaml was found in {} or the user config;"
-                    + " without a policy only signatures that do not match their artifact block", baseDir);
+                    + " without a policy only signatures that do not match their artifact block", rootDirectory);
             return SigmundConfig.EMPTY;
         }
         LOGGER.info("Sigmund verifies downloads with {}", located);

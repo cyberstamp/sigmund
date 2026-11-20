@@ -46,7 +46,7 @@ Set as user properties (`-D…` or `.mvn/maven.config`):
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `sigmund.resolver.verify.enabled` | Boolean | `false` | Verify downloaded artifacts. |
-| `sigmund.resolver.config` | String | unset | Path of the `sigmund.yaml` to use. Unset, it is located from `maven.multiModuleProjectDirectory`, then the user config (`~/.config/sigmund/sigmund.yaml`). |
+| `sigmund.resolver.config` | String | unset | Path of the `sigmund.yaml` to use. Unset, it is `sigmund.yaml` in the build's root directory (the one holding `.mvn`), then the user config (`~/.config/sigmund/sigmund.yaml`). |
 | `sigmund.resolver.sign.enabled` | Boolean | `false` | Reserved for signing on deploy; signing is not implemented yet. |
 
 A `sigmund.yaml` that cannot be loaded fails the build; it never disables verification. The
