@@ -1,4 +1,4 @@
-# ADR-010: Resolution-Time Verification in a Resolver Pipeline Connector
+# ADR-010: Resolution-Time Verification in a Resolver Pipeline Connector and Post-Processor
 
 ## Status
 
@@ -28,9 +28,10 @@ The forces:
 
 ## Decision
 
-Sigmund verifies downloads in a pipeline repository connector, shipped as the
+Sigmund verifies downloads in a pipeline repository connector, and artifacts served from the
+local repository in an `ArtifactResolverPostProcessor`, both shipped in the
 `sigmund-resolver-connector` extension, which requires Maven Resolver 2.0.8 or later and so
-Maven 3.10 or later.
+Maven 3.10 or later. The two share one check; they differ only in how they obtain the signatures.
 
 - The connector wraps the transferring connector (priority 20000, inside the offline and
   remote-repository-filtering connectors), so it sees exactly what is fetched from a remote
@@ -44,17 +45,25 @@ Maven 3.10 or later.
 - An artifact whose outcome the policy blocks, or that could not be verified, fails its download
   with a transfer exception; its file and sidecars are deleted. An artifact that passes keeps its
   sidecars, registered with the local repository manager.
+- The post-processor checks each resolved artifact that does not come from the workspace against
+  the sidecars stored next to it in the local repository; it does not fetch missing ones, since
+  that would re-enter resolution while the resolver holds the artifacts' locks. A missing sidecar
+  is no claim. A file the connector passed in the session is not checked again. A refused
+  artifact is made unresolved; its file stays.
 
 ## Alternatives
 
 - **`RepositoryListener`.** Notification, not interception: an artifact is already in place when
   the listener hears of it, and failing from a callback does not reliably abort resolution.
   Rejected.
-- **`ArtifactResolverPostProcessor`.** Runs after resolution, on local-repository hits as well as
-  downloads, and fails resolution cleanly. But the artifact is already installed in the local
+- **`ArtifactResolverPostProcessor` alone.** Runs after resolution, on local-repository hits as
+  well as downloads, and fails resolution cleanly. But a download is already in the local
   repository when it runs, and it would have to resolve the sidecars itself, through the
-  resolver it is part of. Rejected as the first hook; kept as the way to re-verify local hits
-  (see Consequences), which the sidecars this decision keeps make possible.
+  resolver it is part of. Rejected as the only hook; used beside the connector for local hits,
+  against the sidecars the connector stores.
+- **Fetching missing sidecars from the post-processor.** Would verify artifacts cached before the
+  extension was enabled without clearing them, but re-enters resolution under the resolver's
+  locks, which some lock name mappers turn into a lock upgrade. Rejected.
 - **Wrapping a resolver component** (`ArtifactResolver`). Replaces a core component rather than
   adding one, collides with any other extension doing the same, and has to reimplement the
   bookkeeping around transfers. Rejected.
@@ -66,8 +75,10 @@ Maven 3.10 or later.
 
 ## Consequences
 
-- An artifact already in the local repository is not verified again when a build uses it. Closing
-  that needs an `ArtifactResolverPostProcessor` checking local hits against the stored sidecars.
+- An artifact cached before the extension was enabled has no stored sidecar and is no claim:
+  under a policy it fails until it is downloaded again.
+- Artifacts installed locally are judged like downloads, so a policy covering their coordinates
+  has to tolerate them unsigned.
 - The extension's own dependencies resolve before it is active and are not verified.
 - Every download is judged, build tooling and POMs included. With `rules`, an artifact no rule
   matches is `NOT_CONFIGURED`, which fails by default, so a policy has to cover the build's
