@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
-import org.apache.maven.execution.MavenSession;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.repository.RemoteRepository;
@@ -93,22 +92,6 @@ public final class SigmundSessionVerifier implements AutoCloseable {
     }
 
     /**
-     * The build's root directory: the one Maven identifies by its {@code .mvn} directory, else the directory Maven
-     * was started in.
-     *
-     * @param mavenSession the Maven session
-     * @return the root directory
-     */
-    public static Path rootDirectory(MavenSession mavenSession) {
-        try {
-            return mavenSession.getRootDirectory();
-        } catch (IllegalStateException noDotMvn) {
-            // Maven finds no root without a .mvn directory, which loading this extension from .mvn/extensions.xml implies
-            return mavenSession.getTopDirectory();
-        }
-    }
-
-    /**
      * Creates a verifier from an explicit configuration file. The caller closes it.
      *
      * @param configFile the {@code sigmund.yaml} to load
@@ -125,8 +108,7 @@ public final class SigmundSessionVerifier implements AutoCloseable {
     }
 
     private static SigmundConfig loadConfig(RepositorySystemSession session, Path rootDirectory) {
-        String explicit = ConfigUtils.getString(session, null, SigmundConfigurationKeys.CONFIG_PROP_CONFIG);
-        Path located = ConfigLoader.locate(explicit == null ? null : Path.of(explicit), rootDirectory);
+        Path located = SessionConfig.locate(session, rootDirectory);
         if (located == null) {
             LOGGER.warn("Sigmund verification is enabled but no sigmund.yaml was found in {} or the user config;"
                     + " without a policy only signatures that do not match their artifact block", rootDirectory);

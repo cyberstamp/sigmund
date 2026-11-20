@@ -1,9 +1,9 @@
 # Sigmund Resolver Connector
 
-Verifies every artifact Maven resolves against the Sigmund trust policy in `sigmund.yaml`:
-downloads before they reach the local repository, and artifacts served from the local repository
-before a build uses them. An artifact whose outcome blocks fails resolution with a
-`SigmundVerificationException`.
+Verifies every artifact Maven resolves against the Sigmund trust policy in `sigmund.yaml`, and
+signs what Maven deploys. It verifies downloads before they reach the local repository, and
+artifacts served from the local repository before a build uses them. An artifact whose outcome
+blocks fails resolution with a `SigmundVerificationException`.
 
 **Maven 3.10 or later only** (Maven 4 included), on Java 17. The extension is built on Maven
 Resolver 2 pipeline connectors (Resolver 2.0.8+), which Maven 3.9 and older do not have: it does
@@ -48,7 +48,7 @@ Set as user properties (`-D…` or `.mvn/maven.config`):
 |-----|------|---------|---------|
 | `sigmund.resolver.verify.enabled` | Boolean | `false` | Verify downloaded artifacts. |
 | `sigmund.resolver.config` | String | unset | Path of the `sigmund.yaml` to use. Unset, it is `sigmund.yaml` in the build's root directory (the one holding `.mvn`), then the user config (`~/.config/sigmund/sigmund.yaml`). |
-| `sigmund.resolver.sign.enabled` | Boolean | `false` | Reserved for signing on deploy; signing is not implemented yet. |
+| `sigmund.resolver.sign.enabled` | Boolean | `false` | Sign deployed artifacts (see [Signing](#signing)). |
 
 A `sigmund.yaml` that cannot be loaded fails the build; it never disables verification. The
 file in use is logged at INFO. When none is found, a warning says so, and verification only
@@ -89,6 +89,21 @@ evidence read, for example `org.example:lib:1.0 FAILED, action FAIL, rules[0]
   there before, and the policy may be what changed.
 - Artifacts installed locally (`mvn install`) are judged like any other: unsigned, they are no
   claim.
+
+## Signing
+
+With `sigmund.resolver.sign.enabled=true`, every `mvn deploy` signs each deployed artifact — jar,
+POM, attached artifacts, but not checksums — and deploys the signature (`.asc`, or another
+format a configured tool produces) beside it. Nothing is signed on `install`.
+
+The keys come from the `signing` and `tools` sections of the same `sigmund.yaml`, as for
+`mvn sigmund:sign`; see [the signing guide](../docs/signing.md). Without a `sigmund.yaml`,
+Sigmund's default signing tools sign, so a CI runner with `SIGMUND_BC_SIGNING_KEY` set needs no
+configuration. A key's passphrase is read from `SIGMUND_BC_PASSPHRASE`; nothing prompts.
+
+When the build already attached signatures — maven-gpg-plugin, say — the extension signs
+nothing. Signing does not read the policy: a `sigmund.yaml` whose `rules` would fail to load for
+verification still signs.
 
 ## Limits
 

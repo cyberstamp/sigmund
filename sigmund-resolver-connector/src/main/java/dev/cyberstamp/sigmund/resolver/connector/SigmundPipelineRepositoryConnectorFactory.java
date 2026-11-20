@@ -1,5 +1,6 @@
 package dev.cyberstamp.sigmund.resolver.connector;
 
+import dev.cyberstamp.sigmund.resolver.SessionConfig;
 import dev.cyberstamp.sigmund.resolver.SigmundSessionVerifier;
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -39,7 +40,7 @@ public final class SigmundPipelineRepositoryConnectorFactory implements Pipeline
         if (SigmundSessionVerifier.isEnabled(session)) {
             return new SigmundRepositoryConnector(
                     session, repository, delegate,
-                    SigmundSessionVerifier.get(session, () -> SigmundSessionVerifier.rootDirectory(mavenSession.get())));
+                    SigmundSessionVerifier.get(session, () -> SessionConfig.rootDirectory(mavenSession.get())));
         } else {
             return delegate;
         }
