@@ -20,8 +20,8 @@ The `sigmund-resolver-connector` extension signs in an `ArtifactGeneratorFactory
 
 - It signs deploy requests only, never installs: a signature is for what others consume.
 - It signs each artifact that gets checksums, with the signer `sigmund.yaml`'s `signing` and
-  `tools` sections configure — the same signer as the goal and the CLI — and deploys each
-  signature file as a sub-artifact beside its artifact.
+  `tools` sections configure — the same signer as the goal and the CLI, a named profile
+  included — and deploys each signature file as a sub-artifact beside its artifact.
 - It runs first among generators (priority 20000) and signs nothing when the request already
   holds signatures, so a build that attaches its own keeps them.
 - It reads `sigmund.yaml` without compiling the policy (§ "Signing never compiles the policy").
@@ -40,7 +40,8 @@ The `sigmund-resolver-connector` extension signs in an `ArtifactGeneratorFactory
 
 - Deploy-time signing needs no plugin configuration in the project; Maven 3.9 and older are not
   supported.
-- A signing failure fails the deploy.
-- Signing is non-interactive: a protected key's passphrase comes from the environment.
+- A signing failure fails the deploy, before anything is uploaded.
+- A protected key's passphrase is found as for the goal: an environment variable, else a console
+  prompt, which an unattended build does not have.
 - The signer's tool selection is shared with the goal and the CLI through
   `Sigmund.Builder.addSigningTools`.

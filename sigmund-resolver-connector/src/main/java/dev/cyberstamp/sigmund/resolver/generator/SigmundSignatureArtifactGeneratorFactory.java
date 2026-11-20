@@ -3,6 +3,7 @@ package dev.cyberstamp.sigmund.resolver.generator;
 import dev.cyberstamp.sigmund.core.ConfigLoader;
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SigmundConfig;
+import dev.cyberstamp.sigmund.core.Signer;
 import dev.cyberstamp.sigmund.resolver.SessionConfig;
 import dev.cyberstamp.sigmund.resolver.SigmundConfigurationKeys;
 import java.nio.file.Path;
@@ -73,10 +74,26 @@ public final class SigmundSignatureArtifactGeneratorFactory implements ArtifactG
         if (!enabled) {
             return null;
         }
-        return new SigmundSignatureArtifactGenerator(
-                request.getArtifacts(),
-                artifactPredicateFactory.newInstance(session)::hasChecksums,
-                signingSigmund(session));
+        Sigmund sigmund = signingSigmund(session);
+        try {
+            return new SigmundSignatureArtifactGenerator(
+                    request.getArtifacts(),
+                    artifactPredicateFactory.newInstance(session)::hasChecksums,
+                    sigmund,
+                    signer(session, sigmund));
+        } catch (RuntimeException e) {
+            sigmund.close();
+            throw e;
+        }
+    }
+
+    private static Signer signer(RepositorySystemSession session, Sigmund sigmund) {
+        String profile = ConfigUtils.getString(session, null, SigmundConfigurationKeys.CONFIG_PROP_SIGN_PROFILE);
+        if (profile == null) {
+            return sigmund.signer();
+        }
+        LOGGER.info("Sigmund signs with profile {}", profile);
+        return sigmund.signer(profile);
     }
 
     private Sigmund signingSigmund(RepositorySystemSession session) {

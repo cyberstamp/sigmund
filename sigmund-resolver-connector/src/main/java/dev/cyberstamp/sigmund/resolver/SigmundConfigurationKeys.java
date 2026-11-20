@@ -35,6 +35,17 @@ public final class SigmundConfigurationKeys {
     public static final boolean DEFAULT_SIGN_ENABLED = false;
 
     /**
+     * The signing profile to sign with: one of {@code signing.profiles} in {@code sigmund.yaml}, whose credential
+     * types choose the keys that sign. When unset, {@code signing.credential-types} chooses them, or every key of
+     * every signing tool signs. A profile {@code sigmund.yaml} does not define fails the deploy before anything is
+     * deployed.
+     *
+     * @configurationSource {@link RepositorySystemSession#getConfigProperties()}
+     * @configurationType {@link String}
+     */
+    public static final String CONFIG_PROP_SIGN_PROFILE = CONFIG_PROPS_PREFIX + "sign.profile";
+
+    /**
      * Path of the {@code sigmund.yaml} to use. When unset, the file is {@code sigmund.yaml} in the build's root
      * directory, then the user's {@code ~/.config/sigmund/sigmund.yaml}.
      *

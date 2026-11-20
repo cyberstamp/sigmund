@@ -24,8 +24,9 @@ import org.slf4j.LoggerFactory;
  * another format a configured tool produces — as a sub-artifact to deploy beside the artifact it signs.
  *
  * <p>
- * Backs out when the request already holds signatures, as when the build attached them with maven-gpg-plugin. The
- * signatures are written to a temporary directory, deleted with the signing tools when the generator is closed.
+ * Backs out when the request already holds signatures, as when the build attached them with maven-gpg-plugin. A
+ * signing failure is thrown, failing the deploy. The signatures are written to a temporary directory, deleted with
+ * the signing tools when the generator is closed.
  */
 final class SigmundSignatureArtifactGenerator implements ArtifactGenerator {
     private static final Logger LOGGER = LoggerFactory.getLogger(SigmundSignatureArtifactGenerator.class);
@@ -33,6 +34,7 @@ final class SigmundSignatureArtifactGenerator implements ArtifactGenerator {
     private final List<Artifact> artifacts;
     private final Predicate<Artifact> signable;
     private final Sigmund sigmund;
+    private final Signer signer;
     private Path signatureDirectory;
 
     /**
@@ -41,11 +43,14 @@ final class SigmundSignatureArtifactGenerator implements ArtifactGenerator {
      * @param artifacts the artifacts of the deploy request
      * @param signable which artifacts get a signature: not checksums, nor signatures
      * @param sigmund the signing instance
+     * @param signer the signer of {@code sigmund} to sign with, for a profile or the default keys
      */
-    SigmundSignatureArtifactGenerator(Collection<Artifact> artifacts, Predicate<Artifact> signable, Sigmund sigmund) {
+    SigmundSignatureArtifactGenerator(
+            Collection<Artifact> artifacts, Predicate<Artifact> signable, Sigmund sigmund, Signer signer) {
         this.artifacts = new ArrayList<>(artifacts);
         this.signable = signable;
         this.sigmund = sigmund;
+        this.signer = signer;
     }
 
     @Override
@@ -60,7 +65,6 @@ final class SigmundSignatureArtifactGenerator implements ArtifactGenerator {
             LOGGER.debug("Signatures are present among artifacts, Sigmund does not sign");
             return List.of();
         }
-        Signer signer = sigmund.signer();
         List<Artifact> signatures = new ArrayList<>();
         for (Artifact artifact : artifacts) {
             if (signable.test(artifact)) {
