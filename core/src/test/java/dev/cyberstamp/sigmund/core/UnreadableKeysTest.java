@@ -75,6 +75,14 @@ class UnreadableKeysTest {
     }
 
     @Test
+    void aKeyOfAnAlgorithmBouncyCastleImplementsThatItCannotParseIsDamaged() throws IOException {
+        byte[] certificate = readFixture("unknown-algorithm-key.gpg");
+        certificate[7] = 31;
+
+        assertThat(KeyRingFiles.causeOf(certificate)).isEqualTo(UnreadableCertificate.Cause.DAMAGED);
+    }
+
+    @Test
     void aCertificateWithASubkeyBouncyCastleDoesNotKnowStillVerifies() throws IOException {
         writeCertD(SECOND, readFixture("second-key-with-unknown-subkey.gpg"));
 

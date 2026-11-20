@@ -31,13 +31,13 @@ A v4 Ed25519 key is written in the legacy EdDSA encoding: GnuPG 2.4 reads Ed2551
 - **Ed448** keys are v6 only: GnuPG reads no v4 Ed448 key, so a v4 one would serve no tool a v4 key is for. `--cipher-suite ed448` without `--credential-type pgp6` is an error.
 - **Ed25519** and **RSA** (`rsa4096`) come in both versions.
 
-## PQC signature verification requires Sequoia
+## SLH-DSA signature verification requires Sequoia
 
-Bouncy Castle (1.86) does not recognize post-quantum composite signature algorithm IDs (30-36, defined in RFC 9980): it cannot even read a certificate holding such a key. BC therefore does not take post-quantum signatures, and a PQC block no other tool in the toolchain reads is `INDETERMINATE [UNSUPPORTED_ALGORITHM]`, which sets that claim aside rather than failing the artifact.
+Bouncy Castle (1.87) verifies the ML-DSA composite signatures of RFC 9980 (ML-DSA-65+Ed25519, ML-DSA-87+Ed448), so a hybrid `.asc` verifies without `sq`. BC does not take SLH-DSA signatures (algorithm IDs 32-34): no installed tool produces them to check that BC agrees with `sq`. An SLH-DSA block no other tool in the toolchain reads is `INDETERMINATE [UNSUPPORTED_ALGORITHM]`, which sets that claim aside rather than failing the artifact.
 
-**What this means:** PQC signature verification currently requires Sequoia `sq` 1.4.0+. Without it, the PQC block of a hybrid `.asc` is reported `INDETERMINATE [UNSUPPORTED_ALGORITHM]` — so strict verification of the file does not pass, and lenient verification does when the classic block verifies.
+**What this means:** SLH-DSA verification requires Sequoia `sq`. Without it, such a block is reported `INDETERMINATE [UNSUPPORTED_ALGORITHM]` — so strict verification of the file does not pass, and lenient verification does when another block verifies.
 
-BC support for PQC verification (ML-DSA-87+Ed448 and ML-DSA-65+Ed25519) is planned for a future release.
+BC cannot yet generate post-quantum keys or sign with them; `sq` is needed for that.
 
 ## GPG ephemeral key fetch not supported
 

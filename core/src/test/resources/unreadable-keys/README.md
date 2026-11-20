@@ -9,8 +9,9 @@ Two Ed25519 v4 keys were generated with GnuPG 2.4:
 
 `artifact.txt.asc` is the second key's detached signature over `artifact.txt`.
 
-In the files below, a public-key algorithm octet was changed from 22 (EdDSA) to 30
-(ML-DSA-65+Ed25519), which Bouncy Castle 1.86 does not know. A fingerprint covers that octet, so
+In the files below, a public-key algorithm octet was changed from 22 (EdDSA) to 100 (private
+or experimental use), which Bouncy Castle does not know. (They first used 30, ML-DSA-65+Ed25519,
+until Bouncy Castle 1.87 learned the post-quantum algorithms.) A fingerprint covers that octet, so
 an altered key is another key than the one it was made from.
 
 - `keybox/pubring.kbx`: GnuPG's keybox with both keys; the first key's blob is altered, and its
@@ -23,6 +24,5 @@ an altered key is another key than the one it was made from.
   subkey packet holding the first key's material, altered. Bouncy Castle reads the certificate
   and drops the subkey it does not know.
 
-A certificate whose own signatures use an algorithm Bouncy Castle does not know — where it fails
-on an `sq` ML-DSA certificate ("unknown signature key algorithm: 30") — is tested with a real
-one in `BcPostQuantumTest`.
+Real post-quantum certificates made by `sq`, which Bouncy Castle 1.87 reads and verifies, are
+tested in `BcPostQuantumTest`.

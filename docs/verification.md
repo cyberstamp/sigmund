@@ -160,7 +160,7 @@ Sigmund supports four verification backends:
 
 | Tool | Availability | Format | v4 Support | v6 Support | PQC Support |
 |------|--------------|--------|------------|------------|-------------|
-| **BC** | Always (pure Java) | OpenPGP | Yes | Yes (classic algorithms) | No — Bouncy Castle 1.86 cannot read ML-DSA keys |
+| **BC** | Always (pure Java) | OpenPGP | Yes | Yes | ML-DSA composites (Bouncy Castle 1.87+); not SLH-DSA |
 | **sq** | Optional (requires Sequoia CLI) | OpenPGP | Yes | Yes | Yes (RFC 9980) |
 | **gpg** | Optional (requires GnuPG) | OpenPGP | Yes | No | No |
 | **sigstore** | Optional (`sigmund-sigstore` module) | Sigstore | N/A | N/A | N/A |
@@ -190,7 +190,7 @@ This fallthrough is important because each tool has access to different key stor
 
 ### Tool Capabilities
 
-**BC (Bouncy Castle)** handles any OpenPGP signature with classical algorithms (RSA, EdDSA, ECDSA). It does not take post-quantum signatures: Bouncy Castle 1.86 cannot read an ML-DSA key, so such a block goes to `sq`, or is `INDETERMINATE [UNSUPPORTED_ALGORITHM]` when no tool in the toolchain reads it. It searches for the signing key in:
+**BC (Bouncy Castle)** handles any OpenPGP signature with classical algorithms (RSA, EdDSA, ECDSA) and the ML-DSA composites of RFC 9980 (ML-DSA-65+Ed25519, ML-DSA-87+Ed448). It does not take SLH-DSA signatures, so such a block goes to `sq`, or is `INDETERMINATE [UNSUPPORTED_ALGORITHM]` when no tool in the toolchain reads it. It searches for the signing key in:
 - GnuPG pubring (`~/.gnupg/pubring.kbx`)
 - Shared certificate directory (`~/.local/share/pgp.cert.d`), the store `sq` also uses
 - Keys fetched in this session (in memory)

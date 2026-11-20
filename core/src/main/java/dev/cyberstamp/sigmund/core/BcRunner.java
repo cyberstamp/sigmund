@@ -88,6 +88,9 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
 
     private static final String NAME = "bc";
 
+    /** ML-DSA-65+Ed25519 and ML-DSA-87+Ed448 (RFC 9980). */
+    private static final Set<Integer> ML_DSA_COMPOSITES = Set.of(30, 31);
+
     /** The cipher suite keys are generated with when neither the caller nor the config names one. */
     static final String DEFAULT_CIPHER_SUITE = "ed25519";
 
@@ -303,17 +306,18 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * {@inheritDoc}
      *
      * <p>
-     * Accepts an {@link OpenPgpClaim} of any packet version, except a post-quantum signature
-     * ({@link Algorithms#isPqcAlgorithm(int)}): Bouncy Castle 1.86 cannot read an ML-DSA or
-     * SLH-DSA key at all — parsing the certificate fails with "unknown signature key algorithm" —
-     * so it could only report such a key as missing, and would look for it on keyservers. Declining
-     * passes the claim to a tool that reads it, or leaves it {@code UNSUPPORTED_ALGORITHM} when
-     * none does. {@code BcPostQuantumTest} fails once a Bouncy Castle upgrade reads these keys.
+     * Accepts an {@link OpenPgpClaim} of any packet version. Of the post-quantum signatures
+     * ({@link Algorithms#isPqcAlgorithm(int)}) it accepts the ML-DSA composites, which Bouncy
+     * Castle verifies since 1.87 in agreement with {@code sq} ({@code BcPostQuantumTest}). It
+     * declines SLH-DSA, which no installed tool can produce to check that agreement against;
+     * declining passes the claim to a tool that reads it, or leaves it
+     * {@code UNSUPPORTED_ALGORITHM} when none does.
      */
     @Override
     public boolean canVerify(Claim claim) {
         return claim instanceof OpenPgpClaim openPgp
-                && !Algorithms.isPqcAlgorithm(openPgp.algorithmId());
+                && (!Algorithms.isPqcAlgorithm(openPgp.algorithmId())
+                        || ML_DSA_COMPOSITES.contains(openPgp.algorithmId()));
     }
 
     /**
