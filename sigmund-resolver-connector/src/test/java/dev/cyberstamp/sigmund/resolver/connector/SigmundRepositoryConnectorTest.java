@@ -3,7 +3,9 @@ package dev.cyberstamp.sigmund.resolver.connector;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.cyberstamp.sigmund.resolver.DirectoryLocalRepositoryManager;
 import dev.cyberstamp.sigmund.resolver.SigmundSessionVerifier;
+import dev.cyberstamp.sigmund.resolver.SigmundVerificationException;
 import dev.cyberstamp.sigmund.resolver.TestKeys;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,8 +17,6 @@ import java.util.Map;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.internal.test.util.TestLocalRepositoryManager;
-import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.repository.RepositoryPolicy;
 import org.eclipse.aether.spi.connector.ArtifactDownload;
@@ -39,20 +39,14 @@ class SigmundRepositoryConnectorTest {
 
     private TestKeys.Fixture fixture;
     private SigmundSessionVerifier verifier;
-    private TestLocalRepositoryManager localRepository;
+    private DirectoryLocalRepositoryManager localRepository;
     private DefaultRepositorySystemSession session;
 
     @BeforeEach
     void setUp() {
         fixture = TestKeys.create(dir.resolve("fixture"));
         verifier = SigmundSessionVerifier.create(fixture.configFile());
-        LocalRepository local = new LocalRepository(dir.resolve("local"));
-        localRepository = new TestLocalRepositoryManager() {
-            @Override
-            public LocalRepository getRepository() {
-                return local;
-            }
-        };
+        localRepository = new DirectoryLocalRepositoryManager(dir.resolve("local"));
         session = new DefaultRepositorySystemSession(h -> false);
         session.setLocalRepositoryManager(localRepository);
     }

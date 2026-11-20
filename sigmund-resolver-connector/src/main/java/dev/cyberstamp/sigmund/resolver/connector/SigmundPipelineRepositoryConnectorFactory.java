@@ -1,8 +1,6 @@
 package dev.cyberstamp.sigmund.resolver.connector;
 
-import dev.cyberstamp.sigmund.resolver.SigmundConfigurationKeys;
 import dev.cyberstamp.sigmund.resolver.SigmundSessionVerifier;
-import java.nio.file.Path;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Provider;
@@ -12,7 +10,6 @@ import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.spi.connector.PipelineRepositoryConnectorFactory;
 import org.eclipse.aether.spi.connector.RepositoryConnector;
-import org.eclipse.aether.util.ConfigUtils;
 
 @Singleton
 @Named(SigmundPipelineRepositoryConnectorFactory.NAME)
@@ -39,24 +36,12 @@ public final class SigmundPipelineRepositoryConnectorFactory implements Pipeline
     @Override
     public RepositoryConnector newInstance(
             RepositorySystemSession session, RemoteRepository repository, RepositoryConnector delegate) {
-        final boolean enabled = ConfigUtils.getBoolean(
-                session, SigmundConfigurationKeys.DEFAULT_VERIFY_ENABLED,
-                SigmundConfigurationKeys.CONFIG_PROP_VERIFY_ENABLED);
-        if (enabled) {
+        if (SigmundSessionVerifier.isEnabled(session)) {
             return new SigmundRepositoryConnector(
-                    session, repository, delegate, SigmundSessionVerifier.get(session, rootDirectory()));
+                    session, repository, delegate,
+                    SigmundSessionVerifier.get(session, () -> SigmundSessionVerifier.rootDirectory(mavenSession.get())));
         } else {
             return delegate;
-        }
-    }
-
-    private Path rootDirectory() {
-        MavenSession maven = mavenSession.get();
-        try {
-            return maven.getRootDirectory();
-        } catch (IllegalStateException noDotMvn) {
-            // Maven finds no root without a .mvn directory, which loading this extension from .mvn/extensions.xml implies
-            return maven.getTopDirectory();
         }
     }
 
