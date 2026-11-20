@@ -1,4 +1,4 @@
-# Sigmund Maven Resolver extension
+# Sigmund Resolver Connector
 
 Verifies every artifact Maven downloads from a remote repository against the Sigmund trust
 policy in `sigmund.yaml`, before it reaches the local repository. An artifact whose outcome
@@ -14,7 +14,7 @@ Add the extension to the project's `.mvn/extensions.xml`:
 <extensions>
   <extension>
     <groupId>dev.cyberstamp.sigmund</groupId>
-    <artifactId>sigmund-maven-resolver</artifactId>
+    <artifactId>sigmund-resolver-connector</artifactId>
     <version>${sigmund.version}</version>
   </extension>
 </extensions>
