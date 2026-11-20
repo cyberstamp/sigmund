@@ -421,4 +421,6 @@ core/              Core signing and verification library (pure Java, no CLI depe
 cli/               Command-line interface (picocli)
 maven-plugin/      Maven plugin for build integration
 sigstore/          Sigstore signing/verification backend (dev.sigstore:sigstore-java)
+sigmund-resolver-connector/
+                   Maven 3.10+ extension verifying every download at resolution time (ADR-010)
 ```
