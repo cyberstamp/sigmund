@@ -35,8 +35,8 @@ public final class SigmundConfigurationKeys {
     public static final boolean DEFAULT_SIGN_ENABLED = false;
 
     /**
-     * Path of the {@code sigmund.yaml} to use. When unset, the file is located from the directory named by the
-     * {@code maven.multiModuleProjectDirectory} config property, or the current directory.
+     * Path of the {@code sigmund.yaml} to use. When unset, the file is {@code sigmund.yaml} in the build's root
+     * directory, then the user's {@code ~/.config/sigmund/sigmund.yaml}.
      *
      * @configurationSource {@link RepositorySystemSession#getConfigProperties()}
      * @configurationType {@link String}

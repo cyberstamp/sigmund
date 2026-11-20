@@ -10,6 +10,7 @@
   <name>Sigmund :: Resolver Connector</name>
   <properties>
     <resolver.version>2.0.25</resolver.version>
+    <maven.version>3.10.1</maven.version>
     <sisu.version>1.1.2</sisu.version>
     <sl4j.version>2.0.20</sl4j.version>
   </properties>
@@ -35,6 +36,12 @@
       <groupId>org.apache.maven.resolver</groupId>
       <artifactId>maven-resolver-util</artifactId>
       <version>${resolver.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.maven</groupId>
+      <artifactId>maven-core</artifactId>
+      <version>${maven.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
