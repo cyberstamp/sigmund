@@ -1,6 +1,6 @@
 # Migrating from maven-gpg-plugin
 
-This guide helps you migrate from `maven-gpg-plugin` to Sigmund's Maven plugin. Sigmund is a superset of `maven-gpg-plugin` — it provides the same GPG signing capabilities plus dependency trust verification, hybrid post-quantum cryptography (PQC), and multiple signing backends.
+This guide helps you migrate from `maven-gpg-plugin` to Sigmund's Maven plugin. Both sign a project's artifacts with OpenPGP keys; Sigmund adds verification of dependency signatures against a trust policy, hybrid post-quantum (PQC) signing with Sequoia, and Sigstore. The comparison below is against `maven-gpg-plugin` 3.2.8.
 
 ## Contents
 
@@ -41,39 +41,40 @@ This guide helps you migrate from `maven-gpg-plugin` to Sigmund's Maven plugin. 
 
 ## Why migrate
 
-Sigmund offers everything `maven-gpg-plugin` does, plus:
+`maven-gpg-plugin` signs; Sigmund signs and verifies. Consider it when you want:
 
-- **Dependency trust verification** — enforce that dependencies are signed by known trusted parties
-- **Post-quantum cryptography** — add quantum-resistant ML-DSA signatures alongside classic GPG signatures
-- **Multiple signing backends** — use GPG, Bouncy Castle, or Sequoia sq interchangeably
-- **Signing profiles** — configure different signing strategies per project
-- **Trust policies** — declare which signers are trusted for which artifacts
+- **Dependency trust verification** — enforce that dependencies are signed by the signers you name
+- **Post-quantum cryptography** — an ML-DSA signature alongside the classic one, in the same `.asc`
+- **Sigstore** — keyless signing from CI, alongside or instead of OpenPGP
+- **A checked signer** — `signing.signer` fails the build when a signature does not prove the identity you sign as
 
-**Drop-in replacement:** For basic GPG signing, Sigmund works exactly like `maven-gpg-plugin` with minimal configuration changes.
+For plain GnuPG signing, the change is the plugin coordinates plus moving a few settings into `sigmund.yaml`.
 
 ## Feature comparison
 
 | Feature | maven-gpg-plugin | sigmund-maven-plugin |
 |---------|------------------|----------------------|
-| GPG signing (v4 signatures) | Yes | Yes |
+| OpenPGP v4 signing | Yes | Yes |
+| Signing backends | GnuPG, Bouncy Castle (`gpg.signer`) | GnuPG, Bouncy Castle, Sequoia `sq` |
+| Signing key from an environment variable | Yes (`MAVEN_GPG_KEY`, Bouncy Castle signer) | Yes (`SIGMUND_BC_SIGNING_KEY`, Bouncy Castle) |
+| Passphrase from an environment variable | Yes (`MAVEN_GPG_PASSPHRASE`) | Yes (`SIGMUND_GPG_PASSPHRASE`, `SIGMUND_BC_PASSPHRASE`) |
+| PQC hybrid signing (v6 + ML-DSA) | No | Yes, with `sq` |
+| Sigstore signing | No | Yes, with `sigmund-sigstore` |
 | Signature verification | No | Yes |
 | Dependency trust verification | No | Yes |
-| PQC hybrid signing (v6 + ML-DSA) | No | Yes |
-| Multiple signing backends | No | Yes (GPG, BC, Sequoia) |
 | Key generation | No | Yes (CLI) |
-| Signing profiles | No | Yes (`sigmund.yaml`) |
-| Trust policies | No | Yes (`sigmund.yaml`) |
+| Extra `gpg` arguments, lock mode, file excludes | Yes (`gpgArguments`, `lockMode`, `excludes`) | No |
 
 ## Security comparison
 
 | Dimension | maven-gpg-plugin | sigmund-maven-plugin |
 |-----------|------------------|----------------------|
-| **Passphrase handling** | `gpg.passphrase` Maven property — the secret appears in process listings (`ps aux`), Maven debug output, and CI build logs. Alternatively, requires manual `gpg-agent` loopback setup. | Reads the passphrase from `SIGMUND_GPG_PASSPHRASE` env var by default (no config needed). Sigmund handles `--passphrase-fd` and `--pinentry-mode loopback` automatically. Falls back to `gpg-agent` when the env var is not set. |
-| **Key material in memory** | GPG runs as a separate process; `gpg-agent` can use `mlock` to pin key material in RAM | Same — Sigmund delegates to the same `gpg` process with the same memory model. |
-| **Supply chain verification** | Signing only — no way to verify who signed your dependencies | Dependency trust verification and enforcement |
+| **Passphrase handling** | Read from `MAVEN_GPG_PASSPHRASE` by default, else from `gpg-agent`. The `gpg.passphrase` and `passphraseServerId` parameters are deprecated, and `bestPractices` makes using them a build failure. | Read from `SIGMUND_GPG_PASSPHRASE` by default, else from `gpg-agent`. A passphrase cannot be set in the POM or `sigmund.yaml`, only by naming an environment variable. |
+| **Key material in memory** | With the GnuPG signer, keys stay in `gpg`/`gpg-agent` | The same with the GnuPG backend: Sigmund runs the same `gpg` process |
+| **Supply chain verification** | Signing only | Dependency trust verification and enforcement |
 | **Quantum resistance** | None | Hybrid ML-DSA + classic signatures (RFC 9980) |
 
-When using the GPG backend, the signing security model is identical to `maven-gpg-plugin` — Sigmund delegates to the same `gpg` process. For high-security environments that rely on hardware tokens or `gpg-agent`'s memory protections, the GPG backend preserves those guarantees.
+With the GnuPG backend, signing works as with `maven-gpg-plugin`'s GnuPG signer: Sigmund runs the same `gpg` process, so hardware tokens and `gpg-agent`'s protections keep working.
 
 ## Step-by-step migration
 
@@ -125,11 +126,15 @@ Map your existing `maven-gpg-plugin` properties to Sigmund equivalents:
 
 | maven-gpg-plugin property | Sigmund equivalent | Notes |
 |---------------------------|-------------------|-------|
-| `gpg.keyname` | `sigmund.yaml` → `tools.gpg.signing-fingerprint` | The key's full fingerprint; a key ID or email is not accepted, since it can match more than one key. Configured in `sigmund.yaml`, not as a Maven property. |
-| `gpg.passphrase` | `sigmund.yaml` → `tools.gpg.passphrase-env` | Env var name, not the passphrase itself. See [Passphrase handling](#3-passphrase-handling). |
-| `gpg.executable` | `sigmund.yaml` → `tools.gpg.executable` | Path to GPG binary. Set in config file, not as Maven property. |
+| `gpg.keyname` | `sigmund.yaml` → `tools.gpg.signing-fingerprint` | The key's full fingerprint; a key ID or email is not accepted, since it can match more than one key. |
+| `gpg.passphraseEnvName` | `sigmund.yaml` → `tools.gpg.passphrase-env` | Defaults differ: `MAVEN_GPG_PASSPHRASE` versus `SIGMUND_GPG_PASSPHRASE`. Set `passphrase-env: MAVEN_GPG_PASSPHRASE` to keep your CI secret as it is. |
+| `gpg.passphrase`, `gpg.passphraseServerId` | `sigmund.yaml` → `tools.gpg.passphrase-env` | Not supported; name an environment variable instead. See [Passphrase handling](#3-passphrase-handling). |
+| `gpg.executable` | `sigmund.yaml` → `tools.gpg.executable` | Path to the GnuPG binary. |
+| `gpg.homedir` | `sigmund.gpgHome`, or `sigmund.yaml` → `tools.gpg.home` | GnuPG home directory. |
 | `gpg.skip` | `sigmund.skip` | Skip signing when `true`. |
-| `gpg.useagent` | Implicit | Sigmund always uses GPG agent when no `passphrase-env` is configured. |
+| `gpg.useagent` | Implicit | Sigmund uses `gpg-agent` whenever no passphrase environment variable is set. |
+| `gpg.signer=bc` with `gpg.keyEnvName` / `gpg.keyFilePath` | `signing.toolchain: [bc]` with `tools.bc.signing-key-env` / `tools.bc.tsk-file` | Sigmund's Bouncy Castle signer reads `SIGMUND_BC_SIGNING_KEY` by default; its passphrase comes from `SIGMUND_BC_PASSPHRASE`, not from `gpg-agent`. |
+| `gpg.keyFingerprint` | `sigmund.yaml` → `tools.bc.signing-fingerprint` | Ignored when the key comes from an environment variable or file, which sign with their first key. |
 
 **Example: specifying GPG key in sigmund.yaml**
 
@@ -278,7 +283,7 @@ tools:
     passphrase-env: GPG_PASSPHRASE
 ```
 
-Maven properties (e.g. `sigmund.sqHome`) override `sigmund.yaml` values where applicable.
+Maven properties override `sigmund.yaml` values where both exist, such as `-Dsigmund.gpgHome` over `tools.gpg.home`.
 
 ## Troubleshooting
 

@@ -1,6 +1,8 @@
 # Migrating from sign-maven-plugin
 
-This guide helps you migrate from `sign-maven-plugin` (org.simplify4u.plugins) to Sigmund's Maven plugin. Both plugins provide pure-Java signing via Bouncy Castle without requiring an external GPG installation, but Sigmund adds dependency trust verification, hybrid post-quantum cryptography (PQC), and a CLI for key management.
+This guide helps you migrate from `sign-maven-plugin` (org.simplify4u.plugins) to Sigmund's Maven plugin. Both sign in pure Java with Bouncy Castle, without an external GnuPG installation; Sigmund adds dependency trust verification, hybrid post-quantum (PQC) signing, and a CLI for key management. The comparison below is against `sign-maven-plugin` 1.2.0.
+
+`sign-maven-plugin` is retired: its maintainers recommend [maven-gpg-plugin](https://maven.apache.org/plugins/maven-gpg-plugin/), which now signs with Bouncy Castle too. If you only need signing, that is the path they suggest; for moving from it to Sigmund, see [Migrating from maven-gpg-plugin](migrating-from-gpg-plugin.md).
 
 ## Contents
 
@@ -36,12 +38,11 @@ This guide helps you migrate from `sign-maven-plugin` (org.simplify4u.plugins) t
 
 ## Why migrate
 
-Sigmund offers everything `sign-maven-plugin` does, plus:
+Consider Sigmund when you want, beyond signing:
 
-- **Dependency trust verification** — enforce that dependencies are signed by known trusted parties
-- **Post-quantum cryptography** — add quantum-resistant ML-DSA signatures alongside classic signatures
-- **Signing profiles** — configure different signing strategies per project
-- **Trust policies** — declare which signers are trusted for which artifacts
+- **Dependency trust verification** — enforce that dependencies are signed by the signers you name
+- **Post-quantum cryptography** — an ML-DSA signature alongside the classic one, in the same `.asc`
+- **Signing profiles** — switch the credential types a build signs with
 - **CLI** — key generation, signing, verification, and certificate export outside Maven
 
 ## Feature comparison
@@ -54,7 +55,8 @@ Sigmund offers everything `sign-maven-plugin` does, plus:
 | Dependency trust verification | No | Yes |
 | Key from env var | Yes (`SIGN_KEY`) | Yes (`SIGMUND_BC_SIGNING_KEY`) |
 | Subkey support | Yes | Yes |
-| Maven 4.0 ready | Yes | Not tested yet |
+| Key from `settings.xml` (`serverId`) | Yes | No |
+| Skip when no key is found | Yes (`skipNoKey`, the default) | No: signing fails |
 | Key generation | No | Yes (CLI) |
 | Trust policies | No | Yes (`sigmund.yaml`) |
 
@@ -62,13 +64,13 @@ Sigmund offers everything `sign-maven-plugin` does, plus:
 
 | Dimension | sign-maven-plugin | sigmund-maven-plugin |
 |-----------|-------------------|----------------------|
-| **Passphrase handling** | `SIGN_KEY_PASS` env var or POM `<keyPass>`. The POM value is visible in source control if not encrypted. | Reads from the `SIGMUND_BC_PASSPHRASE` env var by default, or a custom env var via `passphrase-env` in `sigmund.yaml`. Falls back to interactive prompt. |
+| **Passphrase handling** | `SIGN_KEY_PASS` env var, POM `<keyPass>` (which can use Maven password encryption), or a `settings.xml` server entry. | Reads from the `SIGMUND_BC_PASSPHRASE` env var by default, or the env var `passphrase-env` names in `sigmund.yaml`, else prompts on a terminal. A passphrase cannot be written in configuration. |
 | **Key material on disk** | Optional — `SIGN_KEY` env var avoids key files entirely | Optional — `SIGMUND_BC_SIGNING_KEY` env var avoids key files entirely |
 | **Key material in memory** | In-process via Bouncy Castle — key on Java heap, cannot be pinned | Same — Bouncy Castle on Java heap |
 | **Supply chain verification** | Signing only | Dependency trust verification and enforcement |
 | **Quantum resistance** | None | Hybrid ML-DSA + classic signatures (RFC 9980) |
 
-Both plugins support injecting the signing key from an environment variable for ephemeral CI runners. Sigmund additionally provides dependency trust verification and PQC support.
+Both plugins take the signing key from an environment variable for ephemeral CI runners.
 
 ## Step-by-step migration
 
@@ -80,7 +82,7 @@ Both plugins support injecting the signing key from an environment variable for 
 <plugin>
   <groupId>org.simplify4u.plugins</groupId>
   <artifactId>sign-maven-plugin</artifactId>
-  <version>1.1.0</version>
+  <version>1.2.0</version>
   <executions>
     <execution>
       <goals>
@@ -115,10 +117,12 @@ Both plugins support injecting the signing key from an environment variable for 
 | sign-maven-plugin | Sigmund equivalent | Notes |
 |--------------------|-------------------|-------|
 | `SIGN_KEY` (env var with key content) | `SIGMUND_BC_SIGNING_KEY` env var | Set `signing-key-env: SIGN_KEY` in `sigmund.yaml` to keep using the same env var name |
-| `SIGN_KEY_ID` (env var) | `sigmund.yaml` → `tools.bc.signing-fingerprint` | Full fingerprint instead of short key ID |
+| `SIGN_KEY_ID` (env var) | None when the key comes from an environment variable | Sigmund signs with the first key the variable holds; export only the key to sign with |
 | `SIGN_KEY_PASS` (env var) | `sigmund.yaml` → `tools.bc.passphrase-env` | Set to `SIGN_KEY_PASS` to keep using the same env var |
-| `<keyFile>` (POM) | Key file in BC private store (`~/.local/share/sigmund/bc-private/`) | Sigmund manages key storage; use `sigmund keygen` to generate keys |
-| `<keyId>` (POM) | `sigmund.yaml` → `tools.bc.signing-fingerprint` | |
+| `<keyFile>` (POM), default `~/.m2/sign-key.asc` | `sigmund.yaml` → `tools.bc.tsk-file` | Like the environment variable, signs with the first key the file holds. `signing-fingerprint` selects among keys `sigmund keygen` generated instead |
+| `<keyId>` (POM) | `sigmund.yaml` → `tools.bc.signing-fingerprint` | The full fingerprint; selects a key `sigmund keygen` generated, and is ignored with `tsk-file` or a key from the environment |
+| `<serverId>` (POM) | None | Use the environment variables instead |
+| `sign.skip` | `sigmund.skip` | |
 | `<keyPass>` (POM) | `sigmund.yaml` → `tools.bc.passphrase-env` | Env var name, not the passphrase itself. Default: `SIGMUND_BC_PASSPHRASE` |
 
 ### 3. Generate a signing key
@@ -126,10 +130,10 @@ Both plugins support injecting the signing key from an environment variable for 
 If you're starting fresh (not reusing an existing key), generate a new BC key:
 
 ```bash
-java -jar cli/target/sigmund.jar keygen \
-  --userid "Your Name <you@example.com>" \
-  --cipher-suite ed25519
+sigmund keygen --userid "Your Name <you@example.com>" --cipher-suite ed25519
 ```
+
+See the [CLI Reference](cli-reference.md) for getting `sigmund`.
 
 Save the fingerprint from the output.
 
@@ -172,6 +176,8 @@ export SIGN_KEY="$(cat private-key.pgp)"
 export SIGN_KEY_PASS=mysecret
 mvn sigmund:sign
 ```
+
+`SIGN_KEY_ID` is not needed: Sigmund signs with the first key in `SIGN_KEY`.
 
 **After (sigmund-maven-plugin) — use defaults:**
 
