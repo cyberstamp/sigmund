@@ -226,7 +226,7 @@ tools:
 When signing with BC, the passphrase is resolved in this order:
 
 1. **Programmatic `PassphraseProvider`** via `Sigmund.Builder.bcPassphraseProvider()` (API use only)
-2. **Environment variable** — `SIGMUND_BC_PASSPHRASE` by default, or the variable named in the `passphrase-env` setting
+2. **Environment variable** — `SIGMUND_BC_PASSPHRASE` by default, or the variable named in the `passphrase-env` setting, which is an error when it is not set
 3. **Interactive console prompt** — if a terminal is available
 4. **No passphrase** — works only for unencrypted keys
 

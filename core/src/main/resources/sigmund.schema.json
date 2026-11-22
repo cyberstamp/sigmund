@@ -133,7 +133,7 @@
           "additionalProperties": false,
           "properties": {
             "staging": { "description": "Use the Sigstore staging instance. For testing only. Default false.", "type": ["boolean", "string", "null"] },
-            "trusted-root": { "description": "Path to a custom trusted_root.json. Default: fetched via TUF from the public-good instance.", "$ref": "#/$defs/setting" },
+            "trusted-root": { "description": "Path to a custom trusted_root.json, used to verify bundles. Default: fetched via TUF from the instance staging selects.", "$ref": "#/$defs/setting" },
             "interactive": { "description": "Allow interactive OIDC browser login. Default false.", "type": ["boolean", "string", "null"] }
           }
         }

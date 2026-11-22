@@ -715,8 +715,8 @@ Configured in the top-level `tools.bc` section.
 | `bc-private-home` | `~/.local/share/sigmund/bc-private` | BC private key store directory, kept outside the shared cert-d |
 | `signing-fingerprint` | (none) | Full fingerprint of the key to sign with, or a list of them to sign with each: 40 hex characters for a v4 key, 64 for v6, the key's type coming from the length. Ignored when a key comes from `signing-key-env` or `tsk-file`, which sign with the first key they hold only |
 | `tsk-file` | (none) | Path to an exported Transferable Secret Key (TSK) file for signing |
-| `signing-key-env` | `SIGMUND_BC_SIGNING_KEY` | Environment variable name containing the ASCII-armored private key. For ephemeral CI runners. |
-| `passphrase-env` | `SIGMUND_BC_PASSPHRASE` | Environment variable name containing the passphrase. If not set, falls back to interactive prompt. |
+| `signing-key-env` | `SIGMUND_BC_SIGNING_KEY` | Environment variable name containing the ASCII-armored private key. For ephemeral CI runners. The default variable may be unset; a variable named here that is not set is an error |
+| `passphrase-env` | `SIGMUND_BC_PASSPHRASE` | Environment variable name containing the passphrase. When the default variable is not set, Sigmund falls back to an interactive prompt; a variable named here that is not set is an error |
 | `cipher-suite` | `ed25519` | Algorithm `sigmund keygen` generates when `--cipher-suite` is not given (see supported values below) |
 
 **Supported cipher suites (BC):**
@@ -735,7 +735,7 @@ generate them with [SQ](#sq-sequoia).
 **Passphrase resolution order:**
 
 1. Explicit `PassphraseProvider` via API (`Sigmund.Builder.bcPassphraseProvider()`)
-2. Environment variable specified by `passphrase-env` setting
+2. Environment variable specified by `passphrase-env` setting — an error when a variable named there is not set
 3. Interactive console prompt (if a terminal is available)
 4. No passphrase (works only for unencrypted keys)
 
@@ -794,7 +794,7 @@ Configured in the top-level `tools.gpg` section.
 | `executable` | `gpg` | Path to the `gpg` executable (if not on `PATH`) |
 | `signing-fingerprint` | `default-key` in `gpg.conf`, else the first secret key | Full fingerprint of the key to sign with, or a list of them to sign with each: 40 hex characters, since gpg signs with v4 keys only (a 64-hex fingerprint is an error). Each is passed to `--local-user`; a primary key's fingerprint signs with its signing subkey |
 | `home` | (system default) | GnuPG home directory (`--homedir` option). Also the default `gnupg-home` of [BC](#bc-bouncycastle), so both tools read the same keyring |
-| `passphrase-env` | `SIGMUND_GPG_PASSPHRASE` | Environment variable name containing the passphrase. If not set, falls back to `gpg-agent`. |
+| `passphrase-env` | `SIGMUND_GPG_PASSPHRASE` | Environment variable name containing the passphrase. When the default variable is not set, gpg falls back to `gpg-agent`; a variable named here that is not set is an error |
 
 **Note:** GPG only supports OpenPGP v4 keys. OpenPGP v6 keys cannot be used with GPG.
 
@@ -815,7 +815,7 @@ Configured in the top-level `tools.sigstore` section. Sigstore uses OIDC-based k
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `staging` | `false` | Use the Sigstore staging instance instead of production. For testing only. |
-| `trusted-root` | (none) | Path to a custom `trusted_root.json` file. When omitted, the root is fetched via TUF from the Sigstore public-good instance. |
+| `trusted-root` | (none) | Path to a custom `trusted_root.json` file, used to verify bundles. When omitted, the root is fetched via TUF from the instance `staging` selects. Signing always uses that instance's Fulcio and Rekor |
 | `interactive` | `false` | Allow interactive OIDC browser login. When `false`, only ambient credentials are used: the `SIGSTORE_JAVA_ID_TOKEN` environment variable (if set), then GitHub Actions OIDC. Set to `true` for desktop signing. |
 
 The Sigstore tool is pure Java (provided by the `sigmund-sigstore` module) and does not require any external CLI binary. It is ServiceLoader-discovered — adding the module to the classpath is sufficient.
