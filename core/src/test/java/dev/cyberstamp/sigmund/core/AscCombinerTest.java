@@ -11,6 +11,7 @@ class AscCombinerTest {
     // These are structurally valid (proper CRC) but cryptographically meaningless
     private static final String ARMORED_BLOCK_1 = createTestBlock1();
     private static final String ARMORED_BLOCK_2 = createTestBlock2();
+    private static final String TWO_BLOCKS = ARMORED_BLOCK_1.stripTrailing() + "\n" + ARMORED_BLOCK_2;
 
     private static String createTestBlock1() {
         // Create a small test packet with mock data
@@ -30,31 +31,11 @@ class AscCombinerTest {
         return AscCombiner.armor(testData);
     }
 
-    // --- SEPARATE_BLOCKS mode (default) ---
-
-    @Test
-    void separateBlocksPreservesTwoArmoredBlocks() {
-        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
-
-        assertThat(countOccurrences(combined, "-----BEGIN PGP")).isEqualTo(2);
-        assertThat(countOccurrences(combined, "-----END PGP")).isEqualTo(2);
-    }
-
-    @Test
-    void separateBlocksClassicBlockComesFirst() {
-        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
-
-        assertThat(combined.startsWith(ARMORED_BLOCK_1.stripTrailing()))
-                .as("Combined output should start with the classic block").isTrue();
-    }
-
     // --- extractBlock ---
 
     @Test
     void extractBlockReturnsFirstBlock() {
-        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
-
-        String first = AscCombiner.extractBlock(combined, 0);
+        String first = AscCombiner.extractBlock(TWO_BLOCKS, 0);
         assertThat(first).isNotNull();
         assertThat(countOccurrences(first, "-----BEGIN PGP")).isEqualTo(1);
         assertThat(AscCombiner.dearmor(first)).isEqualTo(AscCombiner.dearmor(ARMORED_BLOCK_1));
@@ -62,9 +43,7 @@ class AscCombinerTest {
 
     @Test
     void extractBlockReturnsSecondBlock() {
-        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
-
-        String second = AscCombiner.extractBlock(combined, 1);
+        String second = AscCombiner.extractBlock(TWO_BLOCKS, 1);
         assertThat(second).isNotNull();
         assertThat(countOccurrences(second, "-----BEGIN PGP")).isEqualTo(1);
         assertThat(AscCombiner.dearmor(second)).isEqualTo(AscCombiner.dearmor(ARMORED_BLOCK_2));
@@ -72,9 +51,7 @@ class AscCombinerTest {
 
     @Test
     void extractBlockReturnsNullForOutOfRange() {
-        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
-
-        assertThat(AscCombiner.extractBlock(combined, 2)).isNull();
+        assertThat(AscCombiner.extractBlock(TWO_BLOCKS, 2)).isNull();
     }
 
     @Test
@@ -96,8 +73,7 @@ class AscCombinerTest {
 
     @Test
     void extractAllBlocksTwoBlocks() {
-        String combined = AscCombiner.combine(ARMORED_BLOCK_1, ARMORED_BLOCK_2);
-        var blocks = AscCombiner.extractAllBlocks(combined);
+        var blocks = AscCombiner.extractAllBlocks(TWO_BLOCKS);
         assertThat(blocks.size()).isEqualTo(2);
         assertThat(AscCombiner.dearmor(blocks.get(0))).isEqualTo(AscCombiner.dearmor(ARMORED_BLOCK_1));
         assertThat(AscCombiner.dearmor(blocks.get(1))).isEqualTo(AscCombiner.dearmor(ARMORED_BLOCK_2));

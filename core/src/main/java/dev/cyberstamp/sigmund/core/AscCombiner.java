@@ -14,11 +14,10 @@ import org.bouncycastle.bcpg.ArmoredOutputStream;
  * Utility class for manipulating ASCII-armored OpenPGP data.
  * <p>
  * This class provides methods to dearmor (strip ASCII armor from) OpenPGP blocks,
- * armor (wrap in ASCII armor) raw OpenPGP packets, combine two armored blocks
- * into a single file, and extract individual blocks from a combined file.
- * <p>
- * This is particularly useful for combining classical and post-quantum signatures
- * into a single .asc file with two separate armored blocks.
+ * armor (wrap in ASCII armor) raw OpenPGP packets, extract individual blocks from a file
+ * holding several, and read a signature packet's version and algorithm. A hybrid .asc holds a
+ * classical and a post-quantum signature as separate armored blocks;
+ * {@link OpenPgpSignatureFormat#combine} writes it.
  */
 final class AscCombiner {
 
@@ -107,24 +106,6 @@ final class AscCombiner {
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to armor PGP packets", e);
         }
-    }
-
-    /**
-     * Combines two ASCII-armored OpenPGP blocks into a single file as two
-     * separate armored blocks (classic first, PQC second).
-     * <p>
-     * This format is compatible with Maven Central and other verifiers that
-     * only read the first armored block.
-     *
-     * @param armoredClassic the first ASCII-armored block (typically a classical signature)
-     * @param armoredPqc the second ASCII-armored block (typically a PQC signature)
-     * @return the combined result
-     * @throws IllegalArgumentException if either input is null or empty
-     */
-    public static String combine(String armoredClassic, String armoredPqc) {
-        assertNotEmpty(armoredClassic, "First armored input");
-        assertNotEmpty(armoredPqc, "Second armored input");
-        return armoredClassic.stripTrailing() + "\n" + armoredPqc.stripTrailing() + "\n";
     }
 
     /**
