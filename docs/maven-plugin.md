@@ -56,7 +56,7 @@ The Sigmund Maven plugin provides goals for signing artifacts and verifying depe
 
 ## Enabling Sigstore Support
 
-The Maven plugin does not include Sigstore support by default. To enable it, add `sigmund-sigstore` as a plugin dependency, at the plugin's own version — one property keeps the two in step:
+The Maven plugin does not include Sigstore support by default, so a build that signs and verifies only OpenPGP does not pull in sigstore-java and its dependencies. To enable it, add `sigmund-sigstore` as a plugin dependency, at the plugin's own version — one property keeps the two in step:
 
 ```xml
 <properties>

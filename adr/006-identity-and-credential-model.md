@@ -2,10 +2,7 @@
 
 ## Status
 
-Proposed. Revised 2026-10-25: bootstrap names a signer by the address the
-directory verified and trusts the directory in the generated file. Revised
-2026-10-24: key rotation is recorded in the policy rather than
-in stored binding history, and `pgp4`/`pgp6` accept a list of fingerprints.
+Accepted.
 
 ## Context
 
@@ -294,8 +291,8 @@ another keyserver, or from the evidence.
   already satisfies the clause. A signer carrying fingerprints and an email
   stays offline for the keys already pinned, and only a new key costs a lookup.
 - **A binding is current state and proves the identity only while the directory
-  serves it.** Answers are cached under the key-freshness TTL (P4.6) to spare
-  the network, never as history: a cached answer means what a fresh one would,
+  serves it.** Answers are cached for the run to spare the network, never as
+  history: a cached answer means what a fresh one would,
   and an address the directory no longer serves for a key stops covering that
   key, which also lets an owner withdraw an address.
 - **Offline with no cached answer**, an identity requirement is
@@ -374,15 +371,25 @@ directory, say — happens at load, where the parser knows the kind.
 
 ### Key-material provenance
 
-Every key records the source that supplied it — directory, keyserver URL, local
-store, GnuPG keyring — and every claim carries it in its `TrustRootRef`.
-Provenance is recorded always and consulted only for identities: a hostile
-source cannot forge a fingerprint match, because the signature proves the key,
-but it can serve any UID. The key store records the keyserver that supplied each
-key in the same step that stores it (`BcKeyStore.addFetched`). The
-`KeyserverFetcher` still prefers a keyserver copy that carries UIDs, so reports can show
-who a key claims to belong to: with UIDs never matched, that preference affects
-display text only and cannot widen acceptance.
+Every key records the source that supplied it — keyserver URLs, local store, GnuPG keyring —
+and every claim carries it in its `TrustRootRef`. Provenance is recorded always and consulted
+only for display: a hostile source cannot forge a fingerprint match, because the signature
+proves the key, but it can serve any UID.
+
+**Key sources are apart from identity trust.** Every configured keyserver is asked for a
+missing key, and the copies of the asked key's own certificate are merged into one, so a
+revocation or self-signature any source carries counts and no source can hide what another
+serves. A merged packet changes an outcome only when it verifies against the key's primary
+key, so a keyserver can add nothing that the key holder did not sign. The default sources are
+keys.openpgp.org and keyserver.ubuntu.com, which serves the user IDs keys.openpgp.org strips;
+`issuers` is unaffected, since a keyserver's copy never becomes an identity. A displayed user ID
+is labelled with who vouches for it — a listed directory whose own copy carried it, or
+`(unverified)` — for display only.
+
+Rejected: **asking keyservers in order and taking the first copy**, which let a stripped copy
+from one source hide the user IDs, and with them the bindings, that another served; and
+**preferring the copy that carries UIDs**, which still let one source hide another's
+revocation.
 
 ### Consequence for §5.3
 
@@ -418,13 +425,6 @@ Recorded so the analysis is not lost, not scheduled:
 
 ## Consequences
 
-**Removed:** `EmailCredential`, and UID text as a matching input unless served
-by a named directory.
-
-**Renamed and reshaped:** `FingerprintCredential` → `KeyCredential`;
-`SigstoreCredential` → `IdentityCredential` with an attribute map; `Credential`
-becomes a sealed interface over the two.
-
 **Config:** a top-level `issuers` list, empty by default, as the default for
 identity entries; `identities` on a signer, each entry an optional `issuer`,
 trusted for that entry only, and its attributes; `email:` as shorthand.
@@ -439,7 +439,4 @@ address no longer satisfies anything; a publisher's new key is accepted without
 a policy change once they verify it at the directory; `sigmund inspect-signer`
 reports the source that supplied each key.
 
-**Ordering:** implemented in roadmap phase P2, with the key cache and
-freshness landing in P4.6 and update pinning rotated keys in P2.19. ADR-007
-defines requirements, policy schema and enforcement on top of these
-credentials.
+ADR-007 defines requirements, policy schema and enforcement on top of these credentials.
