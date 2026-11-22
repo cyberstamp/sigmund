@@ -460,13 +460,13 @@ A post-quantum signature is far larger than a classic one. Measured with sq 1.4.
 
 | Key | Signature | In the `.asc` (armored) | Public certificate (armored) |
 |---|---|---|---|
-| sq `mldsa87-ed448` (v6, the default PQC suite) | 4,832 bytes | 6,604 bytes | 59,083 bytes |
+| sq `mldsa87-ed448` (v6, the suite [Generating a PQC Key](#generating-a-pqc-key) uses) | 4,832 bytes | 6,604 bytes | 59,083 bytes |
 | sq `mldsa65-ed25519` (v6) | 3,464 bytes | 4,752 bytes | 42,854 bytes |
 | sq `cv25519` (v4) | 191 bytes | 325 bytes | 2,342 bytes |
 | bc `ed25519` (v4, `keygen`'s default) | 119 bytes | 248 bytes | 981 bytes |
 | bc `ed448` (v6) | 205 bytes | 366 bytes | 2,411 bytes |
 
-A composite signature carries both of its algorithms: an ML-DSA-87 signature (4,627 bytes) and an Ed448 one (114 bytes), with the packet around them. Armoring adds about a third. A hybrid `.asc` holds the classic block and the post-quantum one, so with a bc Ed25519 key and the default PQC suite it is 248 + 6,604 = 6,852 bytes.
+A composite signature carries both of its algorithms: an ML-DSA-87 signature (4,627 bytes) and an Ed448 one (114 bytes), with the packet around them. Armoring adds about a third. A hybrid `.asc` holds the classic block and the post-quantum one, so with a bc Ed25519 key and `mldsa87-ed448` it is 248 + 6,604 = 6,852 bytes.
 
 **Per artifact:** about 6.6 KB for `mldsa87-ed448`, 4.8 KB for `mldsa65-ed25519`, on top of the classic signature.
 

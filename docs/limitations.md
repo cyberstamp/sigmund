@@ -29,7 +29,7 @@ A v4 Ed25519 key is written in the legacy EdDSA encoding: GnuPG 2.4 reads Ed2551
 
 ## Not every BC cipher suite has both key versions
 
-- **ECDSA** (`nistp256`, `nistp384`, `nistp521`) keys are v4 only. Bouncy Castle 1.85's high-level API does not generate ECDSA keys, so Sigmund uses a JCA-based fallback that produces v4 keys; `--credential-type pgp6` with these suites is an error.
+- **ECDSA** (`nistp256`, `nistp384`, `nistp521`) keys are v4 only. Bouncy Castle 1.86's high-level API does not generate ECDSA keys, so Sigmund uses a JCA-based fallback that produces v4 keys; `--credential-type pgp6` with these suites is an error.
 - **Ed448** keys are v6 only: GnuPG reads no v4 Ed448 key, so a v4 one would serve no tool a v4 key is for. `--cipher-suite ed448` without `--credential-type pgp6` is an error.
 - **Ed25519** and **RSA** (`rsa4096`) come in both versions.
 
@@ -93,7 +93,8 @@ BC the key is not bound, and BC reports `INDETERMINATE` with `KEY_UNAVAILABLE` w
 backends report `VERIFIED`. It is never reported as `FAILED`
 ([ADR-009](../adr/009-an-unbound-key-is-never-failed.md)). When `sq` or `gpg` holds the key in its
 own store (`sq cert import`, `gpg --import`), verification falls through to it and the signature
-verifies; a key Sigmund fetches from a keyserver reaches only BC.
+verifies. A key fetched from a keyserver reaches only BC, unless `import-to-keyring: true` lets
+`gpg` fetch it into its keyring too.
 
 ## keys.openpgp.org alone cannot serve keys without a verified address
 
@@ -166,7 +167,7 @@ Broad ecosystem adoption of PQC in OpenPGP is still early. Sequoia `sq` 1.4.0 in
 **Current state of the ecosystem:**
 
 - **GnuPG** follows the LibrePGP specification, not RFC 9580/9980, and does not support v6 keys or PQC signatures
-- **keys.openpgp.org** rejects v6 keys — public keyservers do not yet accept PQC keys
+- **keys.openpgp.org** rejects v6 keys, so it serves no PQC key
 - **RHEL 10.1+** and recent Fedora releases ship PQC-enabled Sequoia as a system package
 - **Debian** is unlikely to ship `sq` 1.4.0 before July 2027 due to packaging timelines
 
@@ -196,8 +197,8 @@ PQC signatures are much larger than classical ones. Measured as they appear in a
 |-----|----------------------------|
 | Ed25519 (classical, v4) | 248–325 bytes |
 | ML-DSA-65+Ed25519 | 4,752 bytes |
-| ML-DSA-87+Ed448 (default) | 6,604 bytes |
+| ML-DSA-87+Ed448 | 6,604 bytes |
 
-For a typical Maven module with 4 artifacts (JAR, POM, javadoc, sources) signed with a classical and the default PQC key, expect about 27 KB of `.asc` data, against about 1 KB classical-only. This is small next to the artifacts themselves. See [PQC Signature Sizes](signing.md#pqc-signature-sizes) for how the figures were measured.
+For a typical Maven module with 4 artifacts (JAR, POM, javadoc, sources) signed with a classical and an ML-DSA-87+Ed448 key, expect about 27 KB of `.asc` data, against about 1 KB classical-only. This is small next to the artifacts themselves. See [PQC Signature Sizes](signing.md#pqc-signature-sizes) for how the figures were measured.
 
 Hybrid `.asc` files allow gradual PQC adoption — classical-only tools ignore the PQC signature block, and the size increase only affects the signature files, not the artifacts themselves.
