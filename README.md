@@ -141,6 +141,7 @@ Run `mvn sigmund:sign` to sign with both — classic signature first, PQC signat
 
 ## Documentation
 
+- [How Sigmund Works](docs/how-it-works.md) — The model: evidence, claims, credentials, policy and outcomes
 - [Getting Started](docs/getting-started.md) — Quick start guide for dependency trust verification
 - [Migration from maven-gpg-plugin](docs/migrating-from-gpg-plugin.md) — How to migrate from maven-gpg-plugin
 - [Migration from sign-maven-plugin](docs/migrating-from-sign-maven-plugin.md) — How to migrate from sign-maven-plugin (s4u)

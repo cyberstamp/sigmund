@@ -6,18 +6,26 @@ trust?** A valid signature alone does not answer it — anyone can sign anything
 Sigmund uses to answer the question, and how signing feeds it. The other pages explain each part
 in detail.
 
-## Verification in one picture
+## Verification in two pictures
+
+Verification has two halves. The first checks what the evidence proves, whatever the policy says:
 
 ```mermaid
 flowchart LR
-  E[Evidence<br/>.asc, .sigstore.json] --> C[Claims]
-  C -->|a tool checks each| R[Claim results<br/>VERIFIED / FAILED / INDETERMINATE]
-  R -->|verified claims prove| K[Credentials<br/>key fingerprints, identities]
-  K --> M{Rule for the artifact}
-  P[Policy<br/>signers + rules] --> M
-  M --> O[Outcome<br/>SATISFIED, UNSATISFIED, ...]
-  O --> F{Enforcement}
-  F --> B[fail / warn / ignore]
+  E["Evidence<br/>.asc, .sigstore.json"] --> C[Claims]
+  C -->|a tool checks each| R["Claim results<br/>VERIFIED, FAILED,<br/>INDETERMINATE"]
+  R -->|verified claims prove| K["Credentials<br/>fingerprints, identities"]
+```
+
+The second judges that against what you expect for the artifact, and decides what the result does:
+
+```mermaid
+flowchart LR
+  K["Credentials"] --> M{"Rule for<br/>the artifact"}
+  P["Policy<br/>signers, rules"] --> M
+  M --> O["Outcome<br/>SATISFIED, UNSATISFIED, …"]
+  O --> F{"Enforcement"}
+  F --> B["fail, warn<br/>or ignore"]
 ```
 
 ### Evidence and claims
@@ -38,8 +46,9 @@ one set of rules and one list of accepted algorithms, so an outcome never depend
 installed. A claim ends up:
 
 - **`VERIFIED`** — the signature is valid;
-- **`FAILED`** — it must not be trusted: the bytes do not match, or the key had expired or was
-  revoked. This is the **attack signal**, and nothing can tolerate it;
+- **`FAILED`** — it must not be trusted: the bytes do not match, the key had expired when it
+  signed, or the key was revoked — as compromised or with no reason given, at any time; retired
+  or superseded, before it signed. This is the **attack signal**, and nothing can tolerate it;
 - **`INDETERMINATE`** — nothing was established either way, with a reason: the key could not be
   found, the algorithm is not accepted, the tool did not run.
 

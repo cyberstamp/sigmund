@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide walks you through your first experience with Sigmund — discovering who signed your dependencies and enforcing trust policies based on signer identity.
+This guide walks you through your first experience with Sigmund — discovering who signed your dependencies and enforcing trust policies based on signer identity. For the model behind it in one page, see [How Sigmund Works](how-it-works.md).
 
 ## Contents
 
