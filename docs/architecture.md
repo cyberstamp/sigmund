@@ -1,10 +1,10 @@
 # Architecture
 
-This document describes how Sigmund works internally — the three-tool system, pipeline architecture, key management, interoperability, and identity verification.
+This document describes how Sigmund is built — its tools, key stores, the signing and verification pipelines, and the types behind identity verification. For the model these implement — evidence, claims, credentials, policy and outcomes — read [How Sigmund Works](how-it-works.md) first.
 
 ## Contents
 
-- [Three-Tool System](#three-tool-system)
+- [Tools](#tools)
 - [Toolchain and Routing](#toolchain-and-routing)
 - [OpenPGP Key Structure](#openpgp-key-structure)
 - [Key Management](#key-management)
@@ -14,9 +14,6 @@ This document describes how Sigmund works internally — the three-tool system, 
   - [Passphrase Protection](#passphrase-protection)
 - [Interoperability Matrix](#interoperability-matrix)
 - [Signing Pipeline](#signing-pipeline)
-  - [Stage 1: Classic Signature](#stage-1-classic-signature)
-  - [Stage 2: PQC Signature (Optional)](#stage-2-pqc-signature-optional)
-  - [Stage 3: Combine](#stage-3-combine)
 - [Verification Pipeline](#verification-pipeline)
   - [BC Verification](#bc-verification)
   - [sq Verification (v4 and v6 packets)](#sq-verification-v4-and-v6-packets)
@@ -27,25 +24,21 @@ This document describes how Sigmund works internally — the three-tool system, 
   - [Layer 1: Identity Verification](#layer-1-identity-verification)
   - [Policy Model](#policy-model)
   - [Credential Types and Matching](#credential-types-and-matching)
-  - [Artifact Outcomes](#artifact-outcomes)
-- [Supported Cipher Suites](#supported-cipher-suites)
-  - [Phase 1 (Implemented)](#phase-1-implemented)
-  - [Phase 2 (Planned for BC)](#phase-2-planned-for-bc)
-  - [Sequoia sq PQC Support](#sequoia-sq-pqc-support)
+- [Cipher Suites](#cipher-suites)
 - [Project Structure](#project-structure)
 
-## Three-Tool System
+## Tools
 
-Sigmund supports three OpenPGP backends, each with distinct capabilities:
+Sigmund has three OpenPGP backends and a Sigstore one:
 
 | Tool | Availability | v4 Support | v6 Support | PQC Support | Process Deps |
 |------|--------------|------------|------------|-------------|--------------|
-| **BC** | Always (pure Java) | Sign, verify | Sign, verify (classic algos) | Phase 2 planned | None |
-| **sq** | Optional | Verify | Sign, verify | Sign, verify (RFC 9980) | Sequoia CLI |
+| **BC** | Always (pure Java) | Sign, verify | Sign, verify (classic algorithms) | None (planned) | None |
+| **sq** | Optional | Sign, verify | Sign, verify | Sign, verify (RFC 9980) | Sequoia CLI |
 | **gpg** | Optional | Sign, verify | None | None | GnuPG CLI |
 | **sigstore** | Optional (pure Java) | N/A | N/A | N/A | None |
 
-**BC (Bouncy Castle)** is the default first-choice tool. It requires no external process dependencies and works on any JVM. BC generates v4 keys by default, the version keyservers serve and GnuPG reads, and v6 keys on request (Ed25519, Ed448 and RSA, through Bouncy Castle 1.85's `BcOpenPGPApi`); ECDSA keys (P-256, P-384, P-521) use a JCA-based fallback and are v4 only. See [Known Limitations](limitations.md#not-every-bc-cipher-suite-has-both-key-versions).
+**BC (Bouncy Castle)** is the default first-choice tool. It requires no external process dependencies and works on any JVM. BC generates v4 keys by default, the version keyservers serve and GnuPG reads, and v6 keys on request (Ed25519, Ed448 and RSA, through Bouncy Castle 1.86's `BcOpenPGPApi`); ECDSA keys (P-256, P-384, P-521) use a JCA-based fallback and are v4 only. See [Known Limitations](limitations.md#not-every-bc-cipher-suite-has-both-key-versions).
 
 **sq (Sequoia)** is used for PQC hybrid signing when available. Version 1.4.0+ implements RFC 9980 and can generate and verify ML-DSA composite signatures.
 
@@ -103,7 +96,7 @@ Key flags determine which key in the ring is used for each operation. Sigmund's 
 
 ### BC Key Store
 
-BC manages keys across three sources, searched in order:
+BC manages keys across four sources:
 
 1. **GnuPG pubring** (`~/.gnupg/pubring.kbx` or legacy `pubring.gpg`) — read-only. BC can read public keys from GnuPG's keyring for verification. The modern keybox format (`pubring.kbx`, GnuPG 2.1+) is tried first.
 
@@ -128,11 +121,11 @@ Responsibilities are split three ways:
 
 ### Sequoia Keystore
 
-Sequoia manages its own keystore controlled by the `SEQUOIA_HOME` environment variable (defaults to `~/.local/share/sequoia`). Keys generated with `sq key generate` are stored here and used for signing with the `sq` tool.
+Sequoia manages its own keystore, in `tools.sq.home` when set, else where the `SEQUOIA_HOME` environment variable points, else `sq`'s default (`~/.local/share/sequoia` on Linux). Keys generated with `sq key generate` are stored here and used for signing with the `sq` tool.
 
 ### GnuPG Keyring
 
-GnuPG uses the standard keyring at `~/.gnupg/`. Keys managed by `gpg` are stored here.
+GnuPG uses its keyring in `tools.gpg.home` when set, else its own default (`~/.gnupg/`). Keys managed by `gpg` are stored here.
 
 ### Passphrase Protection
 
@@ -140,7 +133,7 @@ BC private keys can be encrypted at rest using AES-256 AEAD (OCB mode) with Argo
 
 Passphrase resolution order:
 1. Explicit `PassphraseProvider` via `Sigmund.Builder.bcPassphraseProvider()` (programmatic API)
-2. `passphrase-env` setting (env var name, default `SIGMUND_BC_PASSPHRASE`)
+2. `passphrase-env` setting (env var name, default `SIGMUND_BC_PASSPHRASE`; a variable named there that is not set is an error)
 3. Interactive console prompt (if a terminal is available)
 4. No passphrase (works only for unencrypted keys)
 
@@ -153,38 +146,33 @@ Private key files in `bc-private/` are created with owner-only (600) file permis
 | **BC v6 keys** | Yes | Yes | No (v6 not supported) |
 | **BC v4 keys** | Yes | Yes | Yes |
 | **sq v6 classic** | Yes | Yes | No |
-| **sq v6 PQC** | Phase 2 | Yes | No |
+| **sq v6 PQC** | No (planned) | Yes | No |
 | **gpg v4** | Yes | Yes | Yes |
 
 **BC → sq interop** works for v6 keys because both support RFC 9580 (OpenPGP v6). BC-generated public certs are written to the shared cert-d so `sq` can see them.
 
 **BC → gpg interop** works only for v4 keys. BC can read GPG's `pubring.kbx` (or legacy `pubring.gpg`) for verification. BC v6 keys cannot be imported into GPG because GPG follows LibrePGP and does not support v6.
 
-**sq → BC interop** works for v6 classic algorithm signatures (Ed25519, Ed448, RSA). PQC signatures (algorithm IDs 30-36) cannot be parsed by BC yet (Phase 2).
+**sq → BC interop** works for v6 classic algorithm signatures (Ed25519, Ed448, RSA). PQC signatures (algorithm IDs 30-36) cannot be parsed by BC yet ([Known Limitations](limitations.md#pqc-signature-verification-requires-sequoia)).
 
 ## Signing Pipeline
-
-The signing flow has three stages:
 
 ```
 artifact.jar
     |
-    +-- bc / gpg --detach-sign --> classic.asc  (v4 or v6 signature packet)
+    +-- SigningPlan: the keys of every signing tool, narrowed to the requested credential types
     |
-    +-- sq sign --signature-file --> pqc.sig    (v6 PQC signature packet)
+    +-- for each planned key, in tool order:
+    |     bc     PGPSignatureGenerator                      --> temporary .asc (v4 or v6 packet)
+    |     gpg    gpg --detach-sign --local-user <fpr>       --> temporary .asc (v4 packet)
+    |     sq     sq sign --signer <fpr> --signature-file    --> temporary .asc (v4 or v6 packet)
+    |     sigstore  Fulcio certificate + Rekor entry        --> temporary .sigstore.json
     |
-    +-- OpenPgpSignatureFormat.combine() -> artifact.jar.asc
+    +-- SignerBindingCheck: each signature must prove signing.signer, when set
+    |
+    +-- per format: OpenPGP signatures combined into artifact.jar.asc, v4 blocks first;
+        a Sigstore bundle written as artifact.jar.sigstore.json
 ```
-
-### Stage 1: Classic Signature
-
-The signing tool (BC by default, or GPG if configured) produces a detached ASCII-armored signature. BC uses Bouncy Castle's `PGPSignatureGenerator` to create the signature in pure Java. GPG invokes the external `gpg` process:
-
-```bash
-gpg --batch --yes --armor --detach-sign [--local-user <keyId>] --output <sig> <artifact>
-```
-
-The signature version (v4 or v6) is determined by the key version. BC generates v6 signatures for v6 keys and v4 signatures for v4 keys. GPG always produces v4 signatures.
 
 The `Signer` class orchestrates the signing flow:
 1. Work out the `SigningPlan` when the `Signer` is created: each tool's keys (`signingInfo()`;
@@ -201,30 +189,34 @@ The `Signer` class orchestrates the signing flow:
 6. For non-combinable → write each as a separate file
 7. Return `SigningOutput` with metadata per file
 
-### Stage 2: PQC Signature (Optional)
-
-If PQC signing is configured and `sq` is available, `SqRunner` invokes Sequoia `sq` as an external process:
+Each tool signs with the key its settings select. BC signs in-process with Bouncy Castle; `gpg`
+and `sq` run as external processes:
 
 ```bash
-sq --overwrite sign --signer <fingerprint> --signature-file <sig> <artifact>
+gpg --batch --yes --armor --detach-sign [--pinentry-mode loopback --passphrase-fd 0] \
+    [--local-user <fingerprint>] --output <sig> <artifact>
+sq sign --signer <fingerprint> --signature-file <sig> <artifact>
 ```
 
-Sequoia produces a detached ASCII-armored signature containing a v6 OpenPGP signature packet with the configured PQC hybrid cipher suite (ML-DSA-87+Ed448 by default) per RFC 9980.
+The signature packet's version follows the key's: a v4 key gives a v4 signature, a v6 key a v6
+one, post-quantum keys included. GnuPG signs with v4 keys only.
 
-### Stage 3: Combine
-
-`OpenPgpSignatureFormat` concatenates the signatures into a single `.asc` file as separate armored blocks, classic first:
+`OpenPgpSignatureFormat.combine` concatenates a file's OpenPGP signatures into one `.asc`, one
+armored block each, ordered by packet version — v4 before v6, the planned order kept within a
+version:
 
 ```
 -----BEGIN PGP SIGNATURE-----
-(classic signature — exactly as the tool produced it)
+(v4 signature — exactly as its tool produced it)
 -----END PGP SIGNATURE-----
 -----BEGIN PGP SIGNATURE-----
-(PQC signature — exactly as Sequoia produced it)
+(v6 signature, such as a PQC one — exactly as its tool produced it)
 -----END PGP SIGNATURE-----
 ```
 
-Neither signature is re-armored — each is preserved byte-for-byte as its respective tool produced it. Verifiers that parse only the first armored block — Maven Central, `sq verify` — see only the classic signature and succeed. Sigmund splits the file into its blocks and verifies each as its own claim, routing the v6 block to `sq`.
+No signature is re-armored. Verifiers that parse only the first armored block — Maven Central,
+`sq verify` — see the classic signature. Sigmund splits the file into its blocks and verifies
+each as its own claim.
 
 ## Verification Pipeline
 
@@ -408,50 +400,16 @@ for (SignerIdentity signer : signers) {
 separate from the roll-up on purpose: deriving an outcome needs to know whether requirements
 were met and which claims met them, not what a requirement is.
 
-### Artifact Outcomes
+The outcomes an artifact can get, and what each means, are in
+[How Sigmund Works](how-it-works.md#outcomes) and
+[Configuration](configuration.md#outcomes). `ArtifactOutcome` is the type that holds them.
 
-- `SATISFIED` — the claims found meet what the policy requires of this artifact
-- `UNSATISFIED` — verification succeeded, but not by the signers the rule requires
-- `FAILED` — a signature does not match the artifact, or its key was revoked or had expired
-  when it signed, or was revoked as compromised or with no reason given, at any time; an attack
-  signal, and never tolerated
-- `NO_CLAIM` — no evidence was found at all
-- `INDETERMINATE` — nothing could be established either way, with a reason saying why
-- `NOT_CONFIGURED` — no rule applies to this artifact
+## Cipher Suites
 
-`NO_CLAIM` replaces the older `UNSIGNED`, which stops being accurate once provenance exists:
-an artifact can be unsigned but attested, or signed but unattested. Separating `FAILED` from
-`INDETERMINATE` is what keeps "checked and rejected" apart from "could not check".
-
-## Supported Cipher Suites
-
-### Phase 1 (Implemented)
-
-Classic algorithms supported by BC:
-- `ed25519` — EdDSA with Ed25519 curve (default)
-- `ed448` — EdDSA with Ed448 curve
-- `rsa4096` — RSA with 4096-bit modulus
-- `nistp256` — ECDSA with P-256 curve
-- `nistp384` — ECDSA with P-384 curve
-- `nistp521` — ECDSA with P-521 curve
-
-### Phase 2 (Planned for BC)
-
-PQC composite algorithms:
-- `mldsa87-ed448` — ML-DSA-87 + Ed448 hybrid
-- `mldsa65-ed25519` — ML-DSA-65 + Ed25519 hybrid
-
-### Sequoia sq PQC Support
-
-Sequoia sq 1.4.0+ supports:
-- `mldsa87-ed448` — ML-DSA-87 + Ed448 (default)
-- `mldsa65-ed25519` — ML-DSA-65 + Ed25519
-
-PQC algorithm IDs (RFC 9980):
-- 30: ML-DSA-65+Ed25519
-- 31: ML-DSA-87+Ed448
-- 32-34: SLH-DSA variants
-- 35-36: ML-KEM composites
+The key algorithms BC generates are listed with `tools.bc.cipher-suite` in
+[Configuration](configuration.md#bc-bouncycastle); the post-quantum suites `sq` generates are
+listed with `tools.sq` in [Configuration](configuration.md#sq-sequoia). Post-quantum algorithm IDs
+are in [Known Limitations](limitations.md#pqc-algorithm-id-range).
 
 ## Project Structure
 
