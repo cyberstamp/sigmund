@@ -144,8 +144,8 @@ Rules the code relies on; breaking one is a defect even if tests pass.
 ## Design Process
 
 For non-trivial changes:
-1. Write an ADR in `adr/` for an architectural decision; one that changes an accepted decision is a
-   new ADR
+1. Write an ADR in `adr/` for a foundational decision (see below); one that changes an accepted
+   decision is a new ADR
 2. Create a design spec capturing requirements and approach
 3. Break implementation into tasks with clear boundaries
 4. Each task should be independently testable
@@ -156,6 +156,10 @@ For non-trivial changes:
 An ADR records one decision: what was decided, why, and what it was chosen over. How the system
 works today belongs in `docs/` and the javadoc, not in an ADR — an ADR that describes the code
 goes stale with every change, and the decision it holds gets lost among the description.
+
+Only a foundational decision gets one: a choice with real alternatives that other code rests on
+and that is expected to last. The reason for a behaviour goes beside it in `docs/`; the
+discussion that led to it stays in its issue or pull request.
 
 - **Sections:** Status; Context — the problem and the forces at the time; Decision — stated so a
   later ADR can amend or reverse it; Alternatives — each option rejected and why; Consequences —

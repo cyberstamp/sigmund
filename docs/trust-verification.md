@@ -62,7 +62,7 @@ For example, you might trust artifacts from `io.quarkus.*` when signed by that p
 
 ### How It Works
 
-Sigmund's `verify` goal:
+[How Sigmund Works](how-it-works.md) explains the model in one page. Sigmund's `verify` goal:
 1. Resolves your project's dependencies
 2. Downloads each artifact's signature files — `.asc`, and `.sigstore.json` bundles when the
    `sigmund-sigstore` module is on the plugin's classpath ([Enabling Sigstore Support](maven-plugin.md#enabling-sigstore-support)) — from the artifact's repositories

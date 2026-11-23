@@ -6,7 +6,7 @@ A Maven plugin and CLI for signing artifacts, verifying signatures, and enforcin
 
 Sigmund is a signing and trust verification tool for Maven. It verifies who signed each dependency against a policy of trusted signers — keys, verified email addresses or CI workflow identities, across OpenPGP and Sigstore — and can generate that policy from the signatures your dependencies already carry, giving you visibility into and control over your software supply chain.
 
-Sigmund is also a drop-in replacement for `maven-gpg-plugin` and `sigstore-maven-plugin`. It supports hybrid post-quantum cryptography (PQC) — `.asc` files containing both a classic signature (RSA/EdDSA) and a PQC v6 signature (ML-DSA-87+Ed448 via Sequoia, RFC 9980). A pure-Java Bouncy Castle backend handles classic OpenPGP with zero external tool dependencies. The Sigstore backend provides keyless signing via OIDC — no long-lived keys to manage — producing `.sigstore.json` bundles alongside or instead of OpenPGP signatures.
+Sigmund also signs, and can take the place of `maven-gpg-plugin`, `sign-maven-plugin` or `sigstore-maven-plugin` — the [migration guides](#documentation) map their settings. It supports hybrid post-quantum cryptography (PQC) — `.asc` files containing both a classic signature (RSA/EdDSA) and a PQC v6 signature (ML-DSA-87+Ed448 via Sequoia, RFC 9980). A pure-Java Bouncy Castle backend handles classic OpenPGP with zero external tool dependencies. The Sigstore backend provides keyless signing via OIDC — no long-lived keys to manage — producing `.sigstore.json` bundles alongside or instead of OpenPGP signatures.
 
 ## Try It Now
 
@@ -141,6 +141,7 @@ Run `mvn sigmund:sign` to sign with both — classic signature first, PQC signat
 
 ## Documentation
 
+- [How Sigmund Works](docs/how-it-works.md) — The model: evidence, claims, credentials, policy and outcomes
 - [Getting Started](docs/getting-started.md) — Quick start guide for dependency trust verification
 - [Migration from maven-gpg-plugin](docs/migrating-from-gpg-plugin.md) — How to migrate from maven-gpg-plugin
 - [Migration from sign-maven-plugin](docs/migrating-from-sign-maven-plugin.md) — How to migrate from sign-maven-plugin (s4u)

@@ -2,16 +2,7 @@
 
 ## Status
 
-Proposed. Revised 2026-10-11 after a schema design review that settled several
-points the original left open or decided differently: field renames (`targets` →
-`match`, `artifacts` → `artifact-sets`), `claim-set` → `extra-claims` (global
-only), `by-scope` dropped, the enforcement model recast as *policy present
-enforces / zero-config observes*, an explicit catch-all pattern, and issuer
-validation moved wholly to config-load time. The superseded wording is preserved
-in git history; the roadmap decision log is updated alongside the P2 work.
-Revised 2026-10-24 after a configuration ergonomics review: only `rules`
-declares a policy, `defaults` without `rules` is an error, `extra-claims` may
-be set per rule, and a bare `requires` scalar is a one-clause list.
+Accepted.
 
 ## Context
 
@@ -299,15 +290,6 @@ rejected by the schema too.
 
 ## Consequences
 
-**Removed:** `TrustPolicy.expectedSigners` and `isUnsignedAllowed`,
-`DefaultTrustPolicy`, `ListedEvidencePolicy`, `UnlistedEvidencePolicy`,
-`UntrustedPolicy`, and the `trust`, `signature-optional` and `policy` sections.
-
-**Added:** `rules` with `match` and `requires` (`any-of` within a clause),
-`artifact-sets` (renamed from `artifacts`), `defaults`, per-rule enforcement
-overrides, `extra-claims` in `defaults` and per rule; the explicit catch-all `"*"`; a published JSON Schema
-for the document.
-
 **Not added:** `by-scope` enforcement (deferred to the extension); threshold (m-of-n) clauses
 (deferred); attester roles.
 
@@ -335,7 +317,7 @@ verify. User IDs are unverified, so a matching one alone never combines keys —
 otherwise a stranger's key carrying the publisher's address, seen elsewhere in
 the graph, would be accepted wherever the publisher is. Keys that sign together
 under different user IDs stay separate clauses, all required; where one of them
-cannot be checked, the roll-up reports `INDETERMINATE(unsupported-algorithm)`
+cannot be checked, the roll-up reports `INDETERMINATE(UNSUPPORTED_ALGORITHM)`
 rather than `UNSATISFIED` (ADR-005).
 
 **`updateTrustConfig`** adds what the policy does not yet cover — an artifact no
@@ -364,8 +346,3 @@ that artifact carries; a 4-segment pattern that silently matched nothing is now
 an error; an extra verified signature from an unlisted signer, under
 `extra-claims: reject`, is `UNSATISFIED` with the matched-rule reference naming
 the cause.
-
-**Ordering:** implemented in roadmap phase P2 (schema, evaluator, bootstrap) and
-P3 (enforcement, run modes). Downstream doc-sync: the design direction §3.6
-(drop `by-scope`, record the enforce/observe switch), the roadmap P2.6/P2.7/P3.1
-task text, and `configuration.md`/`trust-verification.md` (P2.11).

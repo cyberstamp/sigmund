@@ -2,7 +2,7 @@
 
 This guide covers how to verify artifact signatures using Sigmund. Signature verification confirms that an artifact hasn't been tampered with and was signed by a specific key.
 
-**Note:** This is distinct from trust verification, which additionally checks whether the signing key belongs to someone you trust. For trust verification, see [Trust Verification](trust-verification.md).
+**Note:** This is distinct from trust verification, which additionally checks whether the signing key belongs to someone you trust. For trust verification, see [Trust Verification](trust-verification.md), and for how the two fit together, [How Sigmund Works](how-it-works.md).
 
 ## Contents
 

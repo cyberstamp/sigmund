@@ -1,6 +1,6 @@
 # Migrating from sigstore-maven-plugin
 
-This guide helps you migrate from `sigstore-maven-plugin` (dev.sigstore) to Sigmund's Maven plugin. Both plugins support Sigstore keyless signing via sigstore-java, but Sigmund integrates Sigstore as one backend within a multi-format signing and verification framework — adding identity matching, dependency trust verification, cross-backend credential matching, and OpenPGP+Sigstore hybrid signing in a single build.
+This guide helps you migrate from `sigstore-maven-plugin` (dev.sigstore) to Sigmund's Maven plugin. Both sign keylessly with sigstore-java; Sigmund makes Sigstore one backend among OpenPGP ones, and adds identity checks at signing, bundle and dependency verification, and OpenPGP plus Sigstore signing in one build. The comparison below is against `sigstore-maven-plugin` 2.4.0.
 
 ## Contents
 
@@ -36,14 +36,13 @@ This guide helps you migrate from `sigstore-maven-plugin` (dev.sigstore) to Sigm
 
 ## Why migrate
 
-Sigmund offers everything `sigstore-maven-plugin` does, plus:
+Consider Sigmund when you want, beyond signing:
 
-- **Identity matching** — configure expected Sigstore identities and verify them against signed artifacts. When `subject` + `issuer` are both set, the OIDC token is also validated at signing time before artifacts ship.
+- **Identity checks at signing** — with `signing.signer`, the OIDC token's issuer, and its subject when the signer names one, are checked before Fulcio is asked, and every attribute the signer names is checked on the issued certificate before a signature is written
 - **Signature verification** — verify Sigstore bundles (and OpenPGP signatures) from the same tool
-- **Dependency trust verification** — enforce that dependencies are signed by known trusted parties
-- **Cross-backend identity matching** — a signer configured with an `email` credential matches both OpenPGP (via an address `keys.openpgp.org` verified for the key) and Sigstore (via the Fulcio certificate SAN), from the issuers the policy trusts
-- **Hybrid signing** — produce both `.asc` (OpenPGP) and `.sigstore.json` (Sigstore) in a single `sign` goal execution
-- **Post-quantum cryptography** — add ML-DSA signatures alongside classic OpenPGP and Sigstore
+- **Dependency trust verification** — enforce that dependencies are signed by the signers you name
+- **One identity across formats** — a signer's `email` matches both an OpenPGP key (through an address `keys.openpgp.org` verified for it) and a Sigstore certificate, from the issuers the policy trusts
+- **OpenPGP and Sigstore together** — `.asc` and `.sigstore.json` from one `sign` execution, with post-quantum OpenPGP signatures if you want them
 - **CLI** — sign, verify, and inspect signatures outside Maven
 
 ## Feature comparison
@@ -53,14 +52,15 @@ Sigmund offers everything `sigstore-maven-plugin` does, plus:
 | Sigstore keyless signing | Yes | Yes |
 | `.sigstore.json` bundle output | Yes | Yes |
 | Staging instance support | Yes (`public-staging`) | Yes (`tools.sigstore.staging`) |
-| Identity validation at signing time | No | Yes, when `subject` + `issuer` are configured |
+| Identity checked at signing time | No | Yes, with `signing.signer` |
 | Sigstore bundle verification | No | Yes |
 | OpenPGP signing | No | Yes (GPG, Bouncy Castle, Sequoia) |
 | Hybrid OpenPGP + Sigstore signing | No | Yes |
 | PQC hybrid signing | No | Yes (ML-DSA via Sequoia) |
 | Dependency trust verification | No | Yes |
-| Custom trusted root (air-gapped) | No | Yes (`tools.sigstore.trusted-root`) |
-| Interactive browser OIDC flow | Always enabled | Opt-in (`tools.sigstore.interactive`) |
+| Custom trusted root for verification | — (no verification) | Yes (`tools.sigstore.trusted-root`) |
+| File excludes | Yes (`excludes`) | No |
+| Interactive browser OIDC flow | On, unless `CI=true` | Opt-in (`tools.sigstore.interactive`) |
 | CLI tool | No | Yes |
 | Pure Java (no external CLI) | Yes | Yes (Sigstore backend) |
 
@@ -68,9 +68,8 @@ Sigmund offers everything `sigstore-maven-plugin` does, plus:
 
 | Dimension | sigstore-maven-plugin | sigmund-maven-plugin |
 |-----------|----------------------|----------------------|
-| **OIDC identity validation** | None — accepts whatever identity the OIDC flow returns. A misconfigured CI workflow could sign with an unexpected identity. | Configurable via signer credentials. **Signing time:** `subject` + `issuer` rejects mismatched OIDC tokens before Fulcio is contacted. **Verification time:** other fields (`source-repository-uri`, `build-trigger`, etc.) are matched against the Fulcio certificate. Use `issuer` + `source-repository-uri` for stable CI matching — `subject` includes the git ref and changes per release. |
-| **Browser flow in CI** | Always included — if ambient OIDC fails and `CI` env var is not set, the plugin opens a browser, potentially hanging the build. | Disabled by default (`interactive: false`). Only ambient providers (GitHub Actions) are tried. Browser flow requires explicit opt-in. |
-| **KeylessSigner lifecycle** | Signer is not explicitly closed — ephemeral key material on the Java heap until GC. | `Sigmund` implements `AutoCloseable` and calls `KeylessSigner.close()`, which clears cached certificate material immediately. |
+| **OIDC identity validation** | None — signs with whatever identity the OIDC flow returns, so a misconfigured workflow signs as an unexpected identity. | With `signing.signer`: the token's issuer, and its subject when named, are checked before Fulcio is asked; every attribute the signer names (`source-repository-uri`, `build-config-uri`, …) is checked on the issued certificate before the signature is written. Verification checks them again. |
+| **Browser flow in CI** | Skipped when `CI=true`; otherwise, if no ambient token is found, the plugin opens a browser, which can hang a build on a runner that does not set `CI`. | Disabled by default (`interactive: false`): only `SIGSTORE_JAVA_ID_TOKEN` and GitHub Actions are tried. |
 | **Supply chain verification** | Signing only | Dependency trust verification and enforcement with Sigstore and OpenPGP evidence |
 | **Quantum resistance** | None | Hybrid ML-DSA + classic signatures (RFC 9980) |
 
@@ -84,7 +83,7 @@ Sigmund offers everything `sigstore-maven-plugin` does, plus:
 <plugin>
   <groupId>dev.sigstore</groupId>
   <artifactId>sigstore-maven-plugin</artifactId>
-  <version>2.2.0</version>
+  <version>2.4.0</version>
   <executions>
     <execution>
       <id>sign</id>
@@ -134,11 +133,11 @@ Note the `sigmund-sigstore` plugin dependency, at the plugin's own version — t
 
 | sigstore-maven-plugin | Sigmund equivalent | Notes |
 |----------------------|-------------------|-------|
-| `<publicStaging>true</publicStaging>` | `sigmund.yaml` → `tools.sigstore.staging: true` | Configured once, applies to both signing and verification |
-| `<skip>true</skip>` | `sigmund.skip` system property | `mvn verify -Dsigmund.skip=true` |
-| (no equivalent) | `sigmund.yaml` → `tools.sigstore.interactive: true` | Enables browser OIDC flow. `sigstore-maven-plugin` always enables it. |
-| (no equivalent) | `sigmund.yaml` → `tools.sigstore.trusted-root` | Custom trusted root for air-gapped environments |
-| (no equivalent) | `sigmund.yaml` → `signing.signer` + `signers.<name>.sigstore` | Identity matching (verification-time; signing-time when `subject` + `issuer` are set) |
+| `<publicStaging>` / `-Dpublic-staging` | `sigmund.yaml` → `tools.sigstore.staging: true` | Configured once, applies to both signing and verification |
+| `<skip>` / `-Dsigstore.skip` | `sigmund.skip` | `mvn verify -Dsigmund.skip=true` |
+| (no equivalent) | `sigmund.yaml` → `tools.sigstore.interactive: true` | Enables the browser OIDC flow, which `sigstore-maven-plugin` uses outside CI |
+| (no equivalent) | `sigmund.yaml` → `tools.sigstore.trusted-root` | Custom trusted root for verifying bundles |
+| (no equivalent) | `sigmund.yaml` → `signing.signer` + `signers.<name>.identities` | The identity every signature must prove, checked at signing and again at verification |
 
 **Minimal sigmund.yaml for Sigstore-only signing (CI):**
 
@@ -160,7 +159,7 @@ signing:
   toolchain: [sigstore]
 ```
 
-**With verification-time identity matching** (recommended for CI — `source-repository-uri` is stable across releases):
+**With the signing identity checked** (`source-repository-uri` with `build-config-uri` is stable across releases; `subject` carries the git ref and changes with each one):
 
 ```yaml
 signers:
@@ -168,27 +167,14 @@ signers:
     identities:
       - issuer: "https://token.actions.githubusercontent.com"
         source-repository-uri: "https://github.com/myorg/myrepo"
+        build-config-uri: "https://github.com/myorg/myrepo/.github/workflows/release.yml@refs/heads/main"
 
 signing:
   signer: ci-pipeline
   toolchain: [sigstore]
 ```
 
-**With signing-time identity validation** (requires `subject`, which includes the git ref and changes per release):
-
-```yaml
-signers:
-  ci-pipeline:
-    identities:
-      - issuer: "https://token.actions.githubusercontent.com"
-        subject: "https://github.com/myorg/myrepo/.github/workflows/release.yml@refs/tags/v1.0.0"
-
-signing:
-  signer: ci-pipeline
-  toolchain: [sigstore]
-```
-
-> **Note:** See the [security comparison](#security-comparison) above for details on when identity matching happens at signing time vs verification time.
+A token from another issuer is refused before Fulcio is asked; a certificate from another repository or workflow fails signing before any bundle is written. See [`identities`](configuration.md#object-form) for every attribute.
 
 ### 3. GitHub Actions workflow
 
