@@ -14,17 +14,20 @@ import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
 import java.security.spec.ECGenParameterSpec;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
-import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 import org.bouncycastle.bcpg.AEADAlgorithmTags;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
@@ -33,6 +36,8 @@ import org.bouncycastle.bcpg.PublicKeyPacket;
 import org.bouncycastle.bcpg.S2K;
 import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags;
 import org.bouncycastle.bcpg.sig.KeyFlags;
+import org.bouncycastle.bcpg.sig.RevocationReason;
+import org.bouncycastle.bcpg.sig.RevocationReasonTags;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openpgp.PGPException;
 import org.bouncycastle.openpgp.PGPKeyPair;
@@ -61,6 +66,7 @@ import org.bouncycastle.openpgp.operator.bc.BcAEADSecretKeyEncryptorBuilder;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 import org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyDecryptorBuilder;
 import org.bouncycastle.openpgp.operator.bc.BcPGPContentSignerBuilder;
+import org.bouncycastle.openpgp.operator.bc.BcPGPContentVerifierBuilderProvider;
 import org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPDigestCalculatorProviderBuilder;
@@ -119,6 +125,15 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * cryptographically.
      */
     private final Map<String, PGPPublicKeyRing> signingCertificates = new ConcurrentHashMap<>();
+
+    /**
+     * Returns the key store this runner looks keys up in.
+     *
+     * @return the key store
+     */
+    BcKeyStore keyStore() {
+        return keyStore;
+    }
 
     /**
      * Creates a new BC runner without passphrase support or key fetching.
@@ -269,12 +284,18 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         }
     }
 
+    /**
+     * Describes a signing key by its own certificate, the one the secret key ring carries: a
+     * public copy in a store may be a merge of what keyservers served, and a user ID one of them
+     * added could come first there.
+     */
     private SigningInfo describe(PGPSecretKeyRing ring) {
         PGPPublicKey pub = ring.getPublicKey();
-        String fp = BcKeyStore.bytesToHex(pub.getFingerprint());
+        String fp = KeyRingFiles.hex(pub.getFingerprint());
         String type = pub.getVersion() >= 6 ? Credential.TYPE_PGP6 : Credential.TYPE_PGP4;
+        Iterator<String> userIds = pub.getUserIDs();
         return new SigningInfo(NAME, fp, Algorithms.algorithmName(pub.getAlgorithm()),
-                keyStore.findPrimaryUserId(fp), type);
+                userIds.hasNext() ? userIds.next() : null, type);
     }
 
     @Override
@@ -350,7 +371,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         try {
             PGPSecretKeyRing secretKeyRing = loadSigningKey(key);
             PGPPublicKeyRing certificate = certificateOf(secretKeyRing);
-            signingCertificates.put(BcKeyStore.bytesToHex(certificate.getPublicKey().getFingerprint()),
+            signingCertificates.put(KeyRingFiles.hex(certificate.getPublicKey().getFingerprint()),
                     certificate);
             return signWithKey(artifactFile, outputSig, secretKeyRing);
         } catch (IOException e) {
@@ -382,7 +403,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
                     cipherSuite != null ? cipherSuite : defaultCipherSuite, keyVersion(credentialType));
             PGPSecretKeyRing secretKeyRing = key.getPGPSecretKeyRing();
             PGPPublicKeyRing publicKeyRing = key.toCertificate().getPGPPublicKeyRing();
-            String fingerprint = BcKeyStore.bytesToHex(key.getFingerprint());
+            String fingerprint = KeyRingFiles.hex(key.getFingerprint());
             secretKeyRing = encryptKeyRing(secretKeyRing, fingerprint);
             keyStore.storeCert(publicKeyRing);
             keyStore.storeSecretKey(secretKeyRing);
@@ -450,11 +471,19 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * {@inheritDoc}
      *
      * <p>
-     * Looks up the primary user ID from the key store.
+     * Looks up a user ID the key's holder bound and has not revoked, chosen as the user ID shown
+     * for a verified signature is, never one a keyserver added to a copy; {@code null} when the
+     * key is not in the store or binds none.
      */
     @Override
     public String lookupKeyUserId(String keyId) {
-        return keyStore.findPrimaryUserId(keyId);
+        BcKeyStore.KeyLookup found = keyStore.findPublicKey(keyId);
+        if (found == null) {
+            return null;
+        }
+        OpenPGPCertificate certificate = new OpenPGPCertificate(found.ring(),
+                api.getImplementation(), VERIFICATION_POLICY);
+        return displayedUserId(certificate, keyId, new Date());
     }
 
     /**
@@ -494,7 +523,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         if (credential instanceof KeyCredential fc && fetcher != null) {
             String keyId = fc.fingerprint();
             for (String keyserver : fetcher.keyservers()) {
-                PGPPublicKeyRing keyRing = fetcher.download(keyId, keyserver);
+                PGPPublicKeyRing keyRing = fetcher.downloadCopy(keyId, keyserver);
                 if (keyRing != null) {
                     results.add(new SignerSourceResult(SOURCE_HKP, keyserver, true,
                             extractKeyInfo(keyRing)));
@@ -519,7 +548,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
 
     private SignerInspectionResult extractKeyInfo(PGPPublicKeyRing keyRing) {
         PGPPublicKey primaryKey = keyRing.getPublicKey();
-        String fingerprint = BcKeyStore.bytesToHex(primaryKey.getFingerprint());
+        String fingerprint = KeyRingFiles.hex(primaryKey.getFingerprint());
         int version = primaryKey.getVersion();
         String algorithm = resolveAlgorithm(primaryKey.getAlgorithm());
         int bitStrength = primaryKey.getBitStrength();
@@ -549,7 +578,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             subkeys = new ArrayList<>();
             do {
                 PGPPublicKey subkey = keyIt.next();
-                String subFp = BcKeyStore.bytesToHex(subkey.getFingerprint());
+                String subFp = KeyRingFiles.hex(subkey.getFingerprint());
                 String subAlgo = resolveAlgorithm(subkey.getAlgorithm());
                 Set<String> caps = extractKeyCapabilities(subkey);
                 subkeys.add(new SubkeyInfo(subFp, subAlgo, subkey.getBitStrength(), caps));
@@ -610,8 +639,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             return keyNotFound(opgu, fingerprint, algorithm, version, unreadableCopy(search, fingerprint));
         }
 
-        return verifySignature(artifactFile, opgu, found, version, fingerprint, algorithm,
-                keyStore.primaryUserIdOf(found.ring()));
+        return verifySignature(artifactFile, opgu, found, version, fingerprint, algorithm);
     }
 
     /**
@@ -640,23 +668,23 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             int version, UnreadableCertificate unreadable) {
         if (unreadable == null) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, null,
-                    algorithm, version, fingerprint, fingerprint).withReasonDetail(notFoundDetail(opgu));
+                    algorithm, version, fingerprint, fingerprint).withDetail(notFoundDetail(opgu));
         }
         return switch (unreadable.cause()) {
             case UNKNOWN_ALGORITHM -> OpenPgpVerifyResult.indeterminate(
                     IndeterminateReason.UNSUPPORTED_ALGORITHM, null, algorithm, version, fingerprint,
                     fingerprint)
-                    .withReasonDetail("Bouncy Castle cannot read the copy from "
+                    .withDetail("Bouncy Castle cannot read the copy from "
                             + where(unreadable.source()) + ": " + unreadable.message());
             case DAMAGED -> OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, null,
                     algorithm, version, fingerprint, fingerprint)
-                    .withReasonDetail("the copy from " + where(unreadable.source()) + " cannot be read: "
+                    .withDetail("the copy from " + where(unreadable.source()) + " cannot be read: "
                             + unreadable.message());
         };
     }
 
     /**
-     * Names where a copy of a key came from, for a reason detail: the store's location or the
+     * Names where a copy of a key came from, for a detail: the store's location or the
      * keyserver's URL, else the kind of source.
      */
     private static String where(TrustRootRef source) {
@@ -666,15 +694,26 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     /**
      * Says why no copy of the key was found. A result citing a missing key is reported only when
      * fetching it failed or was not attempted, so a fetcher means the keyservers were asked;
-     * keys are fetched by full fingerprint, never by a 64-bit key ID.
+     * keys are fetched by full fingerprint, never by a 64-bit key ID. Keyservers that could not
+     * answer are named with what happened, as the key may be on them.
      */
     private String notFoundDetail(OpenPgpClaim opgu) {
         if (opgu.issuerFingerprint() == null) {
             return "the signature names only a key ID, which is not looked up on keyservers";
         }
-        return fetcher == null
-                ? "no local key store has it, and key fetching is off"
-                : "no local key store or configured keyserver has it";
+        if (fetcher == null) {
+            return "no local key store has it, and key fetching is off";
+        }
+        Map<String, String> unanswered = fetcher.unansweredServers(opgu.issuerFingerprint());
+        if (unanswered.isEmpty()) {
+            return "no local key store or configured keyserver has it";
+        }
+        String causes = unanswered.entrySet().stream()
+                .map(server -> server.getKey() + " " + server.getValue())
+                .collect(Collectors.joining("; ", " (", ")"));
+        return unanswered.size() == fetcher.keyservers().size()
+                ? "no local key store has it and no configured keyserver could be asked" + causes
+                : "no local key store or configured keyserver that answered has it" + causes;
     }
 
     private String extractKeyIdFromSignature(OpenPgpClaim opgu) {
@@ -695,25 +734,28 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      */
     private OpenPgpVerifyResult verifySignature(Path artifactFile, OpenPgpClaim opgu,
             BcKeyStore.KeyLookup found, int version, String fingerprint,
-            String algorithm, String userId) {
-        PGPPublicKeyRing pubKeyRing = found.ring();
+            String algorithm) {
         try {
+            PGPPublicKeyRing pubKeyRing = bindingViewOf(found.ring());
             byte[] sigBytes = AscCombiner.dearmor(opgu.armoredBlock());
             PGPSignature signature = parseSignature(sigBytes);
             if (signature == null) {
-                return OpenPgpVerifyResult.indeterminate(IndeterminateReason.EVIDENCE_MALFORMED, userId,
+                return OpenPgpVerifyResult.indeterminate(IndeterminateReason.EVIDENCE_MALFORMED, null,
                         algorithm, version, fingerprint, fingerprint);
             }
-            if (findVerificationKey(pubKeyRing, signature) == null) {
-                return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId, algorithm, version,
-                        fingerprint, fingerprint).withReasonDetail("the certificate found does not contain the signing key");
-            }
-
             OpenPGPCertificate certificate = new OpenPGPCertificate(pubKeyRing,
                     api.getImplementation(), VERIFICATION_POLICY);
+            OpenPGPCertificate unfiltered = new OpenPGPCertificate(found.ring(),
+                    api.getImplementation(), VERIFICATION_POLICY);
+            String userId = displayedUserId(unfiltered, fingerprint, signature.getCreationTime());
+            if (findVerificationKey(pubKeyRing, signature) == null) {
+                return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId, algorithm, version,
+                        fingerprint, fingerprint).withDetail("the certificate found does not contain the signing key");
+            }
             OpenPGPDocumentSignature document = verifyAgainst(certificate, signature, artifactFile);
             if (document == null || document.getIssuer() == null || !document.isTestedCorrect()) {
-                return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint);
+                return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint)
+                        .withDetail("the artifact does not match the signature");
             }
             if (!document.isValid(VERIFICATION_POLICY)) {
                 return keyNotValid(certificate, document, signature, version, fingerprint, algorithm, userId,
@@ -721,13 +763,182 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             }
             PGPPublicKey signingKey = document.getIssuer().getPGPPublicKey();
             return OpenPgpVerifyResult.verified(userId, algorithm, version, fingerprint, fingerprint)
-                    .withKeyFingerprints(hex(signingKey.getFingerprint()),
+                    .withKeyFingerprints(KeyRingFiles.hex(signingKey.getFingerprint()),
                             primaryFingerprintOf(pubKeyRing, signingKey))
                     .withKeySource(found.source());
         } catch (Exception e) {
-            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.TOOL_UNAVAILABLE, userId,
+            return OpenPgpVerifyResult.indeterminate(IndeterminateReason.TOOL_UNAVAILABLE, null,
                     algorithm, version, fingerprint, fingerprint);
         }
+    }
+
+    /**
+     * The certificate as Bouncy Castle must see it to decide whether the key is bound: with
+     * only the user ID certifications that verify against the primary key, no user ID
+     * certification revocations, and no user ID left without a verifying certification.
+     *
+     * <p>
+     * Bouncy Castle 1.86 derives the primary key's binding from its first user ID alone and
+     * takes a revocation without checking its type or signature. A first user ID that is unsigned,
+     * certified by a forgery or revoked would so reject a key that GnuPG and Sequoia accept, and
+     * a forged revocation would be read as one. The same holds for every key-level signature: a
+     * key revocation, a direct-key signature, a subkey binding or a subkey revocation that does
+     * not verify against the primary key, or that sits where its type does not belong, is a
+     * forgery GnuPG and Sequoia ignore. It is removed here, so that a forged revocation is never
+     * the attack signal and a forged expiry or set of key flags never makes a bound key
+     * unavailable. The view is for this question only: a user ID revocation does not touch the
+     * key, and a user ID is never a credential. The user ID to show is chosen from the
+     * certificate unfiltered.
+     */
+    private static PGPPublicKeyRing bindingViewOf(PGPPublicKeyRing ring) {
+        PGPPublicKey primary = ring.getPublicKey();
+        List<byte[]> userIds = new ArrayList<>();
+        primary.getRawUserIDs().forEachRemaining(userIds::add);
+        PGPPublicKey view = primary;
+        for (byte[] userId : userIds) {
+            view = withVerifyingCertificationsOnly(view, primary, userId);
+        }
+        PGPPublicKeyRing filtered = PGPPublicKeyRing.insertPublicKey(ring,
+                withVerifyingKeySignaturesOnly(view, primary));
+        Iterator<PGPPublicKey> subkeys = ring.getPublicKeys();
+        while (subkeys.hasNext()) {
+            PGPPublicKey subkey = subkeys.next();
+            if (!subkey.isMasterKey()) {
+                filtered = PGPPublicKeyRing.insertPublicKey(filtered,
+                        withVerifyingKeySignaturesOnly(subkey, primary));
+            }
+        }
+        return filtered;
+    }
+
+    private static final List<Integer> KEY_SIGNATURE_TYPES = List.of(PGPSignature.KEY_REVOCATION,
+            PGPSignature.DIRECT_KEY, PGPSignature.SUBKEY_BINDING, PGPSignature.SUBKEY_REVOCATION);
+
+    private static PGPPublicKey withVerifyingKeySignaturesOnly(PGPPublicKey key, PGPPublicKey primary) {
+        List<PGPSignature> signatures = new ArrayList<>();
+        for (int type : KEY_SIGNATURE_TYPES) {
+            key.getSignaturesOfType(type).forEachRemaining(signatures::add);
+        }
+        PGPPublicKey view = key;
+        for (PGPSignature signature : signatures) {
+            if (!isVerifyingKeySignature(signature, key, primary)) {
+                view = PGPPublicKey.removeCertification(view, signature);
+            }
+        }
+        return view;
+    }
+
+    private static boolean isVerifyingKeySignature(PGPSignature signature, PGPPublicKey key, PGPPublicKey primary) {
+        boolean ofPrimary = key.isMasterKey();
+        if (!belongsOn(signature.getSignatureType(), ofPrimary)) {
+            return false;
+        }
+        try {
+            signature.init(new BcPGPContentVerifierBuilderProvider(), primary);
+            return ofPrimary ? signature.verifyCertification(primary)
+                    : signature.verifyCertification(primary, key);
+        } catch (PGPException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    private static boolean belongsOn(int signatureType, boolean ofPrimary) {
+        return ofPrimary
+                ? signatureType == PGPSignature.KEY_REVOCATION || signatureType == PGPSignature.DIRECT_KEY
+                : signatureType == PGPSignature.SUBKEY_REVOCATION || signatureType == PGPSignature.SUBKEY_BINDING;
+    }
+
+    private static PGPPublicKey withVerifyingCertificationsOnly(PGPPublicKey view, PGPPublicKey primary,
+            byte[] userId) {
+        List<PGPSignature> signatures = new ArrayList<>();
+        primary.getSignaturesForID(userId).forEachRemaining(signatures::add);
+        boolean certified = false;
+        for (PGPSignature signature : signatures) {
+            if (isVerifyingCertification(signature, userId, primary)) {
+                certified = true;
+            } else {
+                view = PGPPublicKey.removeCertification(view, userId, signature);
+            }
+        }
+        return certified ? view : PGPPublicKey.removeCertification(view, userId);
+    }
+
+    private static boolean isVerifyingCertification(PGPSignature signature, byte[] userId, PGPPublicKey primary) {
+        if (signature.getSignatureType() == PGPSignature.CERTIFICATION_REVOCATION) {
+            return false;
+        }
+        try {
+            signature.init(new BcPGPContentVerifierBuilderProvider(), primary);
+            return signature.verifyCertification(userId, primary);
+        } catch (PGPException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * The user ID to show for a certificate: one its holder bound and has not revoked as of
+     * the moment of signing.
+     *
+     * <p>
+     * A user ID a keyserver added without the holder's self-signature is never shown, however
+     * many copies carried it. Among the bound ones, a user ID a known directory's copy carried is
+     * preferred, since the directory published it only after its owner proved the address; next
+     * the primary user ID, then the first. A user ID that is not UTF-8 is never among them: Bouncy
+     * Castle's certificate API drops it. A 64-bit key ID is first resolved to the full fingerprint
+     * of the key it names in this certificate, so that it is shown the user ID a lookup by that
+     * fingerprint is.
+     *
+     * @param keyId the fingerprint or 64-bit key ID the certificate was found by
+     * @return the user ID, or {@code null} when the certificate binds none
+     */
+    private String displayedUserId(OpenPGPCertificate certificate, String keyId, Date signedAt) {
+        String fingerprint = fingerprintIn(certificate.getPGPPublicKeyRing(), keyId);
+        List<String> bound = certificate.getValidUserIds(signedAt).stream()
+                .map(OpenPGPCertificate.OpenPGPUserId::getUserId)
+                .filter(Objects::nonNull)
+                .toList();
+        if (bound.isEmpty()) {
+            return null;
+        }
+        String directoryServed = directoryServedAmong(bound, fingerprint);
+        if (directoryServed != null) {
+            return directoryServed;
+        }
+        OpenPGPCertificate.OpenPGPUserId primaryUserId = certificate.getPrimaryUserId(signedAt);
+        if (primaryUserId != null && bound.contains(primaryUserId.getUserId())) {
+            return primaryUserId.getUserId();
+        }
+        return bound.get(0);
+    }
+
+    private static String fingerprintIn(PGPPublicKeyRing ring, String keyId) {
+        Iterator<PGPPublicKey> keys = ring.getPublicKeys();
+        while (keys.hasNext()) {
+            String fingerprint = KeyRingFiles.hex(keys.next().getFingerprint());
+            if (BcKeyStore.sameKey(fingerprint, keyId)) {
+                return fingerprint;
+            }
+        }
+        return keyId;
+    }
+
+    /**
+     * The first of the bound user IDs a known directory's copy carried, in the order that copy
+     * holds them, for the directories in the order their copies were kept; {@code null} when no
+     * directory's copy carried one.
+     */
+    private String directoryServedAmong(List<String> bound, String fingerprint) {
+        for (String keyserver : keyStore.keyserversServing(fingerprint)) {
+            if (IssuerKind.directoryServing(keyserver) == null) {
+                continue;
+            }
+            for (String userId : keyStore.userIdsServedBy(fingerprint, keyserver)) {
+                if (bound.contains(userId)) {
+                    return userId;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -751,8 +962,10 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         Date signedAt = signature.getCreationTime();
         OpenPGPCertificate.OpenPGPComponentKey issuer = document.getIssuer();
         OpenPGPCertificate.OpenPGPPrimaryKey primary = certificate.getPrimaryKey();
-        if (revokedOrExpiredAt(primary, signedAt) || revokedOrExpiredAt(issuer, signedAt)) {
-            return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint);
+        Optional<String> failure = failureDetail(primary, signedAt).or(() -> failureDetail(issuer, signedAt));
+        if (failure.isPresent()) {
+            return OpenPgpVerifyResult.failed(userId, algorithm, version, fingerprint, fingerprint)
+                    .withDetail(failure.get());
         }
         if (!algorithmsAccepted(signature, issuer.getPGPPublicKey())) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM, userId,
@@ -763,7 +976,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         if (selfSignatures.isEmpty()) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId,
                     algorithm, version, fingerprint, fingerprint)
-                    .withReasonDetail("the copy from " + where(source) + " carries no self-signature binding the key");
+                    .withDetail("the copy from " + where(source) + " carries no self-signature binding the key");
         }
         if (selfSignatures.stream().anyMatch(BcRunner::rejectedByPolicy)) {
             return OpenPgpVerifyResult.indeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM, userId,
@@ -771,7 +984,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         }
         return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId,
                 algorithm, version, fingerprint, fingerprint)
-                .withReasonDetail(hasUndecodableUserId(primary.getPGPPublicKey())
+                .withDetail(hasUndecodableUserId(primary.getPGPPublicKey())
                         ? "its user ID is not valid UTF-8, which Bouncy Castle cannot read"
                         : "its self-signatures do not bind it");
     }
@@ -788,12 +1001,48 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         return false;
     }
 
-    private static boolean revokedOrExpiredAt(OpenPGPCertificate.OpenPGPComponentKey key, Date at) {
-        if (key.getRevocation(at) != null) {
-            return true;
+    /**
+     * Says why a key was revoked or had expired when it signed, or nothing when it was neither.
+     * The certificate passed is the binding view, which holds only the revocations that verify,
+     * so one a keyserver made up is never reported; the revocation's provenance comes from the
+     * copies the store kept.
+     */
+    private Optional<String> failureDetail(OpenPGPCertificate.OpenPGPComponentKey key, Date at) {
+        OpenPGPCertificate.OpenPGPComponentSignature revocation = key.getRevocation(at);
+        if (revocation != null) {
+            return Optional.of(revokedDetail(key, revocation));
         }
         Date expiry = key.getKeyExpirationDateAt(at);
-        return expiry != null && !expiry.after(at);
+        return expiry != null && !expiry.after(at)
+                ? Optional.of("key expired on " + dateOf(expiry) + ", before it signed")
+                : Optional.empty();
+    }
+
+    private String revokedDetail(OpenPGPCertificate.OpenPGPComponentKey key,
+            OpenPGPCertificate.OpenPGPComponentSignature revocation) {
+        PGPSignature signature = revocation.getSignature();
+        String detail = "key revoked as " + revocationReason(signature) + " on "
+                + dateOf(revocation.getCreationTime());
+        List<String> servers = keyStore.revocationServedBy(KeyRingFiles.hex(key.getPGPPublicKey().getFingerprint()),
+                signature);
+        return servers.isEmpty() ? detail : detail + "; revocation served by " + String.join(", ", servers);
+    }
+
+    private static String revocationReason(PGPSignature revocation) {
+        RevocationReason reason = revocation.getHashedSubPackets().getRevocationReason();
+        if (reason == null) {
+            return "no reason given";
+        }
+        return switch (reason.getRevocationReason()) {
+            case RevocationReasonTags.KEY_COMPROMISED -> "compromised";
+            case RevocationReasonTags.KEY_SUPERSEDED -> "superseded";
+            case RevocationReasonTags.KEY_RETIRED -> "retired";
+            default -> "no reason given";
+        };
+    }
+
+    private static String dateOf(Date date) {
+        return date.toInstant().atZone(ZoneOffset.UTC).toLocalDate().toString();
     }
 
     private static boolean algorithmsAccepted(PGPSignature signature, PGPPublicKey signingKey) {
@@ -877,11 +1126,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         PGPPublicKey primary = ring.getPublicKey();
         return primary == null || primary.getKeyID() == verifyKey.getKeyID()
                 ? null
-                : hex(primary.getFingerprint());
-    }
-
-    private static String hex(byte[] bytes) {
-        return HexFormat.of().withUpperCase().formatHex(bytes);
+                : KeyRingFiles.hex(primary.getFingerprint());
     }
 
     /**
@@ -1018,7 +1263,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     private SignResult signWithKey(Path artifactFile, Path outputSig,
             PGPSecretKeyRing secretKeyRing) throws IOException, PGPException {
         PGPSecretKey signingKey = findSigningSecretKey(secretKeyRing);
-        String primaryFingerprint = BcKeyStore.bytesToHex(
+        String primaryFingerprint = KeyRingFiles.hex(
                 secretKeyRing.getPublicKey().getFingerprint());
         PGPPrivateKey privateKey = extractPrivateKey(signingKey, primaryFingerprint);
         int hashAlgo = HashAlgorithmTags.SHA512;

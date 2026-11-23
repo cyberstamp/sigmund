@@ -120,12 +120,9 @@ public class SignatureVerificationReport {
 
     private void formatResult(StringBuilder sb, ClaimResult r) {
         sb.append(r.outcome());
-        if (r.reason() != null) {
-            sb.append(" [").append(r.reason());
-            if (r.reasonDetail() != null) {
-                sb.append(": ").append(r.reasonDetail());
-            }
-            sb.append(']');
+        String explanation = r.explanation();
+        if (explanation != null) {
+            sb.append(" [").append(explanation).append(']');
         }
         if (r.algorithm() != null) {
             sb.append(" (").append(r.algorithm()).append(')');
@@ -133,8 +130,8 @@ public class SignatureVerificationReport {
         if (r.verifyResult() instanceof OpenPgpVerifyResult openPgp && openPgp.keyId() != null) {
             sb.append(" [key: ").append(openPgp.keyId()).append(']');
         }
-        if (r.attesterDisplayName() != null) {
-            sb.append(" [signer: ").append(r.attesterDisplayName()).append(']');
+        if (r.labeledDisplayName() != null) {
+            sb.append(" [signer: ").append(r.labeledDisplayName()).append(']');
         }
     }
 }

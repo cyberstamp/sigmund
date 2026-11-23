@@ -153,13 +153,18 @@ final class ClaimRouter {
      * <p>
      * If the tool implements {@link KeyImporter}, asks it to fetch the key.
      * The tool handles keyserver iteration, circuit breaking, and persistence
-     * internally. If the key is fetched, re-verifies with the same tool.
+     * internally. Then re-verifies with the same tool, whether or not the key was fetched:
+     * why a fetch failed — keyservers that could not answer — is known only after it, and only a
+     * fresh result carries that detail. The cost is one more verification per claim whose key is
+     * missing: cheap for Bouncy Castle, one more {@code gpg} process under GnuPG with
+     * {@code import-to-keyring}.
      *
      * @param artifactFile the artifact being verified
      * @param claim the claim whose key is missing
      * @param tool the tool to retry verification with
      * @param originalResult the result citing {@link IndeterminateReason#KEY_UNAVAILABLE}
-     * @return the result of re-verification after import, or the original result if fetching failed
+     * @return the result of re-verification after the fetch, or the original result when the
+     *         tool cannot fetch or the claim names no fingerprint
      */
     private static VerifyResult fetchKeyAndRetry(Path artifactFile, Claim claim,
             SignatureTool tool, VerifyResult originalResult) {
@@ -167,7 +172,8 @@ final class ClaimRouter {
         if (keyId == null) {
             return originalResult;
         }
-        if (tool instanceof KeyImporter ki && ki.fetchKey(keyId)) {
+        if (tool instanceof KeyImporter importer && importer.canFetchKeys()) {
+            importer.fetchKey(keyId);
             return tool.verify(artifactFile, claim);
         }
         return originalResult;

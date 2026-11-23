@@ -64,12 +64,13 @@ public class Sigmund implements AutoCloseable {
     private final VerificationConfig verificationConfig;
     private final Map<String, OpenPgpDirectory> directories;
     private final SignerIdentity expectedSigner;
+    private final List<String> issuers;
     private volatile boolean fetchWarningEmitted;
 
     private Sigmund(List<SignatureTool> tools, List<SignatureFormat> formats,
             List<EvidenceProvider> evidenceProviders, SigningConfig signingConfig,
             VerificationConfig verificationConfig, OpenPgpDirectory directory,
-            SignerIdentity expectedSigner) {
+            SignerIdentity expectedSigner, List<String> issuers) {
         if (tools.isEmpty()) {
             throw new SigmundException("No tools available");
         }
@@ -81,6 +82,7 @@ public class Sigmund implements AutoCloseable {
         this.verificationConfig = verificationConfig;
         this.directories = Map.of(directory.name(), directory);
         this.expectedSigner = expectedSigner;
+        this.issuers = List.copyOf(issuers);
     }
 
     /**
@@ -413,7 +415,8 @@ public class Sigmund implements AutoCloseable {
         for (Claim claim : claims) {
             results.add(router.route(artifactFile, claim, format.name(), evidence.ref()));
         }
-        return new FileSignatureReport(signatureFile, format.name(), results);
+        return new FileSignatureReport(signatureFile, format.name(),
+                new ClaimIdentityResolver(directories, false).vouchForDisplayNames(issuers, results));
     }
 
     private SignatureFormat findFormat(Evidence evidence) {
@@ -443,6 +446,7 @@ public class Sigmund implements AutoCloseable {
         private OpenPgpDirectory directory;
         private SigningConfig signingConfig;
         private SignerIdentity expectedSigner;
+        private List<String> issuers = List.of();
         private List<SignatureToolFactory> factoryOverride;
         private PassphraseProvider bcPassphraseProvider;
 
@@ -494,6 +498,20 @@ public class Sigmund implements AutoCloseable {
             this.verificationConfig = config.verificationConfig();
             this.signingConfig = config.signingConfig();
             this.expectedSigner = expectedSignerOf(config);
+            this.issuers = config.trustPolicySpec().issuers();
+            return this;
+        }
+
+        /**
+         * Sets the issuers whose vouching for a displayed name is shown: a name is labelled
+         * {@code (unverified)} unless a listed issuer vouches for it. Verification outcomes do not
+         * depend on it.
+         *
+         * @param issuers the issuers, in any form {@link IssuerKind#canonicalName(String)} accepts
+         * @return this builder
+         */
+        public Builder issuers(List<String> issuers) {
+            this.issuers = List.copyOf(issuers);
             return this;
         }
 
@@ -650,14 +668,26 @@ public class Sigmund implements AutoCloseable {
                     }
                 }
 
+                OpenPgpDirectory answering = directory != null ? directory : KeysOpenPgpOrgDirectory.standard();
+                answerFromFetchedKeys(answering);
                 return new Sigmund(List.copyOf(tools), List.copyOf(formats),
                         List.copyOf(providers), signingConfig, verificationConfig,
-                        directory != null ? directory : KeysOpenPgpOrgDirectory.standard(),
-                        expectedSigner);
+                        answering, expectedSigner, issuers);
             } catch (RuntimeException e) {
                 // Clean up any AutoCloseable tools before propagating the exception
                 closeTools();
                 throw e;
+            }
+        }
+
+        private void answerFromFetchedKeys(OpenPgpDirectory answering) {
+            if (answering instanceof KeysOpenPgpOrgDirectory keysOpenPgpOrg) {
+                for (SignatureTool tool : tools) {
+                    if (tool instanceof BcRunner runner) {
+                        keysOpenPgpOrg.answerFrom(runner.keyStore());
+                        return;
+                    }
+                }
             }
         }
 

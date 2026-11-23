@@ -47,7 +47,8 @@ public class VerifyMojo extends AbstractDependencyMojo {
         TrustPolicy trustPolicy = RulePolicy.compile(config.trustPolicySpec(), config.signers());
         VerificationConfig verificationConfig = resolveVerificationConfig(config.verificationConfig());
 
-        try (Sigmund sigmund = buildSigmund(verificationConfig, mergeToolOverrides(config.toolsConfig()))) {
+        try (Sigmund sigmund = buildSigmund(verificationConfig, mergeToolOverrides(config.toolsConfig()),
+                config.trustPolicySpec().issuers())) {
             TrustVerifier verifier = sigmund.verifier(trustPolicy);
 
             List<ArtifactCoords> artifacts = resolveDependencies();

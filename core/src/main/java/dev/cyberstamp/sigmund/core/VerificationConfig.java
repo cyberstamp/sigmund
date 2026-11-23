@@ -23,15 +23,16 @@ public record VerificationConfig(
         List<String> keyservers,
         List<String> toolchain) {
 
-    /** Default keyserver. */
-    public static final String DEFAULT_KEYSERVER = "hkps://keys.openpgp.org";
+    /** Default keyservers, in the order they are asked for a missing key. */
+    public static final List<String> DEFAULT_KEYSERVERS = List.of(
+            "hkps://keys.openpgp.org", "hkps://keyserver.ubuntu.com");
 
     /** Default tool priority order. */
     public static final List<String> DEFAULT_TOOL_PRIORITY = List.of("bc", "sq", "gpg");
 
     /** Default verification configuration. */
     public static final VerificationConfig DEFAULT = new VerificationConfig(
-            true, false, List.of(DEFAULT_KEYSERVER), null);
+            true, false, DEFAULT_KEYSERVERS, null);
 
     /**
      * Creates a verification config with defensive copies.
@@ -39,7 +40,7 @@ public record VerificationConfig(
     public VerificationConfig {
         keyservers = keyservers != null && !keyservers.isEmpty()
                 ? List.copyOf(keyservers)
-                : List.of(DEFAULT_KEYSERVER);
+                : DEFAULT_KEYSERVERS;
         toolchain = toolchain != null && !toolchain.isEmpty()
                 ? List.copyOf(toolchain)
                 : null;

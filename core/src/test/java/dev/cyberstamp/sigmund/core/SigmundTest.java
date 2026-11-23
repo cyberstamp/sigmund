@@ -24,6 +24,41 @@ class SigmundTest {
     Path tempDir;
 
     @Nested
+    class DisplayNameLabels {
+
+        @Test
+        void aUserIdServedByTheDirectoryIsUnverifiedWhenTheDirectoryIsNotListed() throws Exception {
+            BcKeyStore signing = new BcKeyStore(null, tempDir.resolve("a/cert-d"), tempDir.resolve("a/private"));
+            String fingerprint = BcTestKeys.generate(signing, "Alice Example <alice@example.org>",
+                    "ed25519", null);
+            Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "content");
+            Path signature = tempDir.resolve("artifact.txt.asc");
+            try (BcRunner signer = new BcRunner(signing, fingerprint, null)) {
+                SigningTests.signWithOnlyKey(signer, artifact, signature);
+            }
+            BcKeyStore verifying = new BcKeyStore(null, tempDir.resolve("b/cert-d"), tempDir.resolve("b/private"));
+            BcTestKeys.addFetched(verifying, Map.of("hkps://keys.openpgp.org", signing.findPublicKey(fingerprint).ring()));
+
+            try (BcRunner runner = new BcRunner(verifying, null, null);
+                    var sigmund = Sigmund.builder().addTool(runner).issuers(List.of()).build()) {
+                ClaimResult claim = sigmund.verify(artifact, signature).files().get(0).results().get(0);
+
+                assertThat(claim.outcome()).isEqualTo(ClaimOutcome.VERIFIED);
+                assertThat(claim.labeledDisplayName())
+                        .isEqualTo("Alice Example <alice@example.org> (unverified)");
+            }
+            try (BcRunner runner = new BcRunner(verifying, null, null);
+                    var sigmund = Sigmund.builder().addTool(runner)
+                            .issuers(List.of("keys.openpgp.org")).build()) {
+                ClaimResult claim = sigmund.verify(artifact, signature).files().get(0).results().get(0);
+
+                assertThat(claim.labeledDisplayName()).isEqualTo(
+                        "Alice Example <alice@example.org> (address verified by keys.openpgp.org)");
+            }
+        }
+    }
+
+    @Nested
     class SignerCreation {
 
         @Test

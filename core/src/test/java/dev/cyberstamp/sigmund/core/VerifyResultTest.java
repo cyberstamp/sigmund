@@ -75,25 +75,35 @@ class VerifyResultTest {
     }
 
     @Nested
-    class ReasonDetail {
+    class Detail {
 
         @Test
         void aCopyKeepsItsTypeAndFieldsAndGainsTheDetail() {
             OpenPgpVerifyResult result = OpenPgpVerifyResult.indeterminate(
                     IndeterminateReason.KEY_UNAVAILABLE, null, "RSA", 4, "KEYID", "FP")
-                    .withReasonDetail("no keyserver has it");
+                    .withDetail("no keyserver has it");
 
-            assertThat(result.reasonDetail()).isEqualTo("no keyserver has it");
+            assertThat(result.detail()).isEqualTo("no keyserver has it");
             assertThat(result.fingerprint()).isEqualTo("FP");
-            assertThat(result.withKeySource(TrustRootRef.unknown()).reasonDetail())
+            assertThat(result.withKeySource(TrustRootRef.unknown()).detail())
                     .isEqualTo("no keyserver has it");
         }
 
         @Test
-        void aDetailNeedsAReasonToExplain() {
+        void aVerifiedResultCarriesNoDetail() {
             assertThatThrownBy(() -> OpenPgpVerifyResult.verified(null, "RSA", 4, "KEYID", "FP")
-                    .withReasonDetail("no keyserver has it"))
+                    .withDetail("no keyserver has it"))
                     .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
+        void aFailedResultCarriesADetailWithoutAReason() {
+            OpenPgpVerifyResult result = OpenPgpVerifyResult.failed(null, "RSA", 4, "KEYID", "FP")
+                    .withDetail("key revoked as compromised on 2026-01-01");
+
+            assertThat(result.isFailed()).isTrue();
+            assertThat(result.reason()).isNull();
+            assertThat(result.detail()).isEqualTo("key revoked as compromised on 2026-01-01");
         }
     }
 

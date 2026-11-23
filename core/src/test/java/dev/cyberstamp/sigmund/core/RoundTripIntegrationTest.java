@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
@@ -20,7 +21,8 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>
  * Test flow:
  * <ol>
- * <li>Generate a PQC key using Sequoia's PQC hybrid cipher suite</li>
+ * <li>Generate an RSA key in a GnuPG home of the test's own and a PQC key using Sequoia's PQC
+ * hybrid cipher suite</li>
  * <li>Sign artifacts using {@link Signer} (GPG + Sequoia)</li>
  * <li>Verify signatures using {@link Sigmund#verify(Path, Path)}</li>
  * <li>Validate backward compatibility with GPG-only verification</li>
@@ -38,21 +40,22 @@ class RoundTripIntegrationTest {
 
     private static Path sqHome;
     private static String pqcFingerprint;
+    private static Path gpgHome;
+    private static String gpgFingerprint;
 
     /**
-     * Sets up the test environment by creating a temporary Sequoia home directory
-     * and generating a PQC key for use in all tests.
-     * <p>
-     * The generated key uses Sequoia's default PQC hybrid cipher suite,
-     * providing both classical and post-quantum security. The key fingerprint is
-     * stored in {@link #pqcFingerprint} for use by all test methods.
+     * Sets up the test environment: a temporary GnuPG home holding a generated RSA key, so that
+     * the user's own keyring is never read or signed with, and a temporary Sequoia home holding
+     * a PQC key generated with Sequoia's default PQC hybrid cipher suite, providing both
+     * classical and post-quantum security.
      *
-     *
-     * @param tempDir a temporary directory provided by JUnit, used as SEQUOIA_HOME
+     * @param tempDir a temporary directory provided by JUnit, holding both homes
      * @throws Exception if key generation fails
      */
     @BeforeAll
-    static void generatePqcKey(@TempDir Path tempDir) throws Exception {
+    static void generateKeys(@TempDir Path tempDir) throws Exception {
+        gpgHome = GpgTestKeys.home(tempDir.resolve("gnupg"));
+        gpgFingerprint = GpgTestKeys.generate(gpgHome, "Round Trip <round-trip@example.org>", "rsa3072");
         sqHome = tempDir.resolve("sq-home");
         Files.createDirectories(sqHome);
         SqRunner sq = new SqRunner(sqHome);
@@ -144,7 +147,7 @@ class RoundTripIntegrationTest {
             Path signature = output.files().get(0).path();
 
             // Act: Verify with GPG command-line tool directly
-            CliTool.Result result = CliTool.run(
+            CliTool.Result result = CliTool.run(Map.of("GNUPGHOME", gpgHome.toString()),
                     "gpg",
                     "--verify",
                     signature.toString(),
@@ -237,8 +240,8 @@ class RoundTripIntegrationTest {
     }
 
     /**
-     * Creates a {@link Sigmund} instance configured for signing with the default
-     * GPG key and the PQC key generated in {@link #generatePqcKey(Path)}.
+     * Creates a {@link Sigmund} instance configured for signing with the RSA and PQC keys
+     * generated in {@link #generateKeys(Path)}.
      * <p>
      * This helper method encapsulates the Sigmund creation logic and ensures
      * consistent configuration across all test methods.
@@ -247,7 +250,7 @@ class RoundTripIntegrationTest {
      * @return a configured Sigmund instance with signing capabilities
      */
     private Sigmund createSigningSigmund() {
-        GpgRunner gpg = new GpgRunner(); // use default GPG key
+        GpgRunner gpg = new GpgRunner("gpg", gpgFingerprint, gpgHome);
         SqRunner sq = new SqRunner("sq", sqHome, pqcFingerprint);
         return Sigmund.builder()
                 .addTool(gpg)
@@ -265,7 +268,7 @@ class RoundTripIntegrationTest {
      * @return a configured Sigmund instance for verification
      */
     private Sigmund createVerifySigmund() {
-        GpgRunner gpg = new GpgRunner();
+        GpgRunner gpg = new GpgRunner("gpg", null, gpgHome);
         SqRunner sq = new SqRunner(sqHome);
         return Sigmund.builder()
                 .addTool(gpg)

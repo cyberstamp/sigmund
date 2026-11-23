@@ -6,7 +6,6 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -761,7 +760,7 @@ public class SqRunner implements SignatureTool, CertExporter {
         if (ring == null) {
             return null;
         }
-        String primary = HexFormat.of().withUpperCase().formatHex(ring.getPublicKey().getFingerprint());
+        String primary = KeyRingFiles.hex(ring.getPublicKey().getFingerprint());
         return primary.equalsIgnoreCase(signingFingerprint) ? null : primary;
     }
 

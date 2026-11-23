@@ -15,7 +15,7 @@ class KeyFetchCacheTest {
     @Test
     void connectionFailureTripsCircuitForThatServer() {
         var cache = new KeyFetchCache();
-        cache.recordConnectionFailure("hkps://down.example.com");
+        cache.recordServerFailure("hkps://down.example.com");
 
         assertThat(cache.shouldAttempt("hkps://down.example.com", "ABCD1234")).isFalse();
         assertThat(cache.shouldAttempt("hkps://up.example.com", "ABCD1234")).isTrue();
@@ -43,7 +43,7 @@ class KeyFetchCacheTest {
     @Test
     void circuitBreakerAndNegativeCacheCombine() {
         var cache = new KeyFetchCache();
-        cache.recordConnectionFailure("hkps://down.example.com");
+        cache.recordServerFailure("hkps://down.example.com");
         cache.recordKeyNotFound("DEADBEEF");
 
         assertThat(cache.shouldAttempt("hkps://down.example.com", "DEADBEEF")).isFalse();

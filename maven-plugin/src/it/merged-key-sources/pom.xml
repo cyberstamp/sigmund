@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    A generated policy verifies with the default keyservers. keys.openpgp.org serves the
+    error_prone release key without its user IDs, so with it as the only keyserver the signature
+    was INDETERMINATE (KEY_UNAVAILABLE) and the generated signer was marked "could not be checked
+    here"; this test fails on the code before keyserver copies were merged. keyserver.ubuntu.com,
+    the second default keyserver, serves the key in full, and the copies are joined.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.cyberstamp.sigmund.it</groupId>
+    <artifactId>merged-key-sources-test</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <properties>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>com.google.errorprone</groupId>
+            <artifactId>error_prone_annotations</artifactId>
+            <version>2.27.0</version>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>dev.cyberstamp.sigmund</groupId>
+                <artifactId>sigmund-maven-plugin</artifactId>
+                <version>@project.version@</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -88,7 +88,7 @@ class BcPostQuantumTest {
                     info.issuerFingerprint(), info.algorithmId(), null));
 
             assertThat(result.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue();
-            assertThat(result.reasonDetail()).isEqualTo("Bouncy Castle cannot read the copy from " + certD
+            assertThat(result.detail()).isEqualTo("Bouncy Castle cannot read the copy from " + certD
                     + ": unknown signature key algorithm: " + info.algorithmId());
         }
     }

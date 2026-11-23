@@ -34,6 +34,20 @@ interface OpenPgpDirectory extends AutoCloseable {
     List<String> verifiedAddresses(String fingerprint) throws IOException;
 
     /**
+     * Tells whether the directory itself served a user ID on the key holding a fingerprint,
+     * from a copy already fetched. It never makes a request: showing a name must not reach the
+     * network, so a directory that has not fetched the key says no.
+     *
+     * @param fingerprint the full fingerprint of the primary key or a subkey
+     * @param userId the user ID exactly as displayed, or {@code null}
+     * @return {@code true} when the directory's own copy carried exactly this user ID; the
+     *         default is {@code false}
+     */
+    default boolean carried(String fingerprint, String userId) {
+        return false;
+    }
+
+    /**
      * Releases anything the directory holds open, such as an HTTP client. Does nothing by
      * default.
      */

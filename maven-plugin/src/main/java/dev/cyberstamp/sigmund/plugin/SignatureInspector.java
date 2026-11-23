@@ -152,7 +152,7 @@ class SignatureInspector implements AutoCloseable {
                 }
                 for (ClaimResult claim : fileReport.results()) {
                     SignedArtifact entry = new SignedArtifact(coords, repoId, claim.verifyResult(),
-                            resolved.artifactFile(), sigFile);
+                            resolved.artifactFile(), sigFile, claim.labeledDisplayName());
                     SignedArtifact fetched;
                     try {
                         fetched = fetchSignerInfoIfMissing(entry);
@@ -210,7 +210,7 @@ class SignatureInspector implements AutoCloseable {
                 String id = vr.signerIdentifier();
                 if (id != null && id.equalsIgnoreCase(entryId)) {
                     return new SignedArtifact(entry.coords(), entry.repoId(),
-                            vr, entry.artifactFile(), entry.signatureFile());
+                            vr, entry.artifactFile(), entry.signatureFile(), claim.labeledDisplayName());
                 }
             }
         } catch (Exception e) {
@@ -249,8 +249,15 @@ class SignatureInspector implements AutoCloseable {
         return servers;
     }
 
+    /**
+     * What inspecting one signature of an artifact found.
+     *
+     * @param signerLabel the signer's display name with who vouches for it, as
+     *        {@link ClaimResult#labeledDisplayName()} gives it, or {@code null} when the claim
+     *        names no signer
+     */
     record SignedArtifact(ArtifactCoords coords, String repoId,
-            VerifyResult verifyResult, Path artifactFile, Path signatureFile) {
+            VerifyResult verifyResult, Path artifactFile, Path signatureFile, String signerLabel) {
 
         /**
          * Records an artifact for which no claim was found at all — no signature file
@@ -258,7 +265,7 @@ class SignatureInspector implements AutoCloseable {
          * evidence, not a failed or indeterminate claim.
          */
         static SignedArtifact noClaim(ArtifactCoords coords, String repoId) {
-            return new SignedArtifact(coords, repoId, null, null, null);
+            return new SignedArtifact(coords, repoId, null, null, null, null);
         }
 
         /** Records an artifact whose verification tool could not be run. */
@@ -266,7 +273,7 @@ class SignatureInspector implements AutoCloseable {
             return new SignedArtifact(coords, repoId,
                     new UnverifiedResult(ClaimOutcome.INDETERMINATE,
                             IndeterminateReason.TOOL_UNAVAILABLE),
-                    null, null);
+                    null, null, null);
         }
 
         boolean hasClaim() {

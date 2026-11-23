@@ -7,11 +7,17 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.bouncycastle.bcpg.PublicKeyPacket;
+import org.bouncycastle.openpgp.PGPPublicKey;
+import org.bouncycastle.openpgp.PGPPublicKeyRing;
+import org.bouncycastle.openpgp.api.bc.BcOpenPGPApi;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ClaimIdentityResolverTest {
 
@@ -178,6 +184,167 @@ class ClaimIdentityResolverTest {
         }
     }
 
+    @Nested
+    class VouchingForDisplayNames {
+
+        private static final String UID = "Alice Example <alice@example.org>";
+        private static final String UBUNTU = "hkps://keyserver.ubuntu.com";
+        private static final String OPENPGP_ORG = "hkps://keys.openpgp.org";
+
+        @TempDir
+        Path dir;
+
+        @Test
+        void aUserIdTheDirectoryServedIsVouchedWhenListed() throws Exception {
+            PGPPublicKeyRing ring = ring(UID);
+            ClaimResult claim = openPgpClaim(ring, UID, "bc");
+
+            List<ClaimResult> vouched = vouch(directoryServing(OPENPGP_ORG, ring), List.of(DIRECTORY), claim);
+
+            assertThat(vouched.get(0).displayNameVouchedBy()).isEqualTo(DIRECTORY);
+            assertThat(vouched.get(0).labeledDisplayName())
+                    .isEqualTo(UID + " (address verified by keys.openpgp.org)");
+        }
+
+        @Test
+        void notWhenTheDirectoryIsNotListed() throws Exception {
+            PGPPublicKeyRing ring = ring(UID);
+            ClaimResult claim = openPgpClaim(ring, UID, "bc");
+
+            List<ClaimResult> vouched = vouch(directoryServing(OPENPGP_ORG, ring), List.of(), claim);
+
+            assertThat(vouched.get(0).displayNameVouchedBy()).isNull();
+            assertThat(vouched.get(0).labeledDisplayName()).isEqualTo(UID + " (unverified)");
+        }
+
+        @Test
+        void notWhenOnlyAnotherKeyserverServedIt() throws Exception {
+            PGPPublicKeyRing ring = ring(UID);
+
+            List<ClaimResult> vouched = vouch(directoryServing(UBUNTU, ring), List.of(DIRECTORY),
+                    openPgpClaim(ring, UID, "bc"));
+
+            assertThat(vouched.get(0).displayNameVouchedBy()).isNull();
+        }
+
+        @Test
+        void notForAKeyFromALocalStore() throws Exception {
+            PGPPublicKeyRing ring = ring(UID);
+            BcKeyStore store = store();
+            store.storeCert(ring);
+            KeysOpenPgpOrgDirectory real = new KeysOpenPgpOrgDirectory("http://127.0.0.1:1");
+            real.answerFrom(store);
+
+            List<ClaimResult> vouched = vouch(real, List.of(DIRECTORY), openPgpClaim(ring, UID, "bc"));
+
+            assertThat(vouched.get(0).displayNameVouchedBy()).isNull();
+        }
+
+        @Test
+        void aDifferentDisplayedUserIdIsNotVouched() throws Exception {
+            PGPPublicKeyRing ring = ring(UID);
+
+            List<ClaimResult> vouched = vouch(directoryServing(OPENPGP_ORG, ring), List.of(DIRECTORY),
+                    openPgpClaim(ring, "Mallory <alice@example.org>", "bc"));
+
+            assertThat(vouched.get(0).displayNameVouchedBy()).isNull();
+        }
+
+        /**
+         * {@code sq} reports a signature a subkey made by the subkey's fingerprint, with the
+         * primary key's beside it, where the claims above carry the primary key's alone. The
+         * directory is asked by the primary key's fingerprint, under which it holds the
+         * certificate: this one answers for no other.
+         */
+        @Test
+        void aClaimSqAnsweredForASubkeyIsVouchedFor() throws Exception {
+            PGPPublicKeyRing ring = ring(UID);
+            String primary = KeyRingFiles.hex(ring.getPublicKey().getFingerprint());
+            Iterator<PGPPublicKey> keys = ring.getPublicKeys();
+            keys.next();
+            String subkey = KeyRingFiles.hex(keys.next().getFingerprint());
+            OpenPgpVerifyResult sqAnswer = OpenPgpVerifyResult.verified(UID, "Ed25519", 4, subkey, subkey)
+                    .withKeyFingerprints(subkey, primary);
+
+            FakeDirectory carriedUnderThePrimary = new FakeDirectory() {
+                @Override
+                public boolean carried(String fingerprint, String userId) {
+                    return fingerprint.equals(primary) && userId.equals(UID);
+                }
+            };
+
+            List<ClaimResult> vouched = vouch(carriedUnderThePrimary, List.of(DIRECTORY),
+                    openPgpClaim(sqAnswer, primary, UID, "sq"));
+
+            assertThat(vouched.get(0).labeledDisplayName())
+                    .isEqualTo(UID + " (address verified by keys.openpgp.org)");
+        }
+
+        @Test
+        void aSigstoreClaimIsAttestedByItsListedIssuer() {
+            String google = "https://accounts.google.com";
+
+            List<ClaimResult> vouched = vouch(new FakeDirectory(), List.of(google), sigstoreClaim(google));
+
+            assertThat(vouched.get(0).labeledDisplayName())
+                    .isEqualTo("alice@example.org (attested by " + google + ")");
+        }
+
+        @Test
+        void notWhenItsIssuerIsNotListed() {
+            List<ClaimResult> vouched = vouch(new FakeDirectory(), List.of(DIRECTORY),
+                    sigstoreClaim("https://accounts.google.com"));
+
+            assertThat(vouched.get(0).labeledDisplayName()).isEqualTo("alice@example.org (unverified)");
+        }
+
+        private List<ClaimResult> vouch(OpenPgpDirectory served, List<String> issuers, ClaimResult claim) {
+            return new ClaimIdentityResolver(Map.of(DIRECTORY, served), true)
+                    .vouchForDisplayNames(issuers, List.of(claim));
+        }
+
+        private KeysOpenPgpOrgDirectory directoryServing(String keyserver, PGPPublicKeyRing ring) {
+            BcKeyStore store = store();
+            BcTestKeys.addFetched(store, Map.of(keyserver, ring));
+            KeysOpenPgpOrgDirectory real = new KeysOpenPgpOrgDirectory("http://127.0.0.1:1");
+            real.answerFrom(store);
+            return real;
+        }
+
+        private BcKeyStore store() {
+            return new BcKeyStore(null, dir.resolve("cert-d"), dir.resolve("bc-private"));
+        }
+
+        private static PGPPublicKeyRing ring(String userId) throws Exception {
+            return new BcOpenPGPApi().generateKey(PublicKeyPacket.VERSION_4)
+                    .ed25519x25519Key(userId).build().toCertificate().getPGPPublicKeyRing();
+        }
+
+        private static ClaimResult openPgpClaim(PGPPublicKeyRing ring, String displayed, String tool) {
+            String fingerprint = KeyRingFiles.hex(ring.getPublicKey().getFingerprint());
+            OpenPgpVerifyResult result = OpenPgpVerifyResult.verified(displayed, "Ed25519", 4,
+                    fingerprint.substring(24), fingerprint);
+            return openPgpClaim(result, fingerprint, displayed, tool);
+        }
+
+        private static ClaimResult openPgpClaim(OpenPgpVerifyResult result, String fingerprint, String displayed,
+                String tool) {
+            return new ClaimResult("openpgp", ClaimOutcome.VERIFIED, null,
+                    List.of(KeyCredential.openPgp(fingerprint)), displayed, TrustRootRef.unknown(),
+                    evidence(), null, ClaimTimeSource.SIGNER, Instant.EPOCH, "Ed25519", tool, null,
+                    null, result, null);
+        }
+
+        private static ClaimResult sigstoreClaim(String issuer) {
+            IdentityCredential identity = IdentityCredential.email(issuer, "alice@example.org");
+            SigstoreVerifyResult result = new SigstoreVerifyResult(ClaimOutcome.VERIFIED, null,
+                    "alice@example.org", "ECDSA", identity, null, 1);
+            return new ClaimResult("sigstore", ClaimOutcome.VERIFIED, null, List.of(identity),
+                    "alice@example.org", TrustRootRef.unknown(), evidence(), null,
+                    ClaimTimeSource.SIGNER, Instant.EPOCH, "ECDSA", "sigstore", null, null, result, null);
+        }
+    }
+
     private List<ClaimResult> resolve(TrustPolicy policy, ClaimResult claim) {
         return new ClaimIdentityResolver(policy, Map.of(DIRECTORY, directory), true)
                 .resolve(COORDS, List.of(claim));
@@ -212,7 +379,7 @@ class ClaimIdentityResolverTest {
                 Evidence.SOURCE_SIDECAR);
     }
 
-    private static final class FakeDirectory implements OpenPgpDirectory {
+    private static class FakeDirectory implements OpenPgpDirectory {
         final Map<String, List<String>> addresses = new HashMap<>();
         final List<String> asked = new ArrayList<>();
         boolean failing;

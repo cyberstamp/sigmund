@@ -1,8 +1,10 @@
 package dev.cyberstamp.sigmund.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class TrustRootRefTest {
@@ -28,6 +30,32 @@ class TrustRootRefTest {
         assertThat(TrustRootRef.keyserver("hkps://keys.openpgp.org").displayName())
                 .isEqualTo("openpgp-keyserver hkps://keys.openpgp.org");
         assertThat(TrustRootRef.unknown().displayName()).isEqualTo(TrustRootRef.KIND_UNKNOWN);
+    }
+
+    @Test
+    void severalKeyserversAreListedInOrder() {
+        TrustRootRef ref = TrustRootRef.keyservers(List.of("hkps://a.example", "hkps://b.example"));
+
+        assertThat(ref.kind()).isEqualTo(TrustRootRef.KIND_OPENPGP_KEYSERVER);
+        assertThat(ref.identifier()).isEqualTo("hkps://a.example, hkps://b.example");
+    }
+
+    @Test
+    void oneKeyserverReadsAsBefore() {
+        assertThat(TrustRootRef.keyservers(List.of("hkps://a.example")))
+                .isEqualTo(TrustRootRef.keyserver("hkps://a.example"));
+    }
+
+    @Test
+    void noKeyserverIsRejected() {
+        assertThatThrownBy(() -> TrustRootRef.keyservers(List.of()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aMissingListOfKeyserversIsRejected() {
+        assertThatThrownBy(() -> TrustRootRef.keyservers(null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

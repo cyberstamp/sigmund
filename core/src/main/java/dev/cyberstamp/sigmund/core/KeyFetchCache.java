@@ -8,20 +8,20 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * Combines two mechanisms:
  * <ul>
- * <li><b>Per-keyserver circuit breaker</b> — trips on connection-level failures
- * (timeout, refused, DNS resolution). Once open, all subsequent fetch attempts
- * to that keyserver are skipped for the remainder of the build. HTTP-level errors
- * (404, 500) do NOT trip the circuit — the server is reachable, the key just
- * wasn't found.</li>
- * <li><b>Per-keyId negative cache</b> — records key IDs that were not found on
- * any healthy server, so multiple artifacts signed by the same unknown key don't
- * each trigger a round of requests.</li>
+ * <li><b>Per-keyserver circuit breaker</b> — trips when a server could not answer: a
+ * connection-level failure (timeout, refused, DNS resolution) or, for an HKP server, any
+ * answer but the key or HTTP 404, such as 429 or 503. Once open, all subsequent fetch
+ * attempts to that keyserver are skipped for the remainder of the build. HTTP 404 does not
+ * trip the circuit — the server answered, it just does not have the key.</li>
+ * <li><b>Per-keyId negative cache</b> — records key IDs every server asked answered it does
+ * not have, so multiple artifacts signed by the same unknown key don't each trigger a round of
+ * requests.</li>
  * </ul>
  * <p>
  * Thread-safe. Intended to be created per {@code BcRunner} instance (= per build).
  * No reset or half-open logic — the JVM exits after the build.
  */
-final class KeyFetchCache {
+class KeyFetchCache {
 
     private final Set<String> trippedServers = ConcurrentHashMap.newKeySet();
     private final Set<String> notFoundKeys = ConcurrentHashMap.newKeySet();
@@ -54,21 +54,21 @@ final class KeyFetchCache {
      * Records a successful fetch.
      * <p>
      * Currently a no-op: the circuit stays closed by default, and
-     * {@link #recordKeyNotFound(String)} is only called after all servers
-     * fail, so a successfully fetched key is never in the negative cache.
+     * {@link #recordKeyNotFound(String)} is only called when no server has
+     * the key, so a successfully fetched key is never in the negative cache.
      */
     void recordSuccess(String keyserver, String keyId) {
     }
 
     /**
-     * Trips the circuit breaker for a keyserver after a connection-level failure.
+     * Trips the circuit breaker for a keyserver that could not answer.
      */
-    void recordConnectionFailure(String keyserver) {
+    void recordServerFailure(String keyserver) {
         trippedServers.add(keyserver);
     }
 
     /**
-     * Records that a key was not found on a healthy server.
+     * Records that no server has a key: every server asked answered that it does not.
      */
     void recordKeyNotFound(String keyId) {
         notFoundKeys.add(keyId);

@@ -81,7 +81,7 @@
           "type": ["boolean", "null"]
         },
         "keyservers": {
-          "description": "Keyserver URLs to fetch missing keys from, asked in order. Default hkps://keys.openpgp.org.",
+          "description": "Keyserver URLs to fetch missing keys from; every one is asked and the copies they serve are merged. Default hkps://keys.openpgp.org and hkps://keyserver.ubuntu.com.",
           "anyOf": [{ "$ref": "#/$defs/stringOrList" }, { "type": "null" }]
         }
       }

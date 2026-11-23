@@ -9,7 +9,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -47,6 +46,7 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
     private final String endpoint;
     private HttpClient httpClient;
     private final Map<String, Lookup> lookups = new ConcurrentHashMap<>();
+    private volatile BcKeyStore fetched;
 
     /**
      * Creates a client for a directory endpoint.
@@ -71,18 +71,68 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
         return IssuerKind.KEYS_OPENPGP_ORG;
     }
 
+    /**
+     * Makes the directory answer from the copies a key store has fetched from it.
+     *
+     * <p>
+     * When the store holds the directory's own copy of a key, the addresses on that copy are
+     * the directory's answer, none included, and no request is made; a key it holds no such
+     * copy of is asked for as before. A copy fetched from another keyserver is never the directory's answer.
+     *
+     * @param store the store the keyservers' copies were added to
+     */
+    void answerFrom(BcKeyStore store) {
+        this.fetched = store;
+    }
+
+    @Override
+    public boolean carried(String fingerprint, String userId) {
+        List<String> served = servedUserIds(fingerprint.toUpperCase(Locale.ROOT));
+        return userId != null && served != null && served.contains(userId);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * When the key store this directory answers from holds the directory's own copy of the key,
+     * the addresses on that copy are the answer, none included: a copy served without user IDs
+     * says the directory vouches for no address on the key, and asking again would return the
+     * same.
+     */
     @Override
     public List<String> verifiedAddresses(String fingerprint) throws IOException {
         if (fingerprint.length() != V4_FINGERPRINT_LENGTH) {
             return List.of();
         }
         String key = fingerprint.toUpperCase(Locale.ROOT);
+        List<String> served = servedUserIds(key);
+        if (served != null) {
+            return addressesIn(served);
+        }
         Lookup lookup = lookups.computeIfAbsent(key, this::lookUp);
         if (lookup.failure() != null) {
             throw new IOException("keys.openpgp.org could not be asked about " + key + ": "
                     + lookup.failure());
         }
         return lookup.addresses();
+    }
+
+    /**
+     * The user IDs on the copy of a key the directory served this session, or {@code null} when
+     * the store holds no copy of that key from the directory.
+     */
+    private List<String> servedUserIds(String fingerprint) {
+        BcKeyStore store = fetched;
+        if (store == null) {
+            return null;
+        }
+        for (String keyserver : store.keyserversServing(fingerprint)) {
+            if (name().equals(IssuerKind.directoryServing(keyserver))) {
+                return store.userIdsServedBy(fingerprint, keyserver);
+            }
+        }
+        return null;
     }
 
     private Lookup lookUp(String fingerprint) {
@@ -156,10 +206,15 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
         if (!holds(ring, fingerprint)) {
             return List.of();
         }
+        List<String> userIds = new ArrayList<>();
+        ring.getPublicKey().getUserIDs().forEachRemaining(userIds::add);
+        return addressesIn(userIds);
+    }
+
+    private static List<String> addressesIn(List<String> userIds) {
         List<String> addresses = new ArrayList<>();
-        Iterator<String> userIds = ring.getPublicKey().getUserIDs();
-        while (userIds.hasNext()) {
-            String address = OpenPgpCredentials.email(userIds.next());
+        for (String userId : userIds) {
+            String address = OpenPgpCredentials.email(userId);
             if (address != null) {
                 String normalized = address.toLowerCase(Locale.ROOT);
                 if (!addresses.contains(normalized)) {
@@ -173,8 +228,7 @@ final class KeysOpenPgpOrgDirectory implements OpenPgpDirectory {
     private static boolean holds(PGPPublicKeyRing ring, String fingerprint) {
         Iterator<PGPPublicKey> keys = ring.getPublicKeys();
         while (keys.hasNext()) {
-            String hex = HexFormat.of().withUpperCase().formatHex(keys.next().getFingerprint());
-            if (hex.equals(fingerprint)) {
+            if (KeyRingFiles.hex(keys.next().getFingerprint()).equals(fingerprint)) {
                 return true;
             }
         }

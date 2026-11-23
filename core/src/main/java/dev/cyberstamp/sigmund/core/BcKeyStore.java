@@ -3,27 +3,37 @@ package dev.cyberstamp.sigmund.core;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
 import org.bouncycastle.openpgp.PGPException;
 import org.bouncycastle.openpgp.PGPPublicKey;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.bouncycastle.openpgp.PGPSecretKeyRing;
+import org.bouncycastle.openpgp.PGPSignature;
+import org.bouncycastle.openpgp.PGPSignatureSubpacketVector;
 import org.bouncycastle.openpgp.PGPUtil;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
+import org.bouncycastle.openpgp.operator.bc.BcPGPContentVerifierBuilderProvider;
 
 /**
  * Where Bouncy Castle's keys live: finding them, storing them, and saying where each came from.
@@ -65,11 +75,21 @@ class BcKeyStore {
     record PublicKeySearch(KeyLookup found, UnreadableCertificate unreadable) {
     }
 
+    /** A key a certificate holds as a subkey without a binding signature its primary key made. */
+    private static final int HELD = 0;
+    /** A subkey with a binding signature its primary key made, but no back signature. */
+    private static final int BOUND = 1;
+    /** A subkey bound by its primary key and cross-certified by a back signature it made. */
+    private static final int CROSS_CERTIFIED = 2;
+    /** A certificate's own primary key. */
+    private static final int AS_PRIMARY = 3;
+
     private final Path gnupgHome;
     private final Path certDHome;
     private final Path bcPrivateHome;
     private final Map<String, PGPPublicKeyRing> ephemeralKeys = new ConcurrentHashMap<>();
-    private final Map<String, String> fetchedFrom = new ConcurrentHashMap<>();
+    private final Map<String, TrustRootRef> fetchedFrom = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, PGPPublicKeyRing>> servedCopies = new ConcurrentHashMap<>();
     private final Set<String> warnedUnreadable = ConcurrentHashMap.newKeySet();
     private final boolean persistFetched;
 
@@ -206,55 +226,427 @@ class BcKeyStore {
      * @return the key ring and its source
      */
     private KeyLookup found(PGPPublicKeyRing ring, TrustRootRef store) {
-        String keyserver = fetchedFrom.get(fingerprintHex(ring).toUpperCase());
-        return new KeyLookup(keyserver != null ? TrustRootRef.keyserver(keyserver) : store, ring);
+        TrustRootRef keyservers = fetchedFromSource(ring);
+        return new KeyLookup(keyservers != null ? keyservers : store, ring);
     }
 
     /**
-     * Names the keyserver a key held in memory came from: only fetched keys are kept there,
-     * and {@link #addFetched} records the keyserver as it adds them.
+     * Names the keyservers a fetched key came from, as {@link #addFetched} recorded them, or
+     * {@code null} for a key that was not fetched this session. Every key held in memory was
+     * fetched, so a key found there always has its keyservers recorded.
      */
     private TrustRootRef fetchedFromSource(PGPPublicKeyRing ring) {
-        return TrustRootRef.keyserver(fetchedFrom.get(fingerprintHex(ring).toUpperCase()));
+        return fetchedFrom.get(fingerprintHex(ring));
     }
 
     /**
-     * Adds a key fetched from a keyserver, recording the keyserver it came from.
+     * Adds a key fetched from keyservers, recording the keyservers it came from and keeping
+     * each server's copy.
      *
      * <p>
-     * Unless the store persists fetched keys, the key is kept in memory: available for
-     * verification for the rest of this session, but never written to the cert-d directory,
-     * so fetching a key to check one build does not silently grow the machine's trust
-     * surface. A persisted key is written to cert-d. Either way, a later lookup in this
-     * session reports the keyserver as the key's source.
+     * A keyserver may serve several certificates for one key, and a keyserver that accepts
+     * anyone's uploads may serve a certificate of another primary key that holds the key asked
+     * for as a subkey. Every certificate served that holds the key is considered, grouped by its
+     * primary key, and one group is kept: the one whose primary key is the key asked for; for a
+     * subkey, the one that binds it with a binding signature its primary key made and a back
+     * signature the subkey made, else one whose primary key made a binding signature for it;
+     * when that leaves a choice — a 64-bit key ID two primary keys end with — the group served
+     * first. The other certificates are set aside: neither joined nor kept. So a certificate
+     * served first can never decide which primary key the asked key belongs to, as only the key's
+     * holder can make the signatures that bind it.
      *
-     * @param keyRing the fetched key ring
-     * @param keyserver the keyserver URL it came from
+     * <p>
+     * The kept copies are joined with {@link PGPPublicKeyRing#join} into a single certificate, so
+     * a user ID, a signature or a revocation any one server held is in it, together with every
+     * copy of the same certificate — the same primary key — the local stores already hold, so that
+     * a revocation held only locally is never hidden by the fetch. The joined certificate is stored once and found as it always
+     * was,
+     * and its source names every server whose copy was joined, in the order given. Each kept copy
+     * stays available for the rest of the session to {@link #userIdsServedBy} and
+     * {@link #revocationServedBy}, so a later check can tell which server served what.
+     *
+     * <p>
+     * Unless the store persists fetched keys, the joined certificate is kept in memory:
+     * available for verification for the rest of this session, but never written to the cert-d
+     * directory, so fetching a key to check one build does not silently grow the machine's trust
+     * surface. A persisted certificate is written to cert-d; the copies are kept in memory
+     * either way.
+     *
+     * @param keyId the fingerprint of the primary key or a subkey, or the 64-bit key ID, that
+     *        was asked for
+     * @param served the certificates each keyserver served, by keyserver URL, in the order the
+     *        keyservers are configured; at least one must hold the key asked for
+     * @return the keyservers whose copy was kept, in the order given: the servers that served
+     *         the asked key's certificate, not those whose certificate was set aside
      */
-    void addFetched(PGPPublicKeyRing keyRing, String keyserver) {
-        String fingerprint = fingerprintHex(keyRing).toUpperCase();
+    List<String> addFetched(String keyId, Map<String, List<PGPPublicKeyRing>> served) {
+        Map<String, PGPPublicKeyRing> kept = copiesOfAskedCertificate(keyId, served);
+        PGPPublicKeyRing joined = withLocalCopies(join(kept.values()));
+        String fingerprint = fingerprintHex(joined);
         if (persistFetched) {
-            storeCert(keyRing);
+            storeCert(joined);
         } else {
-            ephemeralKeys.put(fingerprint, keyRing);
+            ephemeralKeys.put(fingerprint, joined);
         }
-        fetchedFrom.put(fingerprint, keyserver);
+        List<String> keptFrom = List.copyOf(kept.keySet());
+        fetchedFrom.put(fingerprint, TrustRootRef.keyservers(keptFrom));
+        servedCopies.put(fingerprint, kept);
+        return keptFrom;
+    }
+
+    private static Map<String, PGPPublicKeyRing> copiesOfAskedCertificate(String keyId,
+            Map<String, List<PGPPublicKeyRing>> served) {
+        Map<String, List<PGPPublicKeyRing>> chosen = bestServedGroup(keyId, groupedByPrimary(keyId, served));
+        if (chosen == null) {
+            throw new IllegalArgumentException("no copy holds " + keyId);
+        }
+        Map<String, PGPPublicKeyRing> kept = new LinkedHashMap<>(chosen.size());
+        chosen.forEach((keyserver, copies) -> kept.put(keyserver, join(copies)));
+        return kept;
     }
 
     /**
-     * Searches the in-memory ephemeral cache for a key matching the given fingerprint.
+     * The certificate of a key among those one keyserver served, chosen as
+     * {@link #addFetched(String, Map)} chooses among every server's, with that server's copies of
+     * it joined.
+     *
+     * @param keyId the fingerprint of the primary key or a subkey, or the 64-bit key ID, that
+     *        was asked for
+     * @param served the certificates the keyserver served, in the order served
+     * @return the certificate, or {@code null} when none of them holds the key
      */
-    private PGPPublicKeyRing findInEphemeral(String fingerprint) {
-        PGPPublicKeyRing direct = ephemeralKeys.get(fingerprint.toUpperCase());
+    static PGPPublicKeyRing certificateAmong(String keyId, List<PGPPublicKeyRing> served) {
+        Map<String, List<PGPPublicKeyRing>> group = bestServedGroup(keyId,
+                groupedByPrimary(keyId, Map.of(keyId, served)));
+        return group == null ? null : join(group.get(keyId));
+    }
+
+    private static Map<String, Map<String, List<PGPPublicKeyRing>>> groupedByPrimary(String keyId,
+            Map<String, List<PGPPublicKeyRing>> served) {
+        Map<String, Map<String, List<PGPPublicKeyRing>>> groups = new LinkedHashMap<>();
+        served.forEach((keyserver, copies) -> copies.stream()
+                .filter(copy -> matchesFingerprint(copy, keyId))
+                .forEach(copy -> groups.computeIfAbsent(fingerprintHex(copy), primary -> new LinkedHashMap<>())
+                        .computeIfAbsent(keyserver, server -> new ArrayList<>())
+                        .add(copy)));
+        return groups;
+    }
+
+    private static Map<String, List<PGPPublicKeyRing>> bestServedGroup(String keyId,
+            Map<String, Map<String, List<PGPPublicKeyRing>>> groups) {
+        Map<String, List<PGPPublicKeyRing>> best = null;
+        int bestStanding = -1;
+        for (Map<String, List<PGPPublicKeyRing>> group : groups.values()) {
+            int standing = standing(group.values().stream().flatMap(List::stream).toList(), keyId);
+            if (standing > bestStanding) {
+                best = group;
+                bestStanding = standing;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Joins every copy of the certificate the stores hold into the fetched one: a key found in a
+     * local store without user IDs is fetched again, and what a copy held must not be lost when
+     * the fetched certificate is found first or replaces it in cert-d. Each store is searched for
+     * a certificate whose primary key is the fetched one's, so another certificate holding that
+     * key as a subkey, found first, never hides the key's own copy in a later store.
+     */
+    private PGPPublicKeyRing withLocalCopies(PGPPublicKeyRing fetched) {
+        List<PGPPublicKeyRing> copies = new ArrayList<>(List.of(fetched));
+        copies.addAll(localCopiesOf(fingerprintHex(fetched)));
+        return join(copies);
+    }
+
+    private List<PGPPublicKeyRing> localCopiesOf(String primary) {
+        List<UnreadableCertificate> ignored = new ArrayList<>();
+        Predicate<PGPPublicKeyRing> isTheCertificate = ring -> fingerprintHex(ring).equalsIgnoreCase(primary);
+        return Stream.of(ephemeralKeys.get(primary), findInGnupgPubring(isTheCertificate, ignored),
+                readCertDCopy(primary, ignored), findInBcPrivate(primary))
+                .filter(Objects::nonNull)
+                .filter(isTheCertificate)
+                .toList();
+    }
+
+    private PGPPublicKeyRing readCertDCopy(String primary, List<UnreadableCertificate> unreadable) {
+        Path certFile = certDFile(primary.toLowerCase());
+        return Files.isRegularFile(certFile) ? readCertDFile(certFile, unreadable) : null;
+    }
+
+    /**
+     * Joins copies of one certificate, in order.
+     *
+     * <p>
+     * A signature the certificate joined so far already holds is removed from the next copy
+     * before {@link PGPPublicKeyRing#join} sees it: Bouncy Castle 1.86 rebuilds a signature it
+     * finds in both from the signature's integers, which a native Ed25519 or Ed448 signature
+     * (RFC 9580 algorithms 27 and 28) does not have, and the certificate it returns can then be
+     * neither encoded nor verified.
+     *
+     * <p>
+     * Copies that cannot be joined fail the fetch of that key, so a claim it signed is
+     * {@code INDETERMINATE}: leaving a copy out instead could leave out a revocation only that
+     * copy carries.
+     *
+     * @throws IllegalStateException if Bouncy Castle cannot join the copies
+     */
+    private static PGPPublicKeyRing join(Iterable<PGPPublicKeyRing> copies) {
+        Iterator<PGPPublicKeyRing> iterator = copies.iterator();
+        PGPPublicKeyRing joined = iterator.next();
+        while (iterator.hasNext()) {
+            joined = join(joined, iterator.next());
+        }
+        return joined;
+    }
+
+    private static PGPPublicKeyRing join(PGPPublicKeyRing joined, PGPPublicKeyRing copy) {
+        try {
+            return PGPPublicKeyRing.join(joined, withoutSignaturesIn(copy, joined));
+        } catch (PGPException e) {
+            throw new IllegalStateException("copies of " + fingerprintHex(joined) + " cannot be joined", e);
+        }
+    }
+
+    /** The copy without the signatures {@code held} already holds on the same key. */
+    private static PGPPublicKeyRing withoutSignaturesIn(PGPPublicKeyRing copy, PGPPublicKeyRing held) {
+        List<PGPPublicKey> keys = new ArrayList<>();
+        Iterator<PGPPublicKey> copyKeys = copy.getPublicKeys();
+        while (copyKeys.hasNext()) {
+            PGPPublicKey key = copyKeys.next();
+            PGPPublicKey heldKey = held.getPublicKey(key.getFingerprint());
+            keys.add(heldKey == null ? key : withoutSignaturesOf(key, heldKey));
+        }
+        return new PGPPublicKeyRing(keys);
+    }
+
+    private static PGPPublicKey withoutSignaturesOf(PGPPublicKey key, PGPPublicKey heldKey) {
+        List<PGPSignature> signatures = new ArrayList<>();
+        key.getSignatures().forEachRemaining(signatures::add);
+        PGPPublicKey stripped = key;
+        for (PGPSignature signature : signatures) {
+            if (holdsSignature(heldKey, signature)) {
+                PGPPublicKey without = PGPPublicKey.removeCertification(stripped, signature);
+                stripped = without != null ? without : stripped;
+            }
+        }
+        return stripped;
+    }
+
+    private static boolean holdsSignature(PGPPublicKey key, PGPSignature wanted) {
+        Iterator<PGPSignature> signatures = key.getSignatures();
+        while (signatures.hasNext()) {
+            if (sameSignature(signatures.next(), wanted)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether two signatures are one: the same type and signature value, which covers all they
+     * sign, whatever unhashed subpackets a server added.
+     */
+    private static boolean sameSignature(PGPSignature one, PGPSignature other) {
+        try {
+            return one.getSignatureType() == other.getSignatureType()
+                    && PGPSignature.isSignatureEncodingEqual(one, other);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * How firmly a set of copies of one certificate holds a key, so that of several
+     * certificates holding it the one its holder bound it to is chosen: {@link #AS_PRIMARY} when
+     * the key is their primary key, {@link #CROSS_CERTIFIED} when a binding signature the primary
+     * key made carries a back signature the subkey made, {@link #BOUND} when the primary key made
+     * a binding signature but the subkey made none, and {@link #HELD} otherwise.
+     */
+    private static int standing(List<PGPPublicKeyRing> copies, String keyId) {
+        int standing = HELD;
+        for (PGPPublicKeyRing copy : copies) {
+            standing = Math.max(standing, standingIn(copy, keyId));
+        }
+        return standing;
+    }
+
+    private static int standingIn(PGPPublicKeyRing copy, String keyId) {
+        PGPPublicKey primary = copy.getPublicKey();
+        if (sameKey(KeyRingFiles.hex(primary.getFingerprint()), keyId)) {
+            return AS_PRIMARY;
+        }
+        int standing = HELD;
+        Iterator<PGPPublicKey> keys = copy.getPublicKeys();
+        while (keys.hasNext()) {
+            PGPPublicKey key = keys.next();
+            if (!key.isMasterKey() && sameKey(KeyRingFiles.hex(key.getFingerprint()), keyId)) {
+                standing = Math.max(standing, bindingStanding(key, primary));
+            }
+        }
+        return standing;
+    }
+
+    private static int bindingStanding(PGPPublicKey subkey, PGPPublicKey primary) {
+        int standing = HELD;
+        Iterator<PGPSignature> bindings = subkey.getSignaturesOfType(PGPSignature.SUBKEY_BINDING);
+        while (bindings.hasNext()) {
+            PGPSignature binding = bindings.next();
+            if (verifiesBinding(binding, primary, primary, subkey)) {
+                if (hasBackSignature(binding, primary, subkey)) {
+                    return CROSS_CERTIFIED;
+                }
+                standing = BOUND;
+            }
+        }
+        return standing;
+    }
+
+    private static boolean hasBackSignature(PGPSignature binding, PGPPublicKey primary, PGPPublicKey subkey) {
+        List<PGPSignature> embedded = new ArrayList<>();
+        try {
+            for (PGPSignatureSubpacketVector area : List.of(binding.getHashedSubPackets(),
+                    binding.getUnhashedSubPackets())) {
+                area.getEmbeddedSignatures().forEach(embedded::add);
+            }
+        } catch (PGPException | RuntimeException e) {
+            return false;
+        }
+        return embedded.stream().anyMatch(signature -> signature.getSignatureType() == PGPSignature.PRIMARYKEY_BINDING
+                && verifiesBinding(signature, subkey, primary, subkey));
+    }
+
+    private static boolean verifiesBinding(PGPSignature signature, PGPPublicKey signer, PGPPublicKey primary,
+            PGPPublicKey subkey) {
+        try {
+            signature.init(new BcPGPContentVerifierBuilderProvider(), signer);
+            return signature.verifyCertification(primary, subkey);
+        } catch (PGPException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Of the entries of a map by primary fingerprint, the one for the certificate that holds a
+     * key most firmly: the entry stored under the key's own fingerprint, else the one whose
+     * copies hold it most firmly (see {@link #standing}), the lowest primary fingerprint among
+     * equals, so that the answer does not depend on the order entries were added in.
+     *
+     * @return the entry's value, or {@code null} when no entry holds the key
+     */
+    private static <T> T holderOf(String fingerprint, Map<String, T> byPrimary,
+            Function<T, List<PGPPublicKeyRing>> copiesOf) {
+        T direct = byPrimary.get(fingerprint.toUpperCase());
         if (direct != null) {
             return direct;
         }
-        for (PGPPublicKeyRing ring : ephemeralKeys.values()) {
-            if (matchesFingerprint(ring, fingerprint)) {
-                return ring;
+        T best = null;
+        int bestStanding = -1;
+        for (String primary : new TreeSet<>(byPrimary.keySet())) {
+            List<PGPPublicKeyRing> copies = copiesOf.apply(byPrimary.get(primary));
+            if (copies.stream().anyMatch(copy -> matchesFingerprint(copy, fingerprint))) {
+                int standing = standing(copies, fingerprint);
+                if (standing > bestStanding) {
+                    best = byPrimary.get(primary);
+                    bestStanding = standing;
+                }
             }
         }
-        return null;
+        return best;
+    }
+
+    /**
+     * Returns the user IDs a keyserver served for a certificate this session.
+     *
+     * <p>
+     * The user IDs of the certificate as that one server served it, decoded as UTF-8 with
+     * invalid bytes replaced — not those of the joined certificate, which may hold more. Empty
+     * when that server served none, did not serve this certificate, its copy does not hold the
+     * fingerprint asked about, or the certificate came from a local store.
+     *
+     * @param fingerprint the fingerprint of the certificate's primary key or a subkey
+     * @param keyserver the keyserver URL
+     * @return the user IDs, in the order the copy holds them
+     */
+    List<String> userIdsServedBy(String fingerprint, String keyserver) {
+        PGPPublicKeyRing copy = servedCopy(fingerprint, keyserver);
+        if (copy == null || !matchesFingerprint(copy, fingerprint)) {
+            return List.of();
+        }
+        List<String> userIds = new ArrayList<>();
+        copy.getPublicKey().getRawUserIDs().forEachRemaining(
+                raw -> userIds.add(new String(raw, StandardCharsets.UTF_8)));
+        return userIds;
+    }
+
+    /**
+     * Returns the keyservers whose copy of a certificate carried a revocation.
+     *
+     * <p>
+     * The signature is compared by its signature value, which covers everything it signs, so a
+     * revocation parsed anew from the joined certificate matches the one in a server's copy, and
+     * so does a copy to whose unhashed area a server added subpackets, which joining the copies
+     * merges. A revocation of the primary key or of a subkey is found alike.
+     *
+     * @param fingerprint the fingerprint of the certificate's primary key or a subkey
+     * @param revocation the revocation signature
+     * @return the keyserver URLs, in the order the copies were given; empty when none carried it
+     */
+    List<String> revocationServedBy(String fingerprint, PGPSignature revocation) {
+        return servedCopiesOf(fingerprint).entrySet().stream()
+                .filter(copy -> carries(copy.getValue(), revocation))
+                .map(Map.Entry::getKey)
+                .toList();
+    }
+
+    /**
+     * Returns the keyservers that served a copy of a key this session.
+     *
+     * <p>
+     * Only servers whose copy holds the key are named: a server whose copy of the certificate
+     * lacks the subkey asked about did not serve that key.
+     *
+     * @param fingerprint the fingerprint of the certificate's primary key or a subkey
+     * @return the keyserver URLs, in the order the copies were given; empty when the
+     *         certificate came from a local store
+     */
+    List<String> keyserversServing(String fingerprint) {
+        return servedCopiesOf(fingerprint).entrySet().stream()
+                .filter(copy -> matchesFingerprint(copy.getValue(), fingerprint))
+                .map(Map.Entry::getKey)
+                .toList();
+    }
+
+    private PGPPublicKeyRing servedCopy(String fingerprint, String keyserver) {
+        return servedCopiesOf(fingerprint).get(keyserver);
+    }
+
+    /**
+     * The copies kept for the certificate that holds a key, chosen as {@link #holderOf} does
+     * when certificates fetched for other keys hold it too.
+     */
+    private Map<String, PGPPublicKeyRing> servedCopiesOf(String fingerprint) {
+        Map<String, PGPPublicKeyRing> copies = holderOf(fingerprint, servedCopies,
+                served -> List.copyOf(served.values()));
+        return copies == null ? Map.of() : copies;
+    }
+
+    private static boolean carries(PGPPublicKeyRing copy, PGPSignature wanted) {
+        Iterator<PGPPublicKey> keys = copy.getPublicKeys();
+        while (keys.hasNext()) {
+            if (holdsSignature(keys.next(), wanted)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Searches the in-memory ephemeral cache for a key matching the given fingerprint: the
+     * certificate of that primary key, else the one that binds it as a subkey most firmly.
+     */
+    private PGPPublicKeyRing findInEphemeral(String fingerprint) {
+        return holderOf(fingerprint, ephemeralKeys, List::of);
     }
 
     /**
@@ -291,29 +683,6 @@ class BcKeyStore {
         String fp = fingerprintHex(secretKeyRing).toLowerCase();
         Path keyFile = secretKeyFile(fp);
         writeKeyRing(keyFile, secretKeyRing);
-    }
-
-    /**
-     * Finds the primary user ID for a key matching the given fingerprint.
-     *
-     * @param fingerprint the uppercase hex fingerprint to search for
-     * @return the primary user ID, or {@code null} if no key or UID found
-     */
-    String findPrimaryUserId(String fingerprint) {
-        KeyLookup found = findPublicKey(fingerprint);
-        return found == null ? null : primaryUserIdOf(found.ring());
-    }
-
-    /**
-     * Returns the first user ID on a key ring, for display: a user ID is self-certified and
-     * proves nothing about who holds the key.
-     *
-     * @param keyRing the key ring
-     * @return the user ID, or {@code null} when the ring carries none
-     */
-    String primaryUserIdOf(PGPPublicKeyRing keyRing) {
-        Iterator<String> uids = keyRing.getPublicKey().getUserIDs();
-        return uids.hasNext() ? uids.next() : null;
     }
 
     /**
@@ -443,22 +812,25 @@ class BcKeyStore {
      * to the legacy {@code pubring.gpg}; a key that cannot be read is recorded and skipped.
      */
     private PGPPublicKeyRing findInGnupgPubring(String fingerprint, List<UnreadableCertificate> unreadable) {
+        return findInGnupgPubring(ring -> matchesFingerprint(ring, fingerprint), unreadable);
+    }
+
+    private PGPPublicKeyRing findInGnupgPubring(Predicate<PGPPublicKeyRing> matches,
+            List<UnreadableCertificate> unreadable) {
         if (gnupgHome == null) {
             return null;
         }
         TrustRootRef source = TrustRootRef.gnupgKeyring(gnupgHome);
         Path pubringKbx = gnupgHome.resolve("pubring.kbx");
         if (Files.isRegularFile(pubringKbx)) {
-            PGPPublicKeyRing result = KeyRingFiles.findInKeyBox(pubringKbx,
-                    ring -> matchesFingerprint(ring, fingerprint), source, unreadable);
+            PGPPublicKeyRing result = KeyRingFiles.findInKeyBox(pubringKbx, matches, source, unreadable);
             if (result != null) {
                 return result;
             }
         }
         Path pubringGpg = gnupgHome.resolve("pubring.gpg");
         if (Files.isRegularFile(pubringGpg)) {
-            return KeyRingFiles.findInKeyRingFile(pubringGpg,
-                    ring -> matchesFingerprint(ring, fingerprint), source, unreadable);
+            return KeyRingFiles.findInKeyRingFile(pubringGpg, matches, source, unreadable);
         }
         return null;
     }
@@ -539,12 +911,9 @@ class BcKeyStore {
      * Checks whether a public key ring contains a key matching the given fingerprint.
      */
     static boolean matchesFingerprint(PGPPublicKeyRing ring, String fingerprint) {
-        String upper = fingerprint.toUpperCase();
         Iterator<PGPPublicKey> keys = ring.getPublicKeys();
         while (keys.hasNext()) {
-            PGPPublicKey key = keys.next();
-            String keyFp = bytesToHex(key.getFingerprint()).toUpperCase();
-            if (keyFp.equals(upper) || keyFp.endsWith(upper) || upper.endsWith(keyFp)) {
+            if (sameKey(KeyRingFiles.hex(keys.next().getFingerprint()), fingerprint)) {
                 return true;
             }
         }
@@ -580,29 +949,51 @@ class BcKeyStore {
      * Writes a key ring to a file, creating parent directories as needed.
      * Secret key files (under bcPrivateHome) are created with owner-only (600) permissions
      * from the start to avoid a TOCTOU window where the file is world-readable.
+     *
+     * <p>
+     * The key ring is encoded in full before any file is touched, then written to a temporary
+     * file beside the target and moved over it, atomically where the file system can: a key ring
+     * that cannot be encoded, or a write that fails, leaves the file the store held as it was.
      */
     private void writeKeyRing(Path file, org.bouncycastle.openpgp.PGPKeyRing keyRing) {
         try {
+            byte[] encoded = keyRing.getEncoded();
             Files.createDirectories(file.getParent());
-            boolean isPrivateKey = bcPrivateHome != null && file.startsWith(bcPrivateHome);
-            if (isPrivateKey) {
-                try {
-                    Files.deleteIfExists(file);
-                    Files.createFile(file, OWNER_ONLY_ATTR);
-                    try (OutputStream out = Files.newOutputStream(file,
-                            StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
-                        keyRing.encode(out);
-                    }
-                    return;
-                } catch (UnsupportedOperationException e) {
-                    // non-POSIX filesystem — fall through to default write
-                }
-            }
-            try (OutputStream out = Files.newOutputStream(file)) {
-                keyRing.encode(out);
+            Path temporary = temporaryFileBeside(file, bcPrivateHome != null && file.startsWith(bcPrivateHome));
+            try {
+                Files.write(temporary, encoded);
+                replace(temporary, file);
+            } finally {
+                Files.deleteIfExists(temporary);
             }
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to write key to " + file, e);
+        }
+    }
+
+    /**
+     * A new, empty file in the directory of {@code file}, which the written key ring is moved
+     * from, so that a store another tool shares never holds a partly written certificate. A
+     * secret key's file is readable by its owner only from the start; a certificate's gets the
+     * default permissions.
+     */
+    private static Path temporaryFileBeside(Path file, boolean secret) throws IOException {
+        Path temporary = file.resolveSibling("." + file.getFileName() + "." + System.nanoTime() + ".tmp");
+        if (secret) {
+            try {
+                return Files.createFile(temporary, OWNER_ONLY_ATTR);
+            } catch (UnsupportedOperationException e) {
+                // non-POSIX filesystem — fall through to default permissions
+            }
+        }
+        return Files.createFile(temporary);
+    }
+
+    private static void replace(Path temporary, Path file) throws IOException {
+        try {
+            Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -626,24 +1017,14 @@ class BcKeyStore {
      * Extracts the primary key fingerprint as a hex string from a public key ring.
      */
     private static String fingerprintHex(PGPPublicKeyRing ring) {
-        return bytesToHex(ring.getPublicKey().getFingerprint());
+        return KeyRingFiles.hex(ring.getPublicKey().getFingerprint());
     }
 
     /**
      * Extracts the primary key fingerprint as a hex string from a secret key ring.
      */
     private static String fingerprintHex(PGPSecretKeyRing ring) {
-        return bytesToHex(ring.getPublicKey().getFingerprint());
+        return KeyRingFiles.hex(ring.getPublicKey().getFingerprint());
     }
 
-    /**
-     * Converts a byte array to an uppercase hex string.
-     */
-    static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder(bytes.length * 2);
-        for (byte b : bytes) {
-            sb.append(String.format("%02X", b));
-        }
-        return sb.toString();
-    }
 }

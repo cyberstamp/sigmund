@@ -13,7 +13,7 @@ import java.util.Set;
  *        listed in a keybox blob's index, the primary a cert-d file is named after, or the key a
  *        keyserver was asked for; empty when they cannot be told
  * @param cause why it could not be read, decided from its packets
- * @param message what Bouncy Castle reported, for the reason detail
+ * @param message what Bouncy Castle reported, for the detail
  */
 record UnreadableCertificate(TrustRootRef source, Path file, Set<String> keys, Cause cause,
         String message) {

@@ -38,13 +38,17 @@ import java.util.List;
  *        lets a claim no installed tool can check say whose signature it would be, so that a
  *        requirement left unmet only for want of such a claim reads as unsupported rather than
  *        as the wrong signer
- * @param reasonDetail why the reason applies, in the verifying tool's words — a key no keyserver
- *        has, or one served without the self-signature that binds it — or {@code null}; it
- *        explains the reason and never changes the outcome
+ * @param detail why the outcome came out as it did, in the verifying tool's words — a key no
+ *        keyserver has, a key revoked, or bytes that do not match — or {@code null}; allowed on
+ *        an indeterminate or failed claim, never on a verified one, and it never changes the
+ *        outcome
  * @param verifyResult the verifying tool's own result this record was built from, for format
  *        details such as an OpenPGP key ID or packet version; {@code null} when it was not built
  *        from one. It is what the tool said, not what the claim established: {@code outcome} can
  *        differ, as when a verified signature's signer could not be resolved
+ * @param displayNameVouchedBy the issuer URL — a directory or an OIDC provider — that vouches for
+ *        {@code attesterDisplayName}, or {@code null} when none does. It decides only how the name
+ *        is labelled when shown; it is never a credential and never changes the outcome
  */
 public record ClaimResult(
         String kind,
@@ -60,8 +64,9 @@ public record ClaimResult(
         String algorithm,
         String verifiedBy,
         Credential declaredIssuer,
-        String reasonDetail,
-        VerifyResult verifyResult) {
+        String detail,
+        VerifyResult verifyResult,
+        String displayNameVouchedBy) {
 
     /**
      * Creates a result for a claim whose evidence names no issuer by full fingerprint.
@@ -85,14 +90,14 @@ public record ClaimResult(
             ClaimTimeSource claimTimeSource, Instant verifiedAt, String algorithm,
             String verifiedBy) {
         this(kind, outcome, reason, attesterCredentials, attesterDisplayName, trustRoot, evidence,
-                claimTime, claimTimeSource, verifiedAt, algorithm, verifiedBy, null, null, null);
+                claimTime, claimTimeSource, verifiedAt, algorithm, verifiedBy, null, null, null, null);
     }
 
     /**
      * Normalizes the optional components and rejects results that cannot be explained.
      *
-     * @throws IllegalArgumentException if the outcome and reason disagree, a detail explains
-     *         no reason, or the evidence, kind or outcome is missing
+     * @throws IllegalArgumentException if the outcome and reason disagree, a verified claim
+     *         carries a detail, or the evidence, kind or outcome is missing
      */
     public ClaimResult {
         if (kind == null || kind.isBlank()) {
@@ -108,8 +113,8 @@ public record ClaimResult(
             throw new IllegalArgumentException(
                     "a " + outcome + " claim must not carry an indeterminate reason");
         }
-        if (reason == null && reasonDetail != null) {
-            throw new IllegalArgumentException("a reason detail needs a reason to explain");
+        if (outcome == ClaimOutcome.VERIFIED && detail != null) {
+            throw new IllegalArgumentException("a verified claim carries no detail");
         }
         if (evidence == null) {
             throw new IllegalArgumentException("a claim result must name its evidence");
@@ -145,7 +150,7 @@ public record ClaimResult(
         return new ClaimResult(kind, result.outcome(), result.reason(), provenCredentials,
                 result.signerDisplayName(), trustRoot, evidence,
                 claim.claimTime(), claim.claimTimeSource(), verifiedAt, result.algorithm(),
-                verifiedBy, declaredIssuerOf(claim), result.reasonDetail(), result);
+                verifiedBy, declaredIssuerOf(claim), result.detail(), result, null);
     }
 
     /**
@@ -175,7 +180,7 @@ public record ClaimResult(
         }
         return new ClaimResult(kind, ClaimOutcome.VERIFIED, null, List.of(declaredIssuer),
                 attesterDisplayName, trustRoot, evidence, claimTime, claimTimeSource, verifiedAt,
-                algorithm, verifiedBy, declaredIssuer, null, null);
+                algorithm, verifiedBy, declaredIssuer, null, null, displayNameVouchedBy);
     }
 
     /**
@@ -190,7 +195,7 @@ public record ClaimResult(
         credentials.addAll(additional);
         return new ClaimResult(kind, outcome, reason, credentials, attesterDisplayName,
                 trustRoot, evidence, claimTime, claimTimeSource, verifiedAt, algorithm,
-                verifiedBy, declaredIssuer, reasonDetail, verifyResult);
+                verifiedBy, declaredIssuer, detail, verifyResult, displayNameVouchedBy);
     }
 
     /**
@@ -204,7 +209,67 @@ public record ClaimResult(
         return new ClaimResult(kind, ClaimOutcome.INDETERMINATE, unresolvedReason,
                 attesterCredentials, attesterDisplayName, trustRoot, evidence, claimTime,
                 claimTimeSource, verifiedAt, algorithm, verifiedBy, declaredIssuer, null,
-                verifyResult);
+                verifyResult, displayNameVouchedBy);
+    }
+
+    /**
+     * Returns a copy recording which issuer vouches for the displayed name.
+     *
+     * @param issuer the issuer URL, or {@code null} for none
+     * @return the copy
+     */
+    public ClaimResult withDisplayNameVouchedBy(String issuer) {
+        return new ClaimResult(kind, outcome, reason, attesterCredentials, attesterDisplayName,
+                trustRoot, evidence, claimTime, claimTimeSource, verifiedAt, algorithm,
+                verifiedBy, declaredIssuer, detail, verifyResult, issuer);
+    }
+
+    /**
+     * Returns the display name followed by who vouches for it, so a name read from a signed
+     * key is never mistaken for a verified one: {@code (address verified by keys.openpgp.org)}
+     * for a directory, {@code (attested by <issuer URL>)} for an OIDC provider, and
+     * {@code (unverified)} when no listed issuer vouches for it.
+     *
+     * @return the labelled name, or {@code null} when the claim has no display name
+     */
+    public String labeledDisplayName() {
+        if (attesterDisplayName == null) {
+            return null;
+        }
+        return attesterDisplayName + voucherLabel();
+    }
+
+    /**
+     * Says why this claim reached its outcome, as the reports print it: the reason followed by the
+     * tool's detail, or the reason alone when there is no detail. A claim without a reason yields
+     * its detail alone; by the constructor's rules only an {@code INDETERMINATE} claim carries a
+     * reason and a {@code VERIFIED} one carries no detail, so today that is a {@code FAILED} claim's
+     * detail.
+     *
+     * @return the explanation, or {@code null} when the claim carries neither reason nor detail
+     */
+    String explanation() {
+        if (reason == null) {
+            return detail;
+        }
+        if (detail == null) {
+            return reason.name();
+        }
+        return reason + ": " + detail;
+    }
+
+    private String voucherLabel() {
+        if (displayNameVouchedBy == null) {
+            return " (unverified)";
+        }
+        if (IssuerKind.of(displayNameVouchedBy) == IssuerKind.OPENPGP_DIRECTORY) {
+            return " (address verified by " + hostOf(displayNameVouchedBy) + ")";
+        }
+        return " (attested by " + displayNameVouchedBy + ")";
+    }
+
+    private static String hostOf(String url) {
+        return url.replaceFirst("^[A-Za-z][A-Za-z0-9+.-]*://", "").replaceFirst("[/?#].*$", "");
     }
 
     /**

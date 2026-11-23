@@ -175,12 +175,13 @@ abstract class AbstractDependencyMojo extends AbstractSigmundMojo {
      *
      * @param verificationConfig the resolved verification configuration
      * @param toolsConfig the resolved tools configuration
+     * @param issuers the issuers of the configuration in use, empty when there is none
      * @return the configured signature inspector
      * @throws MojoExecutionException if construction fails
      */
-    protected SignatureInspector buildInspector(VerificationConfig verificationConfig, ToolsConfig toolsConfig)
-            throws MojoExecutionException {
-        Sigmund sigmund = buildSigmund(verificationConfig, toolsConfig);
+    protected SignatureInspector buildInspector(VerificationConfig verificationConfig, ToolsConfig toolsConfig,
+            List<String> issuers) throws MojoExecutionException {
+        Sigmund sigmund = buildSigmund(verificationConfig, toolsConfig, issuers);
         return SignatureInspector.builder()
                 .log(getLog())
                 .sigmund(sigmund)

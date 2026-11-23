@@ -88,7 +88,7 @@ class UnreadableKeysTest {
         VerifyResult result = verifyWith(certDOnly());
 
         assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
-        assertThat(result.reasonDetail())
+        assertThat(result.detail())
                 .startsWith("the copy from " + dir.resolve("cert-d") + " cannot be read: ");
     }
 
@@ -123,7 +123,7 @@ class UnreadableKeysTest {
             VerifyResult first = verifyWith(store);
             verifyWith(store);
 
-            assertThat(first.reasonDetail()).isEqualTo("no local key store has it, and key fetching is off");
+            assertThat(first.detail()).isEqualTo("no local key store has it, and key fetching is off");
             assertThat(warnings).singleElement().asString()
                     .startsWith(damaged + " in openpgp-cert-d " + dir.resolve("cert-d") + " cannot be read (");
         } finally {
@@ -142,7 +142,7 @@ class UnreadableKeysTest {
         VerifyResult result = verifyWith(certDOnly());
 
         assertThat(result.isIndeterminate(IndeterminateReason.KEY_UNAVAILABLE)).isTrue();
-        assertThat(result.reasonDetail()).isEqualTo("no local key store has it, and key fetching is off");
+        assertThat(result.detail()).isEqualTo("no local key store has it, and key fetching is off");
     }
 
     @Test

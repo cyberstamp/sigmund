@@ -12,8 +12,16 @@ class VerificationConfigTest {
         var config = VerificationConfig.DEFAULT;
         assertThat(config.resolveSigners()).isTrue();
         assertThat(config.importToKeyring()).isFalse();
-        assertThat(config.keyservers()).isEqualTo(List.of(VerificationConfig.DEFAULT_KEYSERVER));
+        assertThat(config.keyservers()).isEqualTo(VerificationConfig.DEFAULT_KEYSERVERS);
         assertThat(config.toolchain()).isNull();
+    }
+
+    @Test
+    void defaultKeyserversAreKeysOpenpgpOrgThenUbuntu() {
+        assertThat(VerificationConfig.DEFAULT.keyservers())
+                .isEqualTo(List.of("hkps://keys.openpgp.org", "hkps://keyserver.ubuntu.com"));
+        assertThat(VerificationConfig.DEFAULT_KEYSERVERS)
+                .isEqualTo(List.of("hkps://keys.openpgp.org", "hkps://keyserver.ubuntu.com"));
     }
 
     @Test
@@ -31,6 +39,6 @@ class VerificationConfigTest {
     @Test
     void nullKeyserversFallsBackToDefault() {
         var config = new VerificationConfig(true, false, null, null);
-        assertThat(config.keyservers()).isEqualTo(List.of(VerificationConfig.DEFAULT_KEYSERVER));
+        assertThat(config.keyservers()).isEqualTo(VerificationConfig.DEFAULT_KEYSERVERS);
     }
 }

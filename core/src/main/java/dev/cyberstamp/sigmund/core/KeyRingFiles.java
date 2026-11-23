@@ -81,15 +81,23 @@ final class KeyRingFiles {
     }
 
     /**
-     * Reads a certificate a keyserver served.
+     * Reads the certificates a keyserver served.
+     *
+     * <p>
+     * A keyserver may serve several certificates for one key, and every one is read: which of
+     * them is the certificate of the key asked for is decided from their signatures, not from
+     * the order they were served in. A certificate that cannot be read is recorded and the next
+     * one is still read; a body holding no certificate at all is recorded as a copy of the key
+     * asked for that cannot be read.
      *
      * @param body what the keyserver returned, armored or binary
      * @param keyserver the keyserver URL
      * @param keyId the key ID or fingerprint the keyserver was asked for
-     * @param unreadable where a copy that cannot be read is recorded, as a copy of that key
-     * @return the certificate, or {@code null} when it cannot be read
+     * @param unreadable where a copy that cannot be read is recorded, with the keys its packets
+     *        hold, else as a copy of that key
+     * @return the certificates read, in the order served; empty when none can be read
      */
-    static PGPPublicKeyRing readServed(byte[] body, String keyserver, String keyId,
+    static List<PGPPublicKeyRing> readServed(byte[] body, String keyserver, String keyId,
             List<UnreadableCertificate> unreadable) {
         TrustRootRef source = TrustRootRef.keyserver(keyserver);
         byte[] data;
@@ -98,13 +106,29 @@ final class KeyRingFiles {
         } catch (IOException | RuntimeException e) {
             unreadable.add(new UnreadableCertificate(source, null, Set.of(keyId),
                     UnreadableCertificate.Cause.DAMAGED, messageOf(e)));
-            return null;
+            return List.of();
         }
-        try {
-            return parse(data);
-        } catch (IOException | RuntimeException e) {
+        KeyRingSplit split = splitKeyRings(data);
+        List<PGPPublicKeyRing> rings = new ArrayList<>(split.rings.size());
+        for (byte[] encoded : split.rings()) {
+            PGPPublicKeyRing ring = readServedRing(encoded, source, keyId, unreadable);
+            if (ring != null) {
+                rings.add(ring);
+            }
+        }
+        if (split.problem() != null || split.rings().isEmpty()) {
             unreadable.add(new UnreadableCertificate(source, null, Set.of(keyId), causeOf(data),
-                    messageOf(e)));
+                    split.problem() != null ? split.problem() : "no certificate in what was served"));
+        }
+        return rings;
+    }
+
+    private static PGPPublicKeyRing readServedRing(byte[] encoded, TrustRootRef source, String keyId,
+            List<UnreadableCertificate> unreadable) {
+        try {
+            return parse(encoded);
+        } catch (IOException | RuntimeException e) {
+            unreadable.add(unreadable(encoded, source, null, Set.of(keyId), messageOf(e)));
             return null;
         }
     }
@@ -324,7 +348,14 @@ final class KeyRingFiles {
         return digest.digest(body);
     }
 
-    private static String hex(byte[] bytes) {
+    /**
+     * Formats bytes, such as a fingerprint, as uppercase hex: the form fingerprints take throughout
+     * Sigmund, so two formatted fingerprints compare with {@code equals}.
+     *
+     * @param bytes the bytes to format
+     * @return their uppercase hex digits, two per byte
+     */
+    static String hex(byte[] bytes) {
         return HexFormat.of().withUpperCase().formatHex(bytes);
     }
 
@@ -441,7 +472,7 @@ final class KeyRingFiles {
     }
 
     /**
-     * Names what Bouncy Castle reported reading a copy, for a reason detail.
+     * Names what Bouncy Castle reported reading a copy, for a detail.
      */
     private static String messageOf(Exception e) {
         return e.getMessage() != null && !e.getMessage().isBlank()

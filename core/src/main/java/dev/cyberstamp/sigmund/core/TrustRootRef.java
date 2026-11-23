@@ -1,6 +1,7 @@
 package dev.cyberstamp.sigmund.core;
 
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * The trust root a claim was verified against.
@@ -78,7 +79,26 @@ public record TrustRootRef(String kind, String identifier) {
      * @return the reference
      */
     public static TrustRootRef keyserver(String url) {
-        return new TrustRootRef(KIND_OPENPGP_KEYSERVER, url);
+        return keyservers(List.of(url));
+    }
+
+    /**
+     * Creates a reference to several keyservers that together supplied one OpenPGP key, as a
+     * merged copy of the key does.
+     *
+     * <p>
+     * The identifier is the URLs joined by {@code ", "} in the order given. It is recorded and
+     * displayed for the reader; it is never compared with an issuer or any other identifier.
+     *
+     * @param urls the keyserver URLs, in the order they were consulted; must not be empty
+     * @return the reference
+     * @throws IllegalArgumentException if no list or an empty one is given
+     */
+    public static TrustRootRef keyservers(List<String> urls) {
+        if (urls == null || urls.isEmpty()) {
+            throw new IllegalArgumentException("at least one keyserver is required");
+        }
+        return new TrustRootRef(KIND_OPENPGP_KEYSERVER, String.join(", ", urls));
     }
 
     /**

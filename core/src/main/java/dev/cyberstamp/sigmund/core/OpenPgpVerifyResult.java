@@ -39,8 +39,8 @@ public final class OpenPgpVerifyResult extends VerifyResult {
 
     private OpenPgpVerifyResult(ClaimOutcome outcome, IndeterminateReason reason,
             String signerDisplayName, String algorithm, int version, String keyId,
-            String fingerprint, String primaryFingerprint, TrustRootRef keySource, String reasonDetail) {
-        super(outcome, reason, signerDisplayName, algorithm, reasonDetail);
+            String fingerprint, String primaryFingerprint, TrustRootRef keySource, String detail) {
+        super(outcome, reason, signerDisplayName, algorithm, detail);
         this.version = version;
         this.keyId = keyId;
         this.fingerprint = fingerprint;
@@ -64,7 +64,7 @@ public final class OpenPgpVerifyResult extends VerifyResult {
      */
     public OpenPgpVerifyResult withKeyFingerprints(String signingFingerprint, String primary) {
         return new OpenPgpVerifyResult(outcome(), reason(), signerDisplayName(), algorithm(),
-                version, keyId, signingFingerprint, primary, keySource, reasonDetail());
+                version, keyId, signingFingerprint, primary, keySource, detail());
     }
 
     /**
@@ -75,7 +75,7 @@ public final class OpenPgpVerifyResult extends VerifyResult {
      */
     public OpenPgpVerifyResult withKeySource(TrustRootRef source) {
         return new OpenPgpVerifyResult(outcome(), reason(), signerDisplayName(), algorithm(),
-                version, keyId, fingerprint, primaryFingerprint, source, reasonDetail());
+                version, keyId, fingerprint, primaryFingerprint, source, detail());
     }
 
     /**
@@ -88,16 +88,18 @@ public final class OpenPgpVerifyResult extends VerifyResult {
     }
 
     /**
-     * Returns a copy saying why its reason applies, such as which of the situations
-     * {@link IndeterminateReason#KEY_UNAVAILABLE} covers the key is in.
+     * Returns a copy saying why the outcome came out as it did: for an indeterminate result,
+     * such as which of the situations {@link IndeterminateReason#KEY_UNAVAILABLE} covers the key
+     * is in; for a failed one, which carries no reason, what failed, such as the revocation of
+     * the key. See {@link VerifyResult#detail()}.
      *
-     * @param reasonDetail why the reason applies
+     * @param detail why the outcome came out as it did, or {@code null} for none
      * @return the copy
-     * @throws IllegalArgumentException if this result has no reason to explain
+     * @throws IllegalArgumentException if this result is verified, which carries no detail
      */
-    public OpenPgpVerifyResult withReasonDetail(String reasonDetail) {
+    public OpenPgpVerifyResult withDetail(String detail) {
         return new OpenPgpVerifyResult(outcome(), reason(), signerDisplayName(), algorithm(),
-                version, keyId, fingerprint, primaryFingerprint, keySource, reasonDetail);
+                version, keyId, fingerprint, primaryFingerprint, keySource, detail);
     }
 
     /**
