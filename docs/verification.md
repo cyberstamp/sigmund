@@ -237,7 +237,7 @@ third outcome: only `FAILED` is an attack signal. The reasons are:
 | `DISCOVERY_UNAVAILABLE` | Evidence might exist but the source could not be queried | yes |
 | `TOOL_UNAVAILABLE` | The verification tool could not be run, or broke while running | yes |
 | `UNSUPPORTED_ALGORITHM` | No installed tool can check this signature, or it uses an algorithm Sigmund does not accept (see below) | no |
-| `EVIDENCE_MALFORMED` | The signature or bundle could not be parsed | no |
+| `EVIDENCE_MALFORMED` | The signature or bundle could not be parsed, or an OpenPGP signature is not a signature over a document | no |
 
 A transient reason may resolve on a later run; a permanent one will not without
 installing different tooling or fixing the evidence.
@@ -554,6 +554,12 @@ home directory setting points at a directory it can use.
 
 The signature or Sigstore bundle could not be parsed — a truncated or hand-edited file. Fetch it
 again.
+
+An OpenPGP signature whose type is not a binary or text document signature — a certification, a
+standalone or a timestamp signature — is reported the same way, with the detail
+`a signature of type 0x<nn> is not a signature over a document`, and no tool is asked: it says
+nothing about the artifact even when it was computed over its bytes, and `gpg`, `sq` and Bouncy
+Castle each treat it differently, so the answer must not depend on which one is asked.
 
 ### `FAILED`
 

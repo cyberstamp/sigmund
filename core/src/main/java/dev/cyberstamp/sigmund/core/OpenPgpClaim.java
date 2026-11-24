@@ -26,6 +26,9 @@ public record OpenPgpClaim(
         int algorithmId,
         Instant creationTime) implements Claim {
 
+    private static final int BINARY_DOCUMENT = 0x00;
+    private static final int CANONICAL_TEXT_DOCUMENT = 0x01;
+
     /**
      * {@inheritDoc}
      *
@@ -48,5 +51,29 @@ public record OpenPgpClaim(
     @Override
     public ClaimTimeSource claimTimeSource() {
         return ClaimTimeSource.SIGNER;
+    }
+
+    /**
+     * The signature type of the block (RFC 9580 §5.2.1), read from its packet.
+     *
+     * @return the type, or {@code -1} when the block is not a bare signature packet or the type
+     *         cannot be read
+     */
+    public int signatureType() {
+        return AscCombiner.inspectSignaturePacket(armoredBlock).signatureType();
+    }
+
+    /**
+     * Whether the block is a signature that is not made over a document: one whose type is
+     * readable and is neither a binary (0x00) nor a canonical text (0x01) document signature.
+     * Such a block — a certification, a standalone or timestamp signature — asserts nothing
+     * about an artifact even when it was computed over its bytes, and no backend verifies it as
+     * if it did.
+     *
+     * @return {@code true} for a readable type other than a document signature
+     */
+    public boolean isNonDocumentSignature() {
+        int type = signatureType();
+        return type >= 0 && type != BINARY_DOCUMENT && type != CANONICAL_TEXT_DOCUMENT;
     }
 }
