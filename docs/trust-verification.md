@@ -405,9 +405,10 @@ An artifact may carry several claims — a hybrid `.asc` with a classic and a po
 signature is two. Its outcome follows from them in a fixed order:
 
 1. **Any claim `FAILED` → `FAILED`.** A valid signature alongside a failing one does not mask it.
-2. **Claims no installed tool supports are set aside.** A post-quantum block that only `sq` can
-   check is ignored when `sq` is not installed, so the classic block decides — and a block an
-   attacker appends gains nothing, since only claims that verified count.
+2. **Claims no installed tool supports are set aside.** A post-quantum block, which only
+   Bouncy Castle and `sq` check, is ignored when the toolchain holds neither, so the classic
+   block decides — and a block an attacker appends gains nothing, since only claims that
+   verified count.
 3. **No rule matches → `NOT_CONFIGURED`.**
 4. **The rule's requirements are met → `SATISFIED`.** Under the default `extra-claims: reject`,
    only if no other verified claim comes from a signer the rule does not name (`UNSATISFIED`)
@@ -759,7 +760,8 @@ This usually means:
 ### An artifact is INDETERMINATE
 
 A claim was found but could not be checked; the reason in the report says why — usually a key no
-store or keyserver could supply in usable form, or a post-quantum block without `sq`. See
+store or keyserver could supply in usable form, or a post-quantum block when the toolchain holds
+neither `bc` nor `sq`. See
 [Signature Verification troubleshooting](verification.md#troubleshooting) for each reason and what
 to do. A rule can tolerate it while you sort it out (`on-indeterminate: warn`), but it is not
 accepted as `SATISFIED`.

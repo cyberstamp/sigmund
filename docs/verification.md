@@ -166,7 +166,7 @@ Sigmund supports four verification backends:
 
 | Tool | Availability | Format | v4 Support | v6 Support | PQC Support |
 |------|--------------|--------|------------|------------|-------------|
-| **BC** | Always (pure Java) | OpenPGP | Yes | Yes (classic algorithms) | No — Bouncy Castle 1.86 cannot read ML-DSA keys |
+| **BC** | Always (pure Java) | OpenPGP | Yes | Yes | Yes (RFC 9980, Bouncy Castle 1.87+) |
 | **sq** | Optional (requires Sequoia CLI) | OpenPGP | Yes | Yes | Yes (RFC 9980) |
 | **gpg** | Optional (requires GnuPG) | OpenPGP | Yes | No | No |
 | **sigstore** | Optional (`sigmund-sigstore` module) | Sigstore | N/A | N/A | N/A |
@@ -196,14 +196,14 @@ This fallthrough is important because each tool has access to different key stor
 
 ### Tool Capabilities
 
-**BC (Bouncy Castle)** handles any OpenPGP signature with classical algorithms (RSA, EdDSA, ECDSA). It does not take post-quantum signatures: Bouncy Castle 1.86 cannot read an ML-DSA key, so such a block goes to `sq`, or is `INDETERMINATE [UNSUPPORTED_ALGORITHM]` when no tool in the toolchain reads it. It searches for the signing key in:
+**BC (Bouncy Castle)** handles any OpenPGP signature with classical algorithms (RSA, EdDSA, ECDSA) and the ML-DSA composites of RFC 9980 (ML-DSA-65+Ed25519, ML-DSA-87+Ed448). It does not take SLH-DSA signatures, so such a block goes to `sq`, or is `INDETERMINATE [UNSUPPORTED_ALGORITHM]` when no tool in the toolchain reads it. It searches for the signing key in:
 - GnuPG pubring (`~/.gnupg/pubring.kbx`)
 - Shared certificate directory (`~/.local/share/pgp.cert.d`), the store `sq` also uses
 - Keys fetched in this session (in memory)
 
 BC returns `INDETERMINATE [KEY_UNAVAILABLE]` if the signing key is not found in any of these locations. A stored certificate BC cannot read is never taken for a missing one, and does not hide the keys stored next to it:
 
-- the keys a certificate holds are read from its packets even when Bouncy Castle cannot parse it, so an unreadable certificate concerns only its own keys — an `sq` post-quantum certificate in the shared cert-d does not affect other keys;
+- the keys a certificate holds are read from its packets even when Bouncy Castle cannot parse it, so an unreadable certificate concerns only its own keys and does not affect the others in the shared cert-d;
 - a copy of the signing key with an algorithm Bouncy Castle does not know is `UNSUPPORTED_ALGORITHM` with the detail "Bouncy Castle cannot read the copy from …", so the next tool, such as `sq`, still answers; a subkey of an unknown algorithm is dropped and the rest of its certificate used;
 - a damaged copy of the signing key is `KEY_UNAVAILABLE` with the detail "the copy from … cannot be read: …", and so is a copy a keyserver served that does not parse;
 - a damaged file whose keys cannot be told apart concerns no key in particular: it is logged once as a warning naming the file, not reported with each signature.

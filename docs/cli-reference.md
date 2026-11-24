@@ -80,10 +80,10 @@ sigmund keygen --userid <USER_ID> [options]
 |--------|----------|---------|-------------|
 | `--userid` | Yes | — | User ID in canonical form (e.g., `"Alice <alice@example.com>"`) |
 | `--cipher-suite` | No | `tools.bc.cipher-suite`, else `ed25519` | Cipher suite for the key |
-| `--credential-type` | No | `pgp4` | Key version: `pgp4` or `pgp6`. v4 is the default — the version keyservers serve and GnuPG signs with; v6 is available for `ed25519`, `ed448` (v6 only) and `rsa4096`; ECDSA suites are v4 only |
+| `--credential-type` | No | `pgp4` | Key version: `pgp4` or `pgp6`. v4 is the default — the version keyservers serve and GnuPG signs with; v6 is available for `ed25519`, `ed448` (v6 only), `rsa4096`, `mldsa65-ed25519` and `mldsa87-ed448` (v6 only); ECDSA suites are v4 only |
 | `--passphrase-env` | No | `SIGMUND_BC_PASSPHRASE` | Environment variable containing the key passphrase |
 
-**Bouncy Castle cipher suites:** `ed25519`, `ed448`, `rsa4096`, `nistp256`, `nistp384`, `nistp521`
+**Bouncy Castle cipher suites:** `ed25519`, `ed448`, `rsa4096`, `nistp256`, `nistp384`, `nistp521`, `mldsa65-ed25519`, `mldsa87-ed448`
 
 **Examples:**
 

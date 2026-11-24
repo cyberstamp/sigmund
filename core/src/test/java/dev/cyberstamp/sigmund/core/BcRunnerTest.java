@@ -185,6 +185,28 @@ class BcRunnerTest {
                     .hasMessageContaining("ed448 produces pgp6 keys only");
         }
 
+        @ParameterizedTest
+        @ValueSource(strings = { "mldsa65-ed25519", "mldsa87-ed448" })
+        void anMlDsaKeyIsAV6KeySigningWithItsMlDsaSubkey(String suite, @TempDir Path dir) {
+            BcKeyStore store = store(dir);
+
+            String fingerprint = BcTestKeys.generate(store, "A <a@example.com>", suite, Credential.TYPE_PGP6);
+
+            assertThat(typeOf(store, fingerprint)).isEqualTo(Credential.TYPE_PGP6);
+            try (BcRunner runner = new BcRunner(store, fingerprint, null)) {
+                assertThat(runner.signingInfo().get(0).algorithm())
+                        .isEqualTo(suite.startsWith("mldsa65") ? "ML-DSA-65+Ed25519" : "ML-DSA-87+Ed448");
+            }
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = { "mldsa65-ed25519", "mldsa87-ed448" })
+        void anMlDsaKeyIsV6Only(String suite, @TempDir Path dir) {
+            assertThatThrownBy(() -> BcTestKeys.generate(store(dir), "A <a@example.com>", suite, null))
+                    .isInstanceOf(ToolExecutionException.class)
+                    .hasMessageContaining(suite + " produces pgp6 keys only");
+        }
+
         @Test
         void anUnknownCredentialTypeIsRejected(@TempDir Path dir) {
             assertThatThrownBy(() -> BcTestKeys.generate(store(dir), "A <a@example.com>", "ed25519", "sigstore"))
@@ -1115,11 +1137,11 @@ class BcRunnerTest {
     }
 
     @Test
-    void canVerifyDeclinesPostQuantumSignatures() {
+    void canVerifyTakesThePostQuantumSignatureAlgorithmsAndDeclinesMlKem() {
         try (BcRunner runner = createVerifyOnly(Path.of(System.getProperty("java.io.tmpdir")))) {
             for (int algorithmId = 30; algorithmId <= 36; algorithmId++) {
                 assertThat(runner.canVerify(new OpenPgpClaim("block", 6, "FP", algorithmId, null)))
-                        .as("algorithm %d", algorithmId).isFalse();
+                        .as("algorithm %d", algorithmId).isEqualTo(algorithmId <= 34);
             }
         }
     }
