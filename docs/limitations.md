@@ -29,7 +29,7 @@ A v4 Ed25519 key is written in the legacy EdDSA encoding: GnuPG 2.4 reads Ed2551
 
 ## Not every BC cipher suite has both key versions
 
-- **ECDSA** (`nistp256`, `nistp384`, `nistp521`) keys are v4 only. Bouncy Castle 1.86's high-level API does not generate ECDSA keys, so Sigmund uses a JCA-based fallback that produces v4 keys; `--credential-type pgp6` with these suites is an error.
+- **ECDSA** (`nistp256`, `nistp384`, `nistp521`) keys are v4 only. Bouncy Castle's high-level API (1.87) has no ECDSA key preset, so Sigmund uses a JCA-based fallback that produces v4 keys; `--credential-type pgp6` with these suites is an error.
 - **Ed448** keys are v6 only: GnuPG reads no v4 Ed448 key, so a v4 one would serve no tool a v4 key is for. `--cipher-suite ed448` without `--credential-type pgp6` is an error.
 - **Ed25519** and **RSA** (`rsa4096`) come in both versions.
 

@@ -423,7 +423,7 @@ class KeyValidityAgreementTest {
 
     /**
      * A v4 key whose keys are native Ed25519 (RFC 9580 algorithm 27), served by two keyservers:
-     * Bouncy Castle 1.86 corrupts such a signature when it joins two copies of it, so the copies
+     * Bouncy Castle 1.86 corrupted such a signature when it joined two copies of it, so the copies
      * must be joined without that. GnuPG 2.4 reads no v4 key of this algorithm and is not asked.
      */
     @Test

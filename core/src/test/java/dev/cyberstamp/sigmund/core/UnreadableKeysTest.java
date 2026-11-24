@@ -75,10 +75,36 @@ class UnreadableKeysTest {
     }
 
     @Test
+    void aKeyOfAnAlgorithmBouncyCastleImplementsThatItCannotParseIsDamaged() throws IOException {
+        byte[] certificate = readFixture("unknown-algorithm-key.gpg");
+        certificate[7] = 31;
+
+        assertThat(KeyRingFiles.causeOf(certificate)).isEqualTo(UnreadableCertificate.Cause.DAMAGED);
+    }
+
+    @Test
     void aCertificateWithASubkeyBouncyCastleDoesNotKnowStillVerifies() throws IOException {
         writeCertD(SECOND, readFixture("second-key-with-unknown-subkey.gpg"));
 
         assertThat(verifyWith(certDOnly()).isVerified()).isTrue();
+    }
+
+    /**
+     * The only copy of the signing key uses an algorithm Bouncy Castle does not know: the claim
+     * is one Bouncy Castle cannot check, and the copy is named, rather than the key reported as one
+     * to go and find.
+     */
+    @Test
+    void aSigningKeyOfAnAlgorithmBouncyCastleDoesNotKnowIsUnsupportedAndSaysSo() throws IOException {
+        byte[] certificate = readFixture("unknown-algorithm-key.gpg");
+        String altered = KeyRingFiles.keyFingerprints(certificate).iterator().next();
+        writeCertD(altered, certificate);
+
+        VerifyResult result = verifyWith(certDOnly(), altered);
+
+        assertThat(result.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue();
+        assertThat(result.detail())
+                .startsWith("Bouncy Castle cannot read the copy from " + dir.resolve("cert-d") + ": ");
     }
 
     @Test
@@ -176,12 +202,17 @@ class UnreadableKeysTest {
     }
 
     private VerifyResult verifyWith(BcKeyStore store) throws IOException {
+        return verifyWith(store, null);
+    }
+
+    /** Verifies the fixture signature as a claim by {@code issuer}, or by its own issuer when {@code null}. */
+    private VerifyResult verifyWith(BcKeyStore store, String issuer) throws IOException {
         Path artifact = dir.resolve("artifact.txt");
         Files.write(artifact, readFixture("artifact.txt"));
         String armored = new String(readFixture("artifact.txt.asc"), StandardCharsets.US_ASCII);
         OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-        OpenPgpClaim claim = new OpenPgpClaim(armored, info.version(), info.issuerFingerprint(),
-                info.algorithmId(), null);
+        OpenPgpClaim claim = new OpenPgpClaim(armored, info.version(),
+                issuer != null ? issuer : info.issuerFingerprint(), info.algorithmId(), null);
         try (BcRunner runner = new BcRunner(store, null, null)) {
             return runner.verify(artifact, claim);
         }

@@ -379,10 +379,10 @@ class BcKeyStore {
      *
      * <p>
      * A signature the certificate joined so far already holds is removed from the next copy
-     * before {@link PGPPublicKeyRing#join} sees it: Bouncy Castle 1.86 rebuilds a signature it
-     * finds in both from the signature's integers, which a native Ed25519 or Ed448 signature
-     * (RFC 9580 algorithms 27 and 28) does not have, and the certificate it returns can then be
-     * neither encoded nor verified.
+     * before {@link PGPPublicKeyRing#join} sees it, so each signature is held once. Bouncy Castle
+     * 1.86 rebuilt a signature it found in both from the signature's integers, which a native
+     * Ed25519 or Ed448 signature (RFC 9580 algorithms 27 and 28) does not have, and returned a
+     * certificate that could be neither encoded nor verified; 1.87 joins them intact.
      *
      * <p>
      * Copies that cannot be joined fail the fetch of that key, so a claim it signed is
