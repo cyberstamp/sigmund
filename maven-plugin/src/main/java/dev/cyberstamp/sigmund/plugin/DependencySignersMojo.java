@@ -389,7 +389,10 @@ public class DependencySignersMojo extends AbstractDependencyMojo {
             case DISCOVERY_UNAVAILABLE -> " (evidence source unreachable)";
             case TOOL_UNAVAILABLE -> " (verification tool unavailable)";
             case UNSUPPORTED_ALGORITHM -> " (unsupported algorithm)";
-            case EVIDENCE_MALFORMED -> " (malformed evidence)";
+            case EVIDENCE_UNREADABLE -> " (evidence unreadable: " + result.detail() + ")";
+            case EVIDENCE_MALFORMED -> result.detail() != null
+                    ? " (malformed evidence: " + result.detail() + ")"
+                    : " (malformed evidence)";
         };
     }
 

@@ -477,7 +477,9 @@ rule would always take, so that a verdict never depends on the order rules are w
 A rule may leave `requires` out, typically a catch-all or a rule for artifacts known to be
 unsigned. It matches, so its artifacts are not `NOT_CONFIGURED`, but it requires no signer:
 
-- an **unsigned** artifact is `NO_CLAIM` — relax it with `on-no-claim: ignore`;
+- an **unsigned** artifact is `NO_CLAIM` — relax it with `on-no-claim: ignore`. A signature file
+  that is there but empty, or holds no signature, is not unsigned: the artifact is
+  `INDETERMINATE [EVIDENCE_MALFORMED]`, which `on-no-claim` does not relax;
 - a **signed** artifact is `UNSATISFIED` under the default `extra-claims: reject`, because its
   signer is one no clause names. Tolerate those too with `on-unsatisfied: ignore`, or give the
   artifact a rule of its own.

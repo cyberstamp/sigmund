@@ -405,14 +405,21 @@ these differently:
   accepted is fixed in Sigmund and identical for every backend
   ([ADR-005](../adr/005-verification-result-model.md)), so a verdict does not
   depend on which tool answered or on the host's crypto policy.
-- `evidence-malformed` — permanent.
+- `evidence-unreadable` — an evidence file was found but could not be read.
+  Transient: no bytes were read, so nothing is known to be wrong with them. The
+  file yields no claim and is recorded beside the artifact's claims.
+- `evidence-malformed` — a claim whose signature cannot be read, or a file whose
+  bytes hold no signature at all, such as an empty `.asc`, recorded beside the
+  claims as an unreadable file is. Permanent. Found evidence that holds nothing
+  is not the absence of evidence.
 
 Lumping transient and permanent reasons together makes a permanently
 unverifiable artifact look like a flaky network forever.
 
 Note a real asymmetry: **Sigstore verification of a delivered bundle is fully
-local and cannot produce a transient `INDETERMINATE`.** Transient states belong
-to OpenPGP key resolution and to network-backed discovery. A build whose
+local and cannot produce a transient `INDETERMINATE`** once its bytes are read;
+only a file that cannot be read at all is `evidence-unreadable`. Transient
+states belong to OpenPGP key resolution and to network-backed discovery. A build whose
 dependencies are all Sigstore-signed with sidecar bundles verifies
 deterministically offline.
 

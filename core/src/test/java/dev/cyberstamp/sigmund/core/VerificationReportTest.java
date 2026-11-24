@@ -26,7 +26,7 @@ class VerificationReportTest {
             IndeterminateReason reason, MatchedRule matchedRule, ClaimResult... claims) {
         ArtifactCoords coords = new ArtifactCoords("org.example", name, "", "jar", "1.0");
         ArtifactSubject subject = new ArtifactSubject(coords, DigestSet.sha256(FP.toLowerCase()));
-        return new ArtifactResult(subject, outcome, reason, matchedRule, List.of(claims),
+        return new ArtifactResult(subject, outcome, reason, matchedRule, List.of(claims), List.of(),
                 Instant.EPOCH);
     }
 
@@ -423,6 +423,25 @@ class VerificationReportTest {
         void anArtifactWithoutClaimsExplainsNothing() {
             assertThat(VerificationReport.explain(result("lib", ArtifactOutcome.NO_CLAIM, null)))
                     .isEmpty();
+        }
+
+        @Test
+        void namesEachEvidenceFileThatCouldNotBeRead() {
+            ArtifactSubject subject = new ArtifactSubject(new ArtifactCoords("org.example", "lib", "", "jar", "1.0"),
+                    DigestSet.sha256(FP.toLowerCase()));
+            ArtifactResult result = new ArtifactResult(subject, ArtifactOutcome.INDETERMINATE,
+                    IndeterminateReason.EVIDENCE_UNREADABLE, null, List.of(),
+                    List.of(EvidenceWithoutClaims.unreadable(Path.of("repo/lib-1.0.jar.asc"), Evidence.SOURCE_SIDECAR,
+                            "Permission denied")),
+                    Instant.EPOCH);
+
+            assertThat(VerificationReport.evidenceWithoutClaims(result))
+                    .containsExactly("evidence " + Path.of("repo/lib-1.0.jar.asc") + " could not be read: Permission denied");
+        }
+
+        @Test
+        void anArtifactWhoseEvidenceAllYieldedClaimsHasNoSuchLines() {
+            assertThat(VerificationReport.evidenceWithoutClaims(result("lib", ArtifactOutcome.NO_CLAIM, null))).isEmpty();
         }
     }
 

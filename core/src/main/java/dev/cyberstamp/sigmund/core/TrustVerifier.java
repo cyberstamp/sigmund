@@ -15,7 +15,9 @@ import java.util.List;
  * <ol>
  * <li><strong>Verify evidence</strong> — every evidence file is read once and each provider that
  * handles it verifies its claims, so a {@link ClaimResult} is recorded for every claim found,
- * whether or not it ends up mattering.</li>
+ * whether or not it ends up mattering. A file that yields no claim — one that cannot be read,
+ * or one holding no signature its format recognises — is recorded as
+ * {@link EvidenceWithoutClaims}, and the other files and artifacts are still verified.</li>
  * <li><strong>Resolve identities</strong> — where the matched rule names a directory-backed
  * identity, the directory is asked about the keys the claims proved.</li>
  * <li><strong>Match the rule</strong> — the most specific {@link Rule} for the artifact is
@@ -77,16 +79,17 @@ public class TrustVerifier {
     public ArtifactResult assess(ArtifactCoords coords, Path artifactFile,
             List<Path> evidenceFiles) {
         Instant verifiedAt = Instant.now();
+        List<EvidenceWithoutClaims> withoutClaims = new ArrayList<>();
         List<ClaimResult> claims = identityResolver.resolve(coords,
                 identityResolver.vouchForDisplayNames(policy.issuers(),
-                        collectClaims(artifactFile, evidenceFiles)));
+                        collectClaims(artifactFile, evidenceFiles, withoutClaims)));
         Rule matched = policy.matchRule(coords);
-        OutcomeRollup.Result rollup = OutcomeRollup.derive(claims,
+        OutcomeRollup.Result rollup = OutcomeRollup.derive(claims, withoutClaims,
                 matched == null ? null : matched.requirement(),
                 matched == null ? policy.claimSetMode() : matched.extraClaims());
         return new ArtifactResult(ArtifactSubject.of(coords, artifactFile), rollup.outcome(),
                 rollup.reason(), matched == null ? null : matched.toMatchedRule(coords), claims,
-                verifiedAt);
+                withoutClaims, verifiedAt);
     }
 
     /**
@@ -104,17 +107,36 @@ public class TrustVerifier {
         return results;
     }
 
-    private List<ClaimResult> collectClaims(Path artifactFile, List<Path> evidenceFiles) {
+    /**
+     * Verifies the claims of every evidence file, and records each file that yields none — one
+     * that cannot be read, or holds no signature — before going on to the next: such a file
+     * leaves its artifact undecided, and the other files and artifacts are still verified. A file
+     * no provider handles is not evidence this run reads, and is not recorded.
+     */
+    private List<ClaimResult> collectClaims(Path artifactFile, List<Path> evidenceFiles,
+            List<EvidenceWithoutClaims> withoutClaims) {
         if (evidenceFiles == null || evidenceFiles.isEmpty()) {
             return List.of();
         }
         List<ClaimResult> claims = new ArrayList<>();
         for (Path evidenceFile : evidenceFiles) {
-            Evidence evidence = Evidence.read(evidenceFile, Evidence.SOURCE_SIDECAR);
+            Evidence evidence;
+            try {
+                evidence = Evidence.read(evidenceFile, Evidence.SOURCE_SIDECAR);
+            } catch (UnreadableEvidenceException e) {
+                withoutClaims.add(e.evidence());
+                continue;
+            }
+            int found = claims.size();
+            boolean handled = false;
             for (EvidenceProvider provider : providers) {
                 if (provider.canHandle(evidence)) {
+                    handled = true;
                     claims.addAll(provider.verify(artifactFile, evidence));
                 }
+            }
+            if (handled && claims.size() == found) {
+                withoutClaims.add(EvidenceWithoutClaims.holdingNoSignature(evidence));
             }
         }
         return claims;

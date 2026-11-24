@@ -2,9 +2,14 @@ package dev.cyberstamp.sigmund.plugin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.cyberstamp.sigmund.core.ArtifactCoords;
+import dev.cyberstamp.sigmund.core.IndeterminateReason;
+import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 class SignatureInspectorTest {
 
@@ -74,6 +79,27 @@ class SignatureInspectorTest {
         void allEmptyReturnsEmptyList() {
             assertThat(SignatureInspector.parseKeyservers(",,,"))
                     .isEqualTo(List.of());
+        }
+    }
+
+    @Nested
+    class SignedArtifactRecords {
+
+        private final ArtifactCoords coords = new ArtifactCoords("org.example", "lib", "", "jar", "1.0");
+
+        /** A signature file that yielded no claim is neither absent evidence nor a broken tool. */
+        @ParameterizedTest
+        @EnumSource(value = IndeterminateReason.class, names = { "EVIDENCE_UNREADABLE", "EVIDENCE_MALFORMED" })
+        void aSignatureFileWithoutClaimsIsIndeterminateNamingTheFile(IndeterminateReason reason) {
+            Path file = Path.of("repo/lib-1.0.jar.asc");
+            SignatureInspector.SignedArtifact entry = SignatureInspector.SignedArtifact.withoutClaims(coords, "central",
+                    file, reason, file + " is empty");
+
+            assertThat(entry.hasClaim()).isTrue();
+            assertThat(entry.verifyResult().isIndeterminate()).isTrue();
+            assertThat(entry.verifyResult().reason()).isEqualTo(reason);
+            assertThat(entry.verifyResult().detail()).isEqualTo(file + " is empty");
+            assertThat(entry.signatureFile()).isEqualTo(file);
         }
     }
 }

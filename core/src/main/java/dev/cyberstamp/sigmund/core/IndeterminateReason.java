@@ -1,7 +1,7 @@
 package dev.cyberstamp.sigmund.core;
 
 /**
- * Why verification of a claim could not complete.
+ * Why verification of a claim, or of an evidence file that yielded none, could not complete.
  *
  * <p>
  * Operators triage these differently, which is the whole point of separating them: a
@@ -40,8 +40,16 @@ public enum IndeterminateReason {
     UNSUPPORTED_ALGORITHM(false),
 
     /**
-     * The evidence could not be parsed, or is not a signature over a document. Permanent: the
-     * bytes will not improve.
+     * An evidence file was found but could not be read — an I/O error, a permission it lacks,
+     * or a file removed after it was resolved. Transient: no bytes were read, so nothing is
+     * known to be wrong with them, and the next run may read them.
+     */
+    EVIDENCE_UNREADABLE(true),
+
+    /**
+     * The evidence could not be parsed, or is not a signature over a document: a claim whose
+     * signature cannot be read, or a file whose bytes hold no signature at all, such as an empty
+     * {@code .asc}. Permanent: the bytes will not improve.
      */
     EVIDENCE_MALFORMED(false);
 

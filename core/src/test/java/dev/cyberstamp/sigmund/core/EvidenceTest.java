@@ -4,7 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.FileSystemException;
+import java.nio.file.FileSystemLoopException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -43,10 +47,53 @@ class EvidenceTest {
         }
 
         @Test
-        void unreadableEvidenceIsAnError(@TempDir Path dir) {
-            assertThatThrownBy(
-                    () -> Evidence.read(dir.resolve("absent.asc"), Evidence.SOURCE_SIDECAR))
-                    .isInstanceOf(ToolExecutionException.class);
+        void unreadableEvidenceIsAnErrorCarryingTheRecordOfIt(@TempDir Path dir) {
+            Path absent = dir.resolve("absent.asc");
+
+            assertThatThrownBy(() -> Evidence.read(absent, Evidence.SOURCE_SIDECAR))
+                    .isInstanceOfSatisfying(UnreadableEvidenceException.class, e -> assertThat(e.evidence())
+                            .isEqualTo(EvidenceWithoutClaims.unreadable(absent, Evidence.SOURCE_SIDECAR, "no such file")));
+        }
+
+        @Test
+        void evidenceThatIsNotAFileIsUnreadableWithTheFileSystemsWords(@TempDir Path dir) throws IOException {
+            Path directory = Files.createDirectory(dir.resolve("lib.jar.asc"));
+
+            assertThatThrownBy(() -> Evidence.read(directory, Evidence.SOURCE_SIDECAR))
+                    .isInstanceOfSatisfying(UnreadableEvidenceException.class,
+                            e -> assertThat(e.evidence().message()).isNotBlank());
+        }
+    }
+
+    /** The reason shown after an unreadable file's path, which must never be the path again. */
+    @Nested
+    class WhyAFileCouldNotBeRead {
+
+        @Test
+        void aPermissionItLacksIsNamed() {
+            assertThat(Evidence.messageOf(new AccessDeniedException("repo/lib.jar.asc"))).isEqualTo("permission denied");
+        }
+
+        @Test
+        void aMissingFileIsNamed() {
+            assertThat(Evidence.messageOf(new NoSuchFileException("repo/lib.jar.asc"))).isEqualTo("no such file");
+        }
+
+        @Test
+        void theFileSystemsOwnReasonIsKept() {
+            assertThat(Evidence.messageOf(new FileSystemException("repo/lib.jar.asc", null, "Input/output error")))
+                    .isEqualTo("Input/output error");
+        }
+
+        @Test
+        void anotherFileSystemFailureIsNamedByItsKind() {
+            assertThat(Evidence.messageOf(new FileSystemLoopException("repo/lib.jar.asc")))
+                    .isEqualTo("FileSystemLoopException");
+        }
+
+        @Test
+        void anyOtherErrorKeepsItsMessage() {
+            assertThat(Evidence.messageOf(new IOException("Is a directory"))).isEqualTo("Is a directory");
         }
     }
 

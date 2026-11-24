@@ -314,13 +314,15 @@ Layer 1 is the `EvidenceProvider` interface, bridged from Layer 2 via `Signature
 
 The `TrustVerifier` consumes `ClaimResult`s and produces one `ArtifactResult` per artifact:
 
-1. **Collect claims** — each provider verifies the evidence resolved for the artifact
+1. **Collect claims** — each provider verifies the evidence resolved for the artifact; a file that yields no claim — one that cannot be read, or one holding no signature its format recognises, such as an empty `.asc` — is recorded on the result as `EvidenceWithoutClaims`, and the run goes on
 2. **Match the rule** — `TrustPolicy.matchRule` selects the most specific `Rule`, recorded on the
    result as a `MatchedRule` (the pattern that matched and the rule's location)
 3. **Roll up** — `OutcomeRollup` evaluates the rule's `Requirement` over the verified claims and
    derives the `ArtifactOutcome` in a fixed order: a failed claim dominates, claims no installed
    tool supports are set aside, no rule means `NOT_CONFIGURED`, requirements met means
-   `SATISFIED`, and otherwise the most informative remaining state decides
+   `SATISFIED`, and otherwise the most informative remaining state decides; evidence without
+   claims counts as an unresolved claim with its reason, `EVIDENCE_UNREADABLE` or
+   `EVIDENCE_MALFORMED`
 
 Whether an outcome blocks is decided afterwards, by `VerificationReport.enforcement`, from the
 matched rule's overrides, the policy defaults and the built-in defaults — so enforcement never

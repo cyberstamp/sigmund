@@ -392,8 +392,8 @@ proven, the trust root, and the evidence each claim was read from.
 | **SATISFIED** | The claims found meet what the matched rule requires |
 | **UNSATISFIED** | Verification succeeded, but not by the signers the rule requires — or, under `extra-claims: reject`, also by one it does not name |
 | **FAILED** | A signature does not match the artifact, or its key was revoked or had expired when it signed — or was revoked as compromised or with no reason given, at any time ([details](verification.md#outcomes-and-reasons)). An attack signal, never tolerated |
-| **NO_CLAIM** | No evidence was found at all |
-| **INDETERMINATE** | Evidence was found but could not be checked; the reason says why — a key that could not be fetched or used, an algorithm Sigmund does not accept, a tool that did not run |
+| **NO_CLAIM** | No evidence was found at all: no signature file for the artifact |
+| **INDETERMINATE** | Evidence was found but could not be checked; the reason says why — a key that could not be fetched or used, an algorithm Sigmund does not accept, a tool that did not run, a signature file that could not be read or holds no signature |
 | **NOT_CONFIGURED** | No rule matches this artifact |
 
 An artifact a rule tolerates reaches the same outcome as any other; what the rule changes is
@@ -412,9 +412,10 @@ signature is two. Its outcome follows from them in a fixed order:
 3. **No rule matches → `NOT_CONFIGURED`.**
 4. **The rule's requirements are met → `SATISFIED`.** Under the default `extra-claims: reject`,
    only if no other verified claim comes from a signer the rule does not name (`UNSATISFIED`)
-   and every claim could be checked (`INDETERMINATE`).
+   and every claim could be checked and every signature file yielded one (`INDETERMINATE`).
 5. **Otherwise, in order:** a claim that could not be checked → `INDETERMINATE`, since it might
-   have satisfied the rule; requirements that set-aside claims would meet, had the keys they
+   have satisfied the rule — a signature file that yielded no claim, one that could not be read
+   or holds no signature, counts as such a claim; requirements that set-aside claims would meet, had the keys they
    name made them → `INDETERMINATE` with `UNSUPPORTED_ALGORITHM` — a co-signer whose
    post-quantum signature this verifier cannot check is not a wrong signer; nothing verified
    and a set-aside claim names no key → `INDETERMINATE` with `UNSUPPORTED_ALGORITHM`, since
@@ -768,7 +769,7 @@ accepted as `SATISFIED`.
 
 ### "NO_CLAIM" for artifacts that should be signed
 
-The artifact might not have a `.asc` signature file in the repository. Check Maven Central or your artifact repository. If the artifact is legitimately unsigned, tolerate it with a rule and `on-no-claim: ignore`.
+The artifact might not have a `.asc` signature file in the repository. Check Maven Central or your artifact repository. If the artifact is legitimately unsigned, tolerate it with a rule and `on-no-claim: ignore`. A signature file that is there but empty, or holds no signature, is not `NO_CLAIM`: it is `INDETERMINATE [EVIDENCE_MALFORMED]`, and the report names the file.
 
 ### Fingerprint mismatches
 

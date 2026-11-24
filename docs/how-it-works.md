@@ -114,8 +114,11 @@ not called `UNSATISFIED`. It happens in two ways.
   Sigmund does not accept.
 - `TOOL_UNAVAILABLE` — a verification tool could not run, or broke while running.
 - `TRUST_ROOT_UNAVAILABLE` — Sigstore's trust metadata is missing or too old.
-- `EVIDENCE_MALFORMED` — the signature or bundle could not be parsed, or an OpenPGP signature is
-  not a document signature.
+- `EVIDENCE_UNREADABLE` — a signature file or bundle was found but could not be read; the report
+  names it.
+- `EVIDENCE_MALFORMED` — the signature or bundle could not be parsed, an OpenPGP signature is not
+  a document signature, or a signature file holds no signature at all, such as an empty `.asc`;
+  the report names a file that held none.
 
 **The rule cannot be judged because claims were set aside.** A co-signer's post-quantum signature
 that no installed tool reads is not a wrong signer — it may be exactly the one the rule requires.

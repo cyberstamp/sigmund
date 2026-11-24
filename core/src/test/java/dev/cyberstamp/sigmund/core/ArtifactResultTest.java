@@ -34,7 +34,7 @@ class ArtifactResultTest {
             ClaimResult verified = claim(ClaimOutcome.VERIFIED, null);
 
             ArtifactResult result = new ArtifactResult(SUBJECT, ArtifactOutcome.SATISFIED, null,
-                    null, List.of(verified), Instant.ofEpochSecond(1_700_000_100L));
+                    null, List.of(verified), List.of(), Instant.ofEpochSecond(1_700_000_100L));
 
             assertThat(result.subject()).isEqualTo(SUBJECT);
             assertThat(result.outcome()).isEqualTo(ArtifactOutcome.SATISFIED);
@@ -47,7 +47,7 @@ class ArtifactResultTest {
                     java.util.Map.of(ArtifactOutcome.NO_CLAIM, EnforcementAction.IGNORE));
 
             ArtifactResult result = new ArtifactResult(SUBJECT, ArtifactOutcome.NO_CLAIM, null,
-                    rule, List.of(), Instant.EPOCH);
+                    rule, List.of(), List.of(), Instant.EPOCH);
 
             assertThat(result.matchedRule()).isEqualTo(rule);
         }
@@ -58,7 +58,7 @@ class ArtifactResultTest {
             ClaimResult unsupported = claim(ClaimOutcome.INDETERMINATE, IndeterminateReason.UNSUPPORTED_ALGORITHM);
 
             ArtifactResult result = new ArtifactResult(SUBJECT, ArtifactOutcome.SATISFIED, null,
-                    null, List.of(verified, unsupported), Instant.EPOCH);
+                    null, List.of(verified, unsupported), List.of(), Instant.EPOCH);
 
             assertThat(result.claims()).hasSize(2);
         }
@@ -66,21 +66,21 @@ class ArtifactResultTest {
         @Test
         void anIndeterminateOutcomeNeedsAReason() {
             assertThatThrownBy(() -> new ArtifactResult(SUBJECT, ArtifactOutcome.INDETERMINATE, null,
-                    null, List.of(), Instant.EPOCH))
+                    null, List.of(), List.of(), Instant.EPOCH))
                     .isInstanceOf(IllegalArgumentException.class);
         }
 
         @Test
         void aDecidedOutcomeCarriesNoReason() {
             assertThatThrownBy(() -> new ArtifactResult(SUBJECT, ArtifactOutcome.SATISFIED,
-                    IndeterminateReason.KEY_UNAVAILABLE, null, List.of(), Instant.EPOCH))
+                    IndeterminateReason.KEY_UNAVAILABLE, null, List.of(), List.of(), Instant.EPOCH))
                     .isInstanceOf(IllegalArgumentException.class);
         }
 
         @Test
         void theSubjectIsRequired() {
             assertThatThrownBy(() -> new ArtifactResult(null, ArtifactOutcome.NO_CLAIM, null,
-                    null, List.of(), Instant.EPOCH))
+                    null, List.of(), List.of(), Instant.EPOCH))
                     .isInstanceOf(IllegalArgumentException.class);
         }
 
@@ -89,11 +89,29 @@ class ArtifactResultTest {
             List<ClaimResult> claims = new ArrayList<>();
             claims.add(claim(ClaimOutcome.VERIFIED, null));
             ArtifactResult result = new ArtifactResult(SUBJECT, ArtifactOutcome.SATISFIED, null, null,
-                    claims, Instant.EPOCH);
+                    claims, List.of(), Instant.EPOCH);
 
             claims.clear();
 
             assertThat(result.claims()).hasSize(1);
+        }
+
+        @Test
+        void evidenceWithoutClaimsIsDefensivelyCopied() {
+            List<EvidenceWithoutClaims> unreadable = new ArrayList<>();
+            unreadable.add(EvidenceWithoutClaims.unreadable(Path.of("lib.jar.asc"), Evidence.SOURCE_SIDECAR, "no such file"));
+            ArtifactResult result = new ArtifactResult(SUBJECT, ArtifactOutcome.INDETERMINATE,
+                    IndeterminateReason.EVIDENCE_UNREADABLE, null, List.of(), unreadable, Instant.EPOCH);
+
+            unreadable.clear();
+
+            assertThat(result.evidenceWithoutClaims()).hasSize(1);
+        }
+
+        @Test
+        void noEvidenceWithoutClaimsIsAnEmptyList() {
+            assertThat(new ArtifactResult(SUBJECT, ArtifactOutcome.NO_CLAIM, null, null, List.of(), null,
+                    Instant.EPOCH).evidenceWithoutClaims()).isEmpty();
         }
     }
 

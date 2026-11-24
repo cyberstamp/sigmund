@@ -237,7 +237,8 @@ third outcome: only `FAILED` is an attack signal. The reasons are:
 | `DISCOVERY_UNAVAILABLE` | Evidence might exist but the source could not be queried | yes |
 | `TOOL_UNAVAILABLE` | The verification tool could not be run, or broke while running | yes |
 | `UNSUPPORTED_ALGORITHM` | No installed tool can check this signature, or it uses an algorithm Sigmund does not accept (see below) | no |
-| `EVIDENCE_MALFORMED` | The signature or bundle could not be parsed, or an OpenPGP signature is not a signature over a document | no |
+| `EVIDENCE_UNREADABLE` | A signature file or bundle was found for the artifact but could not be read; it yields no claim, and the report names the file | yes |
+| `EVIDENCE_MALFORMED` | The signature or bundle could not be parsed, an OpenPGP signature is not a signature over a document, or a signature file holds no signature at all, such as an empty `.asc` | no |
 
 A transient reason may resolve on a later run; a permanent one will not without
 installing different tooling or fixing the evidence.
@@ -512,9 +513,11 @@ and a `FAILED` one never is.
 ### `no signature found in <file>`
 
 The file is empty, or holds no OpenPGP armored block (`-----BEGIN PGP SIGNATURE-----` …
-`-----END PGP SIGNATURE-----`): it may be a public key, an error page saved under the signature's
-name, or a file cut short in transfer. Fetch the signature again; `Overall: no claims found`
-follows.
+`-----END PGP SIGNATURE-----`): it may be an error page saved under the signature's name, or a file
+cut short in transfer. Fetch the signature again; `Overall: no claims found` follows. Trust
+verification reports the same file under its artifact as `evidence <file> is empty` or
+`evidence <file> holds no signature`, and the artifact
+[`INDETERMINATE [EVIDENCE_MALFORMED]`](#indeterminate-evidence_malformed).
 
 ### `INDETERMINATE [KEY_UNAVAILABLE: …]`
 
@@ -550,10 +553,31 @@ A tool could not be run, or broke while running. The log carries a warning namin
 the cause (`Verification tool 'sq' failed; …`): check that the tool is installed, and that its
 home directory setting points at a directory it can use.
 
+### `INDETERMINATE [EVIDENCE_UNREADABLE]`
+
+A signature file or Sigstore bundle was resolved for the artifact but could not be read — a
+permission it lacks, a file removed after it was resolved, or an I/O error. The report names the
+file and what the file system said under the artifact (`evidence <file> could not be read: …`),
+whatever the detail level. Nothing was read from it, so it yields no claim; the other files of
+the artifact are still verified, and so is every other artifact of the run. Under the default
+`extra-claims: reject` the artifact stays undecided even when the files that were read satisfy
+the rule, since the unread one may hold a claim from a signer the rule does not accept. Fix the
+file's permissions or remove it from the local repository so it is resolved again.
+
+`dependency-signers` reports the artifact `(evidence unreadable: …)`. `verify-signature`, which
+is handed the file to check, reports an error instead.
+
 ### `INDETERMINATE [EVIDENCE_MALFORMED]`
 
 The signature or Sigstore bundle could not be parsed — a truncated or hand-edited file. Fetch it
 again.
+
+A signature file that holds no signature at all — an empty `.asc`, or one without an armored
+block, such as an error page saved under the signature's name — is reported the same way rather
+than as `NO_CLAIM`, since evidence was found: the report names the file under the artifact at
+every detail level (`evidence <file> is empty`, `evidence <file> holds no signature`), as it
+does an unreadable one, and `dependency-signers` reports `(malformed evidence: …)` rather than
+listing the module as unsigned.
 
 An OpenPGP signature whose type is not a binary or text document signature — a certification, a
 standalone or a timestamp signature — is reported the same way, with the detail

@@ -153,6 +153,9 @@ public class VerifyMojo extends AbstractDependencyMojo {
         for (ArtifactResult result : group.artifacts()) {
             int level = levelOf(report, result);
             logLine(level, "    " + report.describe(result));
+            for (String line : VerificationReport.evidenceWithoutClaims(result)) {
+                logLine(level, "      " + line);
+            }
             if (detail) {
                 for (String line : VerificationReport.explain(result)) {
                     logLine(level, "      " + line);

@@ -2,7 +2,10 @@ package dev.cyberstamp.sigmund.core;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 
 /**
@@ -55,7 +58,7 @@ public final class Evidence {
      * @param source the source that supplied it, such as {@link #SOURCE_SIDECAR}
      * @return the evidence
      * @throws IllegalArgumentException if the source is blank
-     * @throws ToolExecutionException if the file cannot be read
+     * @throws UnreadableEvidenceException if the file cannot be read
      */
     public static Evidence read(Path file, String source) {
         if (source == null || source.isBlank()) {
@@ -65,8 +68,37 @@ public final class Evidence {
             byte[] content = Files.readAllBytes(file);
             return new Evidence(file, content, DigestSet.sha256(content), source);
         } catch (IOException e) {
-            throw new ToolExecutionException("Failed to read evidence file: " + file, e);
+            throw new UnreadableEvidenceException(EvidenceWithoutClaims.unreadable(file, source, messageOf(e)), e);
         }
+    }
+
+    /**
+     * Why a file could not be read, in words a report can show after its path.
+     *
+     * <p>
+     * A {@link FileSystemException}'s message is the path itself, with the reason only when the
+     * file system gave one, so its reason is used, else the kind of failure is named: a missing
+     * file or a permission it lacks. Any other error says why in its message, such as
+     * {@code Is a directory}.
+     *
+     * @param e the error reading the file
+     * @return the reason, never the path alone
+     */
+    static String messageOf(IOException e) {
+        if (e instanceof FileSystemException fileSystem) {
+            if (fileSystem.getReason() != null && !fileSystem.getReason().isBlank()) {
+                return fileSystem.getReason();
+            }
+            if (e instanceof NoSuchFileException) {
+                return "no such file";
+            }
+            if (e instanceof AccessDeniedException) {
+                return "permission denied";
+            }
+            return e.getClass().getSimpleName();
+        }
+        String message = e.getMessage();
+        return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
     }
 
     /**
