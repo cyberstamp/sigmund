@@ -42,6 +42,25 @@ import org.junit.jupiter.api.io.TempDir;
 
 class BcKeyStoreTest {
 
+    /**
+     * A store holds nothing between lookups: a revocation written to the key's copy after a
+     * first lookup is what the next one finds.
+     */
+    @Test
+    void aRevocationWrittenAfterALookupIsWhatTheNextLookupFinds(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        OpenPGPKey key = generateV4Key("Alice Example <alice@example.org>");
+        PGPPublicKeyRing certificate = key.toCertificate().getPGPPublicKeyRing();
+        String fingerprint = KeyRingFiles.hex(key.getFingerprint());
+        store.storeCert(certificate);
+        assertThat(store.findPublicKey(fingerprint).ring().getPublicKey().hasRevocation()).isFalse();
+
+        store.storeCert(PGPPublicKeyRing.insertPublicKey(certificate,
+                PGPPublicKey.addCertification(certificate.getPublicKey(), revocationOf(key))));
+
+        assertThat(store.findPublicKey(fingerprint).ring().getPublicKey().hasRevocation()).isTrue();
+    }
+
     @Test
     void findPublicKeyFromCertD(@TempDir Path tempDir) throws Exception {
         Path certD = tempDir.resolve("cert-d");

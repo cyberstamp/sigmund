@@ -10,9 +10,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -176,6 +178,60 @@ class UnreadableKeysTest {
         KeyRingFiles.KeyRingSplit split = KeyRingFiles.splitKeyRings(readFixture("keyring/pubring.gpg"));
 
         assertThat(KeyRingFiles.keyFingerprints(split.rings().get(1))).containsExactly(SECOND);
+    }
+
+    /**
+     * A certificate is judged by its keys' fingerprints before it is parsed, so the first,
+     * unreadable, certificate of each fixture is never parsed in a search for the second.
+     */
+    @Nested
+    class ASearchByFingerprint {
+
+        private final KeyRingFiles.KeySearch forSecond = new KeyRingFiles.KeySearch(
+                keys -> keys.contains(SECOND), ring -> BcKeyStore.matchesFingerprint(ring, SECOND));
+
+        @Test
+        void parsesOnlyTheKeyboxBlobWhoseIndexListsTheKey() throws IOException {
+            List<UnreadableCertificate> unreadable = new ArrayList<>();
+
+            PGPPublicKeyRing found = KeyRingFiles.findInKeyBox(fixtureDir("keybox", "pubring.kbx").resolve("pubring.kbx"),
+                    forSecond, TrustRootRef.unknown(), unreadable);
+
+            assertThat(found).isNotNull();
+            assertThat(unreadable).isEmpty();
+        }
+
+        @Test
+        void parsesOnlyTheKeyRingWhosePacketsHoldTheKey() throws IOException {
+            List<UnreadableCertificate> unreadable = new ArrayList<>();
+
+            PGPPublicKeyRing found = KeyRingFiles.findInKeyRingFile(
+                    fixtureDir("keyring", "pubring.gpg").resolve("pubring.gpg"), forSecond, TrustRootRef.unknown(),
+                    unreadable);
+
+            assertThat(found).isNotNull();
+            assertThat(unreadable).isEmpty();
+        }
+
+        /** What a store's index or a ring's packets claim never decides alone. */
+        @Test
+        void findsNothingTheParsedCertificateDoesNotConfirm() throws IOException {
+            KeyRingFiles.KeySearch indexOnly = new KeyRingFiles.KeySearch(keys -> keys.contains(SECOND), ring -> false);
+
+            assertThat(KeyRingFiles.findInKeyBox(fixtureDir("keybox", "pubring.kbx").resolve("pubring.kbx"), indexOnly,
+                    TrustRootRef.unknown(), new ArrayList<>())).isNull();
+        }
+
+        @Test
+        void aCertDFileWhosePacketsHoldAnotherKeyIsNotParsed() throws IOException {
+            Path file = dir.resolve("unknown-algorithm-key.gpg");
+            Files.write(file, readFixture("unknown-algorithm-key.gpg"));
+            List<UnreadableCertificate> unreadable = new ArrayList<>();
+
+            assertThat(KeyRingFiles.findInCertificate(file, forSecond, TrustRootRef.unknown(), Set.of(), unreadable))
+                    .isNull();
+            assertThat(unreadable).isEmpty();
+        }
     }
 
     @Nested

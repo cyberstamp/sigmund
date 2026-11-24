@@ -64,6 +64,23 @@ final class KeyRingFiles {
      */
     static PGPPublicKeyRing readCertificate(Path file, TrustRootRef source, Set<String> namedKeys,
             List<UnreadableCertificate> unreadable) {
+        return findInCertificate(file, KeySearch.everyCertificate(ring -> true), source, namedKeys, unreadable);
+    }
+
+    /**
+     * Reads a file holding one certificate, as a cert-d store holds them, when a search wants
+     * it: one whose key packets a search does not take as a candidate is not parsed.
+     *
+     * @param file the file
+     * @param search the certificate wanted
+     * @param source the store the file belongs to
+     * @param namedKeys the keys the file is named after, used when its packets cannot be told
+     *        apart
+     * @param unreadable where a file that cannot be read is recorded
+     * @return the certificate, or {@code null} when it is not the one wanted or cannot be read
+     */
+    static PGPPublicKeyRing findInCertificate(Path file, KeySearch search, TrustRootRef source,
+            Set<String> namedKeys, List<UnreadableCertificate> unreadable) {
         byte[] data;
         try (InputStream in = new BufferedInputStream(Files.newInputStream(file));
                 InputStream decoded = PGPUtil.getDecoderStream(in)) {
@@ -73,12 +90,17 @@ final class KeyRingFiles {
                     UnreadableCertificate.Cause.DAMAGED, messageOf(e)));
             return null;
         }
+        if (!search.mayBe(keyFingerprints(data))) {
+            return null;
+        }
+        PGPPublicKeyRing ring;
         try {
-            return parse(data);
+            ring = parse(data);
         } catch (IOException | RuntimeException e) {
             unreadable.add(unreadable(data, source, file, namedKeys, messageOf(e)));
             return null;
         }
+        return search.matches().test(ring) ? ring : null;
     }
 
     /**
@@ -135,27 +157,62 @@ final class KeyRingFiles {
     }
 
     /**
-     * Finds the first key ring in a GnuPG keybox ({@code pubring.kbx}) that matches.
+     * What a search of a key ring file looks for.
      *
      * <p>
-     * Each blob is read on its own; one that cannot be read is recorded with the fingerprints
-     * its index lists, which keybox blobs carry outside the key data.
+     * Parsing a certificate — its signatures above all — is what a search spends its time on,
+     * so a certificate is first judged by the fingerprints of the keys it holds, read without
+     * parsing it: the index a keybox blob carries, or the key packets of a ring. Only one
+     * {@code candidate} accepts, or one whose keys cannot be told that way, is parsed, and it is
+     * found when {@code matches} accepts the parsed certificate, so what the index or the
+     * packets claim never decides the answer alone. A certificate that is not a candidate is not
+     * read, nor recorded when it could not be.
+     *
+     * @param candidate whether a certificate holding keys with these fingerprints may be the one
+     *        wanted
+     * @param matches whether the parsed certificate is the one wanted
+     */
+    record KeySearch(Predicate<Set<String>> candidate, Predicate<PGPPublicKeyRing> matches) {
+
+        /**
+         * A search that parses every certificate, for what the key fingerprints cannot tell,
+         * such as a user ID.
+         *
+         * @param matches whether the parsed certificate is the one wanted
+         * @return the search
+         */
+        static KeySearch everyCertificate(Predicate<PGPPublicKeyRing> matches) {
+            return new KeySearch(keys -> true, matches);
+        }
+
+        private boolean mayBe(Set<String> keys) {
+            return keys == null || keys.isEmpty() || candidate.test(keys);
+        }
+    }
+
+    /**
+     * Finds the first key ring in a GnuPG keybox ({@code pubring.kbx}) that a search wants.
+     *
+     * <p>
+     * Each blob is judged by the fingerprints its index lists, which keybox blobs carry outside
+     * the key data, and read on its own; one that cannot be read is recorded with those
+     * fingerprints.
      *
      * @param keyBox the keybox file
-     * @param matches the key ring wanted
+     * @param search the key ring wanted
      * @param source the store the keybox belongs to
      * @param unreadable where blobs, or a keybox, that cannot be read are recorded
      * @return the first matching key ring, or {@code null}
      */
-    static PGPPublicKeyRing findInKeyBox(Path keyBox, Predicate<PGPPublicKeyRing> matches,
-            TrustRootRef source, List<UnreadableCertificate> unreadable) {
+    static PGPPublicKeyRing findInKeyBox(Path keyBox, KeySearch search, TrustRootRef source,
+            List<UnreadableCertificate> unreadable) {
         try (InputStream in = new BufferedInputStream(Files.newInputStream(keyBox))) {
             for (KeyBlob blob : new BcKeyBox(in).getKeyBlobs()) {
-                if (!(blob instanceof PublicKeyRingBlob ringBlob)) {
+                if (!(blob instanceof PublicKeyRingBlob ringBlob) || !search.mayBe(indexedKeys(blob))) {
                     continue;
                 }
                 PGPPublicKeyRing ring = readBlob(ringBlob, keyBox, source, unreadable);
-                if (ring != null && matches.test(ring)) {
+                if (ring != null && search.matches().test(ring)) {
                     return ring;
                 }
             }
@@ -187,21 +244,22 @@ final class KeyRingFiles {
 
     /**
      * Finds the first key ring in a keyring file — legacy {@code pubring.gpg}, a sequence of
-     * key rings — that matches.
+     * key rings — that a search wants.
      *
      * <p>
-     * The file is split into key rings at each key packet before any is parsed, so a ring
-     * that cannot be read is recorded and the next one is still read. A packet header that
-     * cannot be read ends the split; what follows it is recorded as one unreadable copy.
+     * The file is split into key rings at each key packet before any is parsed, and each ring
+     * is judged by the fingerprints of its key packets, so a ring that cannot be read is
+     * recorded and the next one is still read. A packet header that cannot be read ends the
+     * split; what follows it is recorded as one unreadable copy.
      *
      * @param keyRingFile the keyring file
-     * @param matches the key ring wanted
+     * @param search the key ring wanted
      * @param source the store the file belongs to
      * @param unreadable where rings, or a file, that cannot be read are recorded
      * @return the first matching key ring, or {@code null}
      */
-    static PGPPublicKeyRing findInKeyRingFile(Path keyRingFile, Predicate<PGPPublicKeyRing> matches,
-            TrustRootRef source, List<UnreadableCertificate> unreadable) {
+    static PGPPublicKeyRing findInKeyRingFile(Path keyRingFile, KeySearch search, TrustRootRef source,
+            List<UnreadableCertificate> unreadable) {
         byte[] data;
         try (InputStream in = new BufferedInputStream(Files.newInputStream(keyRingFile));
                 InputStream decoded = PGPUtil.getDecoderStream(in)) {
@@ -213,8 +271,11 @@ final class KeyRingFiles {
         }
         KeyRingSplit split = splitKeyRings(data);
         for (byte[] encoded : split.rings()) {
+            if (!search.mayBe(keyFingerprints(encoded))) {
+                continue;
+            }
             PGPPublicKeyRing ring = readRing(encoded, keyRingFile, source, unreadable);
-            if (ring != null && matches.test(ring)) {
+            if (ring != null && search.matches().test(ring)) {
                 return ring;
             }
         }
