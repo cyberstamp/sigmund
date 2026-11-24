@@ -38,6 +38,7 @@ import org.bouncycastle.openpgp.PGPSignature;
 import org.bouncycastle.openpgp.PGPSignatureGenerator;
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator;
 import org.bouncycastle.openpgp.PGPSignatureSubpacketVector;
+import org.bouncycastle.openpgp.api.OpenPGPCertificate;
 import org.bouncycastle.openpgp.api.OpenPGPKey;
 import org.bouncycastle.openpgp.api.bc.BcOpenPGPApi;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
@@ -47,6 +48,7 @@ import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPDigestCalculatorProviderBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyPair;
 import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyEncryptorBuilder;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
@@ -452,6 +454,49 @@ class KeyValidityAgreementTest {
                 certificate.getPublicKey(), generator.generateCertification(primary.getPublicKey())));
 
         assertThat(outcomesServedTwice(revoked, artifact, claim)).isEqualTo(Map.of("bc", "FAILED", "sq", "FAILED"));
+    }
+
+    /**
+     * Bouncy Castle on its own, on the certificate as stored, without {@code BcRunner}'s binding
+     * view: without a direct-key signature it takes the primary key's binding, key flags
+     * included, from the first user ID alone, bound or not, and a revocation of that user ID
+     * revokes the key. These tests pin that behaviour, each beside a control showing the key
+     * bound by its other user ID alone. When one fails after an upgrade, Bouncy Castle judges
+     * user IDs as GnuPG and Sequoia do: remove {@code BcRunner.bindingViewOf} and check that the
+     * agreement tests above, on unsigned, forged and revoked user IDs, still pass.
+     */
+    @Nested
+    class BouncyCastleOnTheStoredCertificate {
+
+        /** The key's flags are read from the unsigned user ID, which has none, so it cannot sign. */
+        @Test
+        void takesTheKeyFlagsFromAnUnsignedFirstUserId() throws Exception {
+            PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+            UserIdPackets bound = userId(B,
+                    userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, B, FOUR_HOURS_AGO));
+
+            assertThat(openPgp(certificate(key, bound)).getSigningKeys(new Date())).as("B alone binds it").isNotEmpty();
+            assertThat(openPgp(certificate(key, userId(A), bound)).getSigningKeys(new Date())).isEmpty();
+        }
+
+        @Test
+        void takesARevokedFirstUserIdForARevokedKey() throws Exception {
+            PGPSecretKeyRing key = keyRing(HashAlgorithmTags.SHA256, Instant.now().minus(DAY), null);
+            UserIdPackets bound = userId(B,
+                    userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, B, FOUR_HOURS_AGO));
+            UserIdPackets revoked = userId(A,
+                    userIdSignature(key, key, PGPSignature.POSITIVE_CERTIFICATION, A, FOUR_HOURS_AGO),
+                    userIdSignature(key, key, PGPSignature.CERTIFICATION_REVOCATION, A, TWO_HOURS_AGO));
+
+            assertThat(openPgp(certificate(key, bound)).getPrimaryKey().getRevocation(new Date()))
+                    .as("B alone binds it").isNull();
+            assertThat(openPgp(certificate(key, revoked, bound)).getPrimaryKey().getRevocation(new Date())).isNotNull();
+        }
+
+        private static OpenPGPCertificate openPgp(PGPPublicKeyRing cert) {
+            return new OpenPGPCertificate(cert, new BcOpenPGPApi().getImplementation(),
+                    VerificationAlgorithms.bouncyCastlePolicy());
+        }
     }
 
     private static final byte[] A = "A <a@example.org>".getBytes(StandardCharsets.UTF_8);

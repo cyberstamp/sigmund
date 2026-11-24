@@ -782,15 +782,22 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * primary key binds.
      *
      * <p>
-     * Bouncy Castle 1.87 sets aside every self-signature that does not verify, and every
-     * revocation, so a forged key revocation, direct-key signature, subkey binding or subkey
+     * Bouncy Castle 1.87 sets aside every self-signature and every revocation that does not
+     * verify, so a forged key revocation, direct-key signature, subkey binding or subkey
      * revocation changes nothing without help here. What remains is the user IDs: when the
-     * primary key has no direct-key signature, Bouncy Castle takes its binding from the primary
-     * user ID — the first one when none is marked — whether or not that user ID is bound, and a
-     * revocation of that user ID revokes the key. An unsigned, forged or revoked first user ID
-     * would so reject a key that GnuPG and Sequoia accept, or report it revoked. The view is for
-     * this question only: a user ID revocation does not touch the key, and a user ID is never a
-     * credential. The user ID to show is chosen from the certificate unfiltered.
+     * primary key has no direct-key signature, Bouncy Castle takes its binding, key flags
+     * included, from the primary user ID — the first one when none is marked — whether or not
+     * that user ID is bound, and a revocation of that user ID revokes the key. An unsigned or
+     * forged first user ID would so leave a key GnuPG and Sequoia accept unable to sign, and a
+     * revoked one would report it revoked, which is {@code FAILED}. The view is for this question
+     * only: a user ID revocation does not touch the key, and a user ID is never a credential. The
+     * user ID to show is chosen from the certificate unfiltered.
+     *
+     * <p>
+     * This is a workaround for Bouncy Castle, held to GnuPG and Sequoia by
+     * {@code KeyValidityAgreementTest}, whose nested {@code BouncyCastleOnTheStoredCertificate}
+     * pins the library's behaviour: when an upgrade fixes it, that test fails and this view can
+     * go (P10.15).
      */
     private static PGPPublicKeyRing bindingViewOf(PGPPublicKeyRing ring) {
         PGPPublicKey primary = ring.getPublicKey();
@@ -805,7 +812,8 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
 
     /**
      * The key with the user ID's certification revocations removed, and the user ID itself
-     * removed when no certification by the primary key verifies over it.
+     * removed when no certification by the primary key verifies over it; see
+     * {@link #bindingViewOf(PGPPublicKeyRing)} for why.
      */
     private static PGPPublicKey withBoundUserIdOnly(PGPPublicKey view, PGPPublicKey primary, byte[] userId) {
         List<PGPSignature> signatures = new ArrayList<>();
