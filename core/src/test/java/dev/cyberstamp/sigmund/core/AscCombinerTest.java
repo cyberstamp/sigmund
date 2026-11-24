@@ -152,6 +152,37 @@ class AscCombinerTest {
         assertThat(AscCombiner.inspectSignaturePacket(armored).version()).isEqualTo(4);
     }
 
+    // --- signature type ---
+
+    @Test
+    void inspectSignaturePacketReadsTheTypeOfAV4Signature() {
+        byte[] certification = new byte[] {
+                (byte) 0x88, 0x08, 0x04, 0x10, 0x11, 0x08, 0x00, 0x00, 0x00, 0x00
+        };
+        assertThat(AscCombiner.inspectSignaturePacket(AscCombiner.armor(certification)).signatureType())
+                .isEqualTo(0x10);
+        assertThat(AscCombiner.inspectSignaturePacket(ARMORED_BLOCK_1).signatureType()).isZero();
+    }
+
+    @Test
+    void inspectSignaturePacketReadsTheTypeOfAV3SignatureAfterItsHashedLength() {
+        byte[] v3 = new byte[] {
+                (byte) 0x88, 0x0A, 0x03, 0x05, 0x01, 0x61, 0x74, 0x00, 0x09, 0x00, 0x00, 0x00
+        };
+        assertThat(AscCombiner.inspectSignaturePacket(AscCombiner.armor(v3)).signatureType()).isEqualTo(0x01);
+    }
+
+    @Test
+    void inspectSignaturePacketReadsNoTypeThroughACompressedWrapper() {
+        byte[] compressedWrapped = new byte[] {
+                (byte) 0xA3, 0x00, (byte) 0xC2, 0x10, 0x04,
+                0x10, 0x11, 0x08, 0x00, 0x06,
+                0x05, 0x02, 0x61, 0x74, 0x00, 0x09, 0x00, 0x0A, 0x09, 0x10
+        };
+        assertThat(AscCombiner.inspectSignaturePacket(AscCombiner.armor(compressedWrapped)).signatureType())
+                .isEqualTo(-1);
+    }
+
     @Test
     void extractV6IssuerFingerprintV6() {
         // v6 signature with Issuer Fingerprint subpacket (type 33)

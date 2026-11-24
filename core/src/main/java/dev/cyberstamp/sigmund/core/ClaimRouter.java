@@ -13,6 +13,11 @@ import java.util.List;
  * verification ({@link SignatureEvidenceAdapter}) and by direct signature verification
  * ({@link Sigmund#verify(Path, Path)}), so that the two cannot disagree about a claim:
  * <ul>
+ * <li>An OpenPGP signature that is not a document signature
+ * ({@link OpenPgpClaim#isNonDocumentSignature()}) is
+ * {@link IndeterminateReason#EVIDENCE_MALFORMED} and no tool is asked: the backends disagree on
+ * such a block — {@code sq} counts it a bad signature, GnuPG an error, Bouncy Castle a key it
+ * cannot use — so the answer is settled here, where it cannot depend on the tool.</li>
  * <li>Tools are asked in toolchain order; a tool whose {@link SignatureTool#canVerify(Claim)}
  * declines is not asked.</li>
  * <li>{@link IndeterminateReason#UNSUPPORTED_ALGORITHM} from a tool passes the claim on to the
@@ -61,6 +66,10 @@ final class ClaimRouter {
      * @return the record of the answer that counts; never {@code null}
      */
     ClaimResult route(Path artifactFile, Claim claim, String kind, EvidenceRef evidence) {
+        if (claim instanceof OpenPgpClaim openPgp && openPgp.isNonDocumentSignature()) {
+            return ClaimResult.of(claim, kind, notADocumentSignature(openPgp), List.of(), evidence,
+                    TrustRootRef.unknown(), null, Instant.now());
+        }
         ClaimResult best = null;
         for (SignatureTool tool : tools) {
             ClaimResult record;
@@ -125,6 +134,18 @@ final class ClaimRouter {
         }
         return new UnverifiedResult(ClaimOutcome.INDETERMINATE,
                 IndeterminateReason.UNSUPPORTED_ALGORITHM);
+    }
+
+    /**
+     * The result standing for an OpenPGP signature that is not made over a document, keeping
+     * its algorithm and the key it names. The key stays unproven.
+     */
+    private static VerifyResult notADocumentSignature(OpenPgpClaim claim) {
+        return OpenPgpVerifyResult.indeterminate(IndeterminateReason.EVIDENCE_MALFORMED, null,
+                Algorithms.algorithmName(claim.algorithmId()), claim.packetVersion(),
+                claim.issuerFingerprint(), null)
+                .withDetail(String.format("a signature of type 0x%02X is not a signature over a document",
+                        claim.signatureType()));
     }
 
     /**

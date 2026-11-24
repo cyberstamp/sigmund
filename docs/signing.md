@@ -59,7 +59,7 @@ Sigmund signs artifacts using one or more OpenPGP backends. The signing pipeline
 -----END PGP SIGNATURE-----
 ```
 
-Maven Central and `sq verify` read only the first block, the classic signature, and GnuPG verifies the classic block and warns about the post-quantum one ([Backward Compatibility](#backward-compatibility)). Sigmund verifies every block, each as its own claim, so checking the post-quantum signature takes Sigmund (with `sq` installed for the v6 block), not `sq` alone.
+Maven Central and `sq verify` read only the first block, the classic signature, and GnuPG verifies the classic block and warns about the post-quantum one ([Backward Compatibility](#backward-compatibility)). Sigmund verifies every block, each as its own claim, so checking the post-quantum signature takes Sigmund — its Bouncy Castle backend or `sq` checks the v6 block — not `sq` alone.
 
 ## Checking the Signing Setup
 
@@ -177,7 +177,12 @@ Classic algorithms:
 - `nistp384` — ECDSA with P-384 curve
 - `nistp521` — ECDSA with P-521 curve
 
-BC generates v4 keys by default: keys.openpgp.org serves only v4 keys, and GnuPG signs and verifies only v4. Pass `--credential-type pgp6` for a v6 key, for `ed25519`, `ed448` and `rsa4096`; the ECDSA suites (P-256, P-384, P-521) produce v4 keys only. A v4 Ed25519 key uses the legacy EdDSA encoding, the form GnuPG reads.
+Post-quantum algorithms (RFC 9980, v6 only, with `--credential-type pgp6`):
+
+- `mldsa65-ed25519` — ML-DSA-65 composed with Ed25519
+- `mldsa87-ed448` — ML-DSA-87 composed with Ed448
+
+BC generates v4 keys by default: keys.openpgp.org serves only v4 keys, and GnuPG signs and verifies only v4. Pass `--credential-type pgp6` for a v6 key, for `ed25519`, `ed448`, `rsa4096` and the ML-DSA suites; the ECDSA suites (P-256, P-384, P-521) produce v4 keys only. A v4 Ed25519 key uses the legacy EdDSA encoding, the form GnuPG reads.
 
 ### Passphrase Protection
 
@@ -270,11 +275,11 @@ tools:
 
 ## Hybrid PQC Signing
 
-Hybrid signing combines a classic and a post-quantum signature in one `.asc` file. The post-quantum one comes from `sq`; the classic one from `gpg` or `bc`, or from `sq` itself with a v4 key beside its v6 one ([sq with both keys](#sq-with-both-keys)). This provides quantum resistance while maintaining backward compatibility.
+Hybrid signing combines a classic and a post-quantum signature in one `.asc` file. The post-quantum one comes from `sq` or from Bouncy Castle ([BC with both keys](#bc-with-both-keys)); the classic one from `gpg` or `bc`, or from `sq` itself with a v4 key beside its v6 one ([sq with both keys](#sq-with-both-keys)). This provides quantum resistance while maintaining backward compatibility.
 
 ### Prerequisites
 
-**Sequoia sq 1.4.0+ with PQC support** is required for hybrid signing.
+**Sequoia sq 1.4.0+ with PQC support** is required for hybrid signing with `sq`. Bouncy Castle needs nothing installed: it generates ML-DSA keys and signs with them itself ([BC with both keys](#bc-with-both-keys)).
 
 Verify your installation:
 
@@ -441,6 +446,34 @@ sq: pgp6 ML-DSA-87+Ed448 D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8
 ```
 
 Both signatures go into the one `.asc`.
+
+### BC with both keys
+
+Bouncy Castle signs with a v4 and a v6 post-quantum key in one run as well, with nothing installed. Generate both keys with `sigmund keygen`:
+
+```bash
+sigmund keygen --userid "Your Name <you@example.com>"
+
+sigmund keygen --userid "Your Name <you@example.com>" \
+  --cipher-suite mldsa87-ed448 --credential-type pgp6
+```
+
+The post-quantum suites are `mldsa65-ed25519` and `mldsa87-ed448`, v6 only. Each key is the one RFC 9980 recommends: an ML-DSA certify-only primary key, an ML-DSA signing subkey and an ML-KEM encryption subkey. List both fingerprints under `tools.bc.signing-fingerprint`:
+
+```yaml
+tools:
+  bc:
+    signing-fingerprint:
+      - "41A2197725BD63EB00D071D46A7F5DB1C68BDB81"
+      - "D62AAB339E45E5EA2FD036872B01D46A517A29911A2B3C4D5E6F7A8B9C0D1E2F"
+
+signing:
+  toolchain: [bc]
+  profiles:
+    hybrid: [pgp4, pgp6]
+```
+
+Publish the v6 certificate where verifiers find it — `sq` reads it from the shared cert-d — with `sigmund export-cert --fingerprint <fingerprint>`; keys.openpgp.org serves v4 keys only.
 
 ### Rotating a signing key
 

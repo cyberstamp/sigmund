@@ -33,12 +33,12 @@ Sigmund has three OpenPGP backends and a Sigstore one:
 
 | Tool | Availability | v4 Support | v6 Support | PQC Support | Process Deps |
 |------|--------------|------------|------------|-------------|--------------|
-| **BC** | Always (pure Java) | Sign, verify | Sign, verify (classic algorithms) | None (planned) | None |
+| **BC** | Always (pure Java) | Sign, verify | Sign, verify (classic algorithms) | Verify ML-DSA composites (RFC 9980); signing planned | None |
 | **sq** | Optional | Sign, verify | Sign, verify | Sign, verify (RFC 9980) | Sequoia CLI |
 | **gpg** | Optional | Sign, verify | None | None | GnuPG CLI |
 | **sigstore** | Optional (pure Java) | N/A | N/A | N/A | None |
 
-**BC (Bouncy Castle)** is the default first-choice tool. It requires no external process dependencies and works on any JVM. BC generates v4 keys by default, the version keyservers serve and GnuPG reads, and v6 keys on request (Ed25519, Ed448 and RSA, through Bouncy Castle 1.86's `BcOpenPGPApi`); ECDSA keys (P-256, P-384, P-521) use a JCA-based fallback and are v4 only. See [Known Limitations](limitations.md#not-every-bc-cipher-suite-has-both-key-versions).
+**BC (Bouncy Castle)** is the default first-choice tool. It requires no external process dependencies and works on any JVM. BC generates v4 keys by default, the version keyservers serve and GnuPG reads, and v6 keys on request (Ed25519, Ed448 and RSA, through Bouncy Castle's `BcOpenPGPApi`); ECDSA keys (P-256, P-384, P-521) use a JCA-based fallback and are v4 only. See [Known Limitations](limitations.md#not-every-bc-cipher-suite-has-both-key-versions).
 
 **sq (Sequoia)** is used for PQC hybrid signing when available. Version 1.4.0+ implements RFC 9980 and can generate and verify ML-DSA composite signatures.
 
@@ -59,16 +59,17 @@ BC attempts verification first. If BC cannot decide a signature (missing key, un
 The routing mechanism, `ClaimRouter`, is shared by trust verification and by `verify-signature`, so the two cannot disagree about a claim:
 
 1. Each signature file is parsed into one or more `Claim`s by its `SignatureFormat`
-2. For each claim, tools are checked in toolchain order
-3. Each tool where `canVerify(claim)` returns true attempts verification
-4. If a tool returns `VERIFIED` or `FAILED`, that answer stands and no later tool is asked — the toolchain order decides which tool answers, never what the answer is, so a `FAILED` cannot be outvoted
-5. If a tool leaves the claim `INDETERMINATE`, the next tool is tried — a different tool may have the key in its local keyring or support the algorithm; a tool that throws is recorded as `TOOL_UNAVAILABLE` and the next tool still gets its turn
-6. If no tool decides it, the most conclusive result seen is kept (a transient reason over a permanent one)
-7. A claim no tool answered is `INDETERMINATE [UNSUPPORTED_ALGORITHM]`; it is never left out, so a block nobody could check cannot pass strict verification
+2. An OpenPGP claim whose signature type is not a binary or text document signature is `INDETERMINATE [EVIDENCE_MALFORMED]` and no tool is asked: the backends disagree on such a block, so the router settles it
+3. For each other claim, tools are checked in toolchain order
+4. Each tool where `canVerify(claim)` returns true attempts verification
+5. If a tool returns `VERIFIED` or `FAILED`, that answer stands and no later tool is asked — the toolchain order decides which tool answers, never what the answer is, so a `FAILED` cannot be outvoted
+6. If a tool leaves the claim `INDETERMINATE`, the next tool is tried — a different tool may have the key in its local keyring or support the algorithm; a tool that throws is recorded as `TOOL_UNAVAILABLE` and the next tool still gets its turn
+7. If no tool decides it, the most conclusive result seen is kept (a transient reason over a permanent one)
+8. A claim no tool answered is `INDETERMINATE [UNSUPPORTED_ALGORITHM]`; it is never left out, so a block nobody could check cannot pass strict verification
 
 For example, a hybrid `.asc` with both a PGP4 (RSA) and PGP6 (ML-DSA) signature:
 - **PGP4 block:** BC may return `KEY_UNAVAILABLE` if the key is not in its stores, but GPG finds it in `pubring.kbx` and verifies it
-- **PGP6 block:** BC and GPG cannot verify ML-DSA, but Sequoia finds the key in its cert store and verifies it
+- **PGP6 block:** GPG cannot verify ML-DSA; BC verifies it when the key is in its stores, and otherwise Sequoia finds the key in its cert store and verifies it
 
 Configure the toolchain in `sigmund.yaml`:
 
@@ -143,17 +144,17 @@ Private key files in `bc-private/` are created with owner-only (600) file permis
 
 | From → To | BC | sq | gpg |
 |-----------|----|----|-----|
-| **BC v6 keys** | Yes | Yes | No (v6 not supported) |
+| **BC v6 keys** (ML-DSA composites included) | Yes | Yes | No (v6 not supported) |
 | **BC v4 keys** | Yes | Yes | Yes |
 | **sq v6 classic** | Yes | Yes | No |
-| **sq v6 PQC** | No (planned) | Yes | No |
+| **sq v6 PQC** | Yes | Yes | No |
 | **gpg v4** | Yes | Yes | Yes |
 
 **BC → sq interop** works for v6 keys because both support RFC 9580 (OpenPGP v6). BC-generated public certs are written to the shared cert-d so `sq` can see them.
 
 **BC → gpg interop** works only for v4 keys. BC can read GPG's `pubring.kbx` (or legacy `pubring.gpg`) for verification. BC v6 keys cannot be imported into GPG because GPG follows LibrePGP and does not support v6.
 
-**sq → BC interop** works for v6 classic algorithm signatures (Ed25519, Ed448, RSA). PQC signatures (algorithm IDs 30-36) cannot be parsed by BC yet ([Known Limitations](limitations.md#pqc-signature-verification-requires-sequoia)).
+**sq → BC interop** works for v6 classic algorithm signatures (Ed25519, Ed448, RSA) and the post-quantum signatures of RFC 9980: the ML-DSA composites (ML-DSA-65+Ed25519, ML-DSA-87+Ed448) and SLH-DSA, in agreement with `sq` under Sigmund's crypto policy (`BcPostQuantumTest`).
 
 ## Signing Pipeline
 
@@ -237,12 +238,12 @@ Each armored block is parsed into a `Claim` and routed by `ClaimRouter` through 
 
 ### BC Verification
 
-BC handles any `OpenPgpClaim` (v4 or v6 classic algorithms). Verification steps:
+BC handles any `OpenPgpClaim` (v4 or v6, classic or the post-quantum signatures of RFC 9980) except one naming ML-KEM, which no signature is made with. Verification steps:
 
 1. Extract issuer fingerprint from the signature packet's Issuer Fingerprint subpacket (type 33), or the 64-bit key ID when it carries none
 2. Search for the signer's certificate in the key store (`BcKeyStore.findPublicKey()`); if it is absent and key fetching is enabled, fetch it from keyservers (`KeyserverFetcher`)
 3. Parse the signature packet using Bouncy Castle's `BcPGPObjectFactory`
-4. Verify with Bouncy Castle's high-level API (`OpenPGPCertificate` and `OpenPGPDetachedSignatureProcessor`): the signature must be correct and made, at its creation time, by the primary key or a subkey validly bound to it — binding signature, signing flag, a signing subkey's back-signature, not revoked or expired, the primary key's expiry applying to the whole certificate. Validity is judged on a view of the certificate without the certifications and revocations that do not verify against its primary key, so a packet a keyserver added without the holder's key changes nothing
+4. Verify with Bouncy Castle's high-level API (`OpenPGPCertificate` and `OpenPGPDetachedSignatureProcessor`): the signature must be correct and made, at its creation time, by the primary key or a subkey validly bound to it — binding signature, signing flag, a signing subkey's back-signature, not revoked or expired, the primary key's expiry applying to the whole certificate. Bouncy Castle sets aside the self-signatures and revocations that do not verify against the primary key, so a packet a keyserver added without the holder's key changes nothing; validity is judged on a view of the certificate without user ID revocations and without the user IDs no certification binds, as Bouncy Castle would otherwise take the primary key's binding from such a user ID
 5. Return `VERIFIED`, proving the signing key's and the primary key's full fingerprints, when the signature is correct and the key valid
 6. When the signature is correct (`isTestedCorrect()`) but the key is not valid, explain why: revoked or expired at the signature's time is `FAILED`, with a detail naming the revocation's reason and date (and the keyservers that served it) or the expiry date; an algorithm the policy rejects is `INDETERMINATE [UNSUPPORTED_ALGORITHM]`; any other key the certificate does not bind — no self-signature, as keys.openpgp.org serves one without user IDs; a self-signature that does not verify; or one over a user ID that is not UTF-8, which Bouncy Castle's certificate API drops — is `INDETERMINATE [KEY_UNAVAILABLE]`, as GnuPG and Sequoia also report it ([ADR-009](../adr/009-an-unbound-key-is-never-failed.md))
 7. A signature that is not correct is `FAILED` with the detail "the artifact does not match the signature"; one that cannot be parsed is `INDETERMINATE [EVIDENCE_MALFORMED]`; an exception is `INDETERMINATE [TOOL_UNAVAILABLE]`

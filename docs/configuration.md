@@ -727,10 +727,11 @@ Configured in the top-level `tools.bc` section.
 - `nistp256` — ECDSA with NIST P-256 curve (v4 only)
 - `nistp384` — ECDSA with NIST P-384 curve (v4 only)
 - `nistp521` — ECDSA with NIST P-521 curve (v4 only)
+- `mldsa65-ed25519` — post-quantum ML-DSA-65 composed with Ed25519 (RFC 9980, v6 only)
+- `mldsa87-ed448` — post-quantum ML-DSA-87 composed with Ed448 (RFC 9980, v6 only)
 
 Keys are v4 unless `sigmund keygen --credential-type pgp6` asks for v6: keys.openpgp.org serves
-only v4 keys, and GnuPG signs and verifies only v4. BC does not generate post-quantum keys;
-generate them with [SQ](#sq-sequoia).
+only v4 keys, and GnuPG signs and verifies only v4.
 
 **Passphrase resolution order:**
 

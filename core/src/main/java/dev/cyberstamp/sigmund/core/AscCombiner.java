@@ -27,6 +27,9 @@ final class AscCombiner {
     /** Packet tag for compressed data, which may wrap a signature packet. */
     private static final int TAG_COMPRESSED_DATA = 8;
 
+    /** Packet tag for a signature (RFC 9580 §5.2). */
+    private static final int TAG_SIGNATURE = 2;
+
     /** Signature subpacket type carrying the signer's key fingerprint (RFC 9580 §5.2.3.35). */
     private static final int SUBPACKET_TYPE_ISSUER_FINGERPRINT = 33;
 
@@ -174,8 +177,8 @@ final class AscCombiner {
     }
 
     /**
-     * Extracts version, algorithm ID, and issuer fingerprint from an armored
-     * block in a single dearmor pass.
+     * Extracts version, algorithm ID, issuer fingerprint, creation time and signature type from
+     * an armored block in a single dearmor pass.
      *
      * @param armoredBlock a single ASCII-armored OpenPGP block
      * @return the extracted metadata
@@ -189,10 +192,24 @@ final class AscCombiner {
             SubpacketAreas areas = resolveSubpacketAreas(raw);
             String fingerprint = extractIssuerFingerprintFromPackets(raw, areas);
             Instant creationTime = extractCreationTimeFromPackets(raw, areas);
-            return new OpenPgpSignaturePacketInfo(version, algoId, fingerprint, creationTime);
+            int signatureType = extractSignatureType(raw, bodyOffset, version);
+            return new OpenPgpSignaturePacketInfo(version, algoId, fingerprint, creationTime, signatureType);
         } catch (IOException e) {
-            return new OpenPgpSignaturePacketInfo(-1, -1, null, null);
+            return new OpenPgpSignaturePacketInfo(-1, -1, null, null, -1);
         }
+    }
+
+    /**
+     * Extracts the signature type from a bare signature packet: the byte after the version in
+     * v4 and later packets, and after the hashed-material length in v3 ones. A block whose first
+     * packet is not a signature, compressed data among them, has no type read.
+     */
+    private static int extractSignatureType(byte[] raw, int bodyOffset, int version) {
+        if (bodyOffset < 0 || packetTag(raw[0] & 0xFF) != TAG_SIGNATURE || version < 0) {
+            return -1;
+        }
+        int offset = bodyOffset + (version == 3 ? 2 : 1);
+        return offset < raw.length ? raw[offset] & 0xFF : -1;
     }
 
     /**

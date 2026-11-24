@@ -39,7 +39,10 @@ public enum IndeterminateReason {
      */
     UNSUPPORTED_ALGORITHM(false),
 
-    /** The evidence could not be parsed. Permanent: the bytes will not improve. */
+    /**
+     * The evidence could not be parsed, or is not a signature over a document. Permanent: the
+     * bytes will not improve.
+     */
     EVIDENCE_MALFORMED(false);
 
     private final boolean isTransient;

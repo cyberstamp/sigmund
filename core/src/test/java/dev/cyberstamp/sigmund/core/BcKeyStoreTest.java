@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
@@ -40,6 +41,25 @@ import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 class BcKeyStoreTest {
+
+    /**
+     * A store holds nothing between lookups: a revocation written to the key's copy after a
+     * first lookup is what the next one finds.
+     */
+    @Test
+    void aRevocationWrittenAfterALookupIsWhatTheNextLookupFinds(@TempDir Path tempDir) throws Exception {
+        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
+        OpenPGPKey key = generateV4Key("Alice Example <alice@example.org>");
+        PGPPublicKeyRing certificate = key.toCertificate().getPGPPublicKeyRing();
+        String fingerprint = KeyRingFiles.hex(key.getFingerprint());
+        store.storeCert(certificate);
+        assertThat(store.findPublicKey(fingerprint).ring().getPublicKey().hasRevocation()).isFalse();
+
+        store.storeCert(PGPPublicKeyRing.insertPublicKey(certificate,
+                PGPPublicKey.addCertification(certificate.getPublicKey(), revocationOf(key))));
+
+        assertThat(store.findPublicKey(fingerprint).ring().getPublicKey().hasRevocation()).isTrue();
+    }
 
     @Test
     void findPublicKeyFromCertD(@TempDir Path tempDir) throws Exception {
@@ -455,7 +475,7 @@ class BcKeyStoreTest {
     }
 
     /**
-     * Bouncy Castle 1.86 corrupts a native Ed25519 (algorithm 27) v4 signature when it joins two
+     * Bouncy Castle 1.86 corrupted a native Ed25519 (algorithm 27) v4 signature when it joined two
      * copies of it; a local copy joined with a fetched one must still be a certificate.
      */
     @Test
@@ -490,8 +510,8 @@ class BcKeyStoreTest {
     }
 
     /**
-     * A certificate that cannot be encoded — here one Bouncy Castle 1.86 corrupted by joining two
-     * copies of a native Ed25519 v4 key itself — never truncates the file a store already holds.
+     * A certificate that cannot be encoded — as Bouncy Castle 1.86 made one by joining two copies
+     * of a native Ed25519 v4 key — never truncates the file a store already holds.
      */
     @Test
     void aCertificateThatCannotBeEncodedLeavesTheStoredFileIntact(@TempDir Path tempDir) throws Exception {
@@ -499,8 +519,7 @@ class BcKeyStoreTest {
         BcKeyStore store = new BcKeyStore(null, certD, tempDir.resolve("bc-private"));
         byte[] encoded = generateV4Key("Alice Example <alice@example.org>").toCertificate()
                 .getPGPPublicKeyRing().getEncoded();
-        PGPPublicKeyRing corrupted = PGPPublicKeyRing.join(parsed(encoded), parsed(encoded));
-        assertThatThrownBy(corrupted::getEncoded).isInstanceOf(RuntimeException.class);
+        PGPPublicKeyRing corrupted = unencodable(parsed(encoded));
         store.storeCert(parsed(encoded));
         String fp = KeyRingFiles.hex(parsed(encoded).getPublicKey().getFingerprint()).toLowerCase();
         Path certFile = certD.resolve(fp.substring(0, 2)).resolve(fp.substring(2));
@@ -511,6 +530,18 @@ class BcKeyStoreTest {
         try (Stream<Path> files = Files.list(certFile.getParent())) {
             assertThat(files).containsExactly(certFile);
         }
+    }
+
+    /** The certificate, failing to encode. */
+    private static PGPPublicKeyRing unencodable(PGPPublicKeyRing ring) {
+        List<PGPPublicKey> keys = new ArrayList<>();
+        ring.getPublicKeys().forEachRemaining(keys::add);
+        return new PGPPublicKeyRing(keys) {
+            @Override
+            public byte[] getEncoded() throws IOException {
+                throw new IOException("cannot be encoded");
+            }
+        };
     }
 
     private static PGPPublicKeyRing parsed(byte[] encoded) throws Exception {

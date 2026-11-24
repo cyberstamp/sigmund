@@ -6,7 +6,6 @@ This page documents known limitations, ecosystem maturity notes, and caveats for
 
 - [BC v6 keys incompatible with GnuPG](#bc-v6-keys-incompatible-with-gnupg)
 - [Not every BC cipher suite has both key versions](#not-every-bc-cipher-suite-has-both-key-versions)
-- [PQC signature verification requires Sequoia](#pqc-signature-verification-requires-sequoia)
 - [GPG ephemeral key fetch not supported](#gpg-ephemeral-key-fetch-not-supported)
 - [GPG exit code 2 for hybrid .asc files](#gpg-exit-code-2-for-hybrid-asc-files)
 - [Sequoia verdicts are read from its report text](#sequoia-verdicts-are-read-from-its-report-text)
@@ -29,17 +28,10 @@ A v4 Ed25519 key is written in the legacy EdDSA encoding: GnuPG 2.4 reads Ed2551
 
 ## Not every BC cipher suite has both key versions
 
-- **ECDSA** (`nistp256`, `nistp384`, `nistp521`) keys are v4 only. Bouncy Castle 1.86's high-level API does not generate ECDSA keys, so Sigmund uses a JCA-based fallback that produces v4 keys; `--credential-type pgp6` with these suites is an error.
+- **ECDSA** (`nistp256`, `nistp384`, `nistp521`) keys are v4 only. Bouncy Castle's high-level API (1.87) has no ECDSA key preset, so Sigmund uses a JCA-based fallback that produces v4 keys; `--credential-type pgp6` with these suites is an error.
 - **Ed448** keys are v6 only: GnuPG reads no v4 Ed448 key, so a v4 one would serve no tool a v4 key is for. `--cipher-suite ed448` without `--credential-type pgp6` is an error.
+- **ML-DSA** (`mldsa65-ed25519`, `mldsa87-ed448`) keys are v6 only, as RFC 9980 defines them for v6 keys alone; without `--credential-type pgp6` they are an error.
 - **Ed25519** and **RSA** (`rsa4096`) come in both versions.
-
-## PQC signature verification requires Sequoia
-
-Bouncy Castle (1.86) does not recognize post-quantum composite signature algorithm IDs (30-36, defined in RFC 9980): it cannot even read a certificate holding such a key. BC therefore does not take post-quantum signatures, and a PQC block no other tool in the toolchain reads is `INDETERMINATE [UNSUPPORTED_ALGORITHM]`, which sets that claim aside rather than failing the artifact.
-
-**What this means:** PQC signature verification currently requires Sequoia `sq` 1.4.0+. Without it, the PQC block of a hybrid `.asc` is reported `INDETERMINATE [UNSUPPORTED_ALGORITHM]` — so strict verification of the file does not pass, and lenient verification does when the classic block verifies.
-
-BC support for PQC verification (ML-DSA-87+Ed448 and ML-DSA-65+Ed25519) is planned for a future release.
 
 ## GPG ephemeral key fetch not supported
 

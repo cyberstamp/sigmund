@@ -55,8 +55,9 @@ installed. A claim ends up:
 Keeping "could not check" apart from "checked and rejected" is deliberate: a missing key is a
 setup problem, not tampering.
 
-A claim no installed tool can read at all — a post-quantum signature with no `sq` installed — is
-**set aside** rather than counted against the artifact, so the other claims decide.
+A claim no installed tool can read at all — a post-quantum signature when the toolchain holds
+neither `bc` nor `sq` — is **set aside** rather than counted against the artifact, so the other
+claims decide.
 
 ### Credentials
 
@@ -110,10 +111,11 @@ not called `UNSATISFIED`. It happens in two ways.
   confirms an address). A failed or disabled directory lookup for an email identity lands here
   too. Allow key fetching, or try another keyserver.
 - `UNSUPPORTED_ALGORITHM` — no installed tool can check the signature, or it uses an algorithm
-  Sigmund does not accept. Installing `sq` checks post-quantum signatures.
+  Sigmund does not accept.
 - `TOOL_UNAVAILABLE` — a verification tool could not run, or broke while running.
 - `TRUST_ROOT_UNAVAILABLE` — Sigstore's trust metadata is missing or too old.
-- `EVIDENCE_MALFORMED` — the signature or bundle could not be parsed.
+- `EVIDENCE_MALFORMED` — the signature or bundle could not be parsed, or an OpenPGP signature is
+  not a document signature.
 
 **The rule cannot be judged because claims were set aside.** A co-signer's post-quantum signature
 that no installed tool reads is not a wrong signer — it may be exactly the one the rule requires.

@@ -324,17 +324,20 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * {@inheritDoc}
      *
      * <p>
-     * Accepts an {@link OpenPgpClaim} of any packet version, except a post-quantum signature
-     * ({@link Algorithms#isPqcAlgorithm(int)}): Bouncy Castle 1.86 cannot read an ML-DSA or
-     * SLH-DSA key at all — parsing the certificate fails with "unknown signature key algorithm" —
-     * so it could only report such a key as missing, and would look for it on keyservers. Declining
-     * passes the claim to a tool that reads it, or leaves it {@code UNSUPPORTED_ALGORITHM} when
-     * none does. {@code BcPostQuantumTest} fails once a Bouncy Castle upgrade reads these keys.
+     * Accepts an {@link OpenPgpClaim} of any packet version, including the post-quantum
+     * signatures of RFC 9980 — the ML-DSA composites and SLH-DSA — which Bouncy Castle verifies
+     * since 1.87 in agreement with {@code sq} ({@code BcPostQuantumTest}). It declines a claim
+     * naming ML-KEM, an encryption algorithm no signature is made with, which passes it to a tool
+     * that reads it, or leaves it {@code UNSUPPORTED_ALGORITHM} when none does.
      */
     @Override
     public boolean canVerify(Claim claim) {
-        return claim instanceof OpenPgpClaim openPgp
-                && !Algorithms.isPqcAlgorithm(openPgp.algorithmId());
+        return claim instanceof OpenPgpClaim openPgp && !isEncryptionOnlyPqcAlgorithm(openPgp.algorithmId());
+    }
+
+    private static boolean isEncryptionOnlyPqcAlgorithm(int algorithmId) {
+        return algorithmId == PublicKeyAlgorithmTags.MLKEM768_X25519
+                || algorithmId == PublicKeyAlgorithmTags.MLKEM1024_X448;
     }
 
     /**
@@ -390,11 +393,12 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
      * {@inheritDoc}
      *
      * <p>
-     * Generates a key using BC 1.85's high-level {@code BcOpenPGPApi}. Without a cipher suite,
-     * the one {@code tools.bc.cipher-suite} configures is used, else {@value #DEFAULT_CIPHER_SUITE}.
-     * Without a credential type the key is v4 ({@code pgp4}), the version keyservers serve and
-     * GnuPG signs with; {@code pgp6} gives a v6 key, for {@code ed25519}, {@code ed448} and
-     * {@code rsa4096} only.
+     * Generates a key using Bouncy Castle's high-level {@code BcOpenPGPApi}. Without a cipher
+     * suite, the one {@code tools.bc.cipher-suite} configures is used, else
+     * {@value #DEFAULT_CIPHER_SUITE}. Without a credential type the key is v4 ({@code pgp4}), the
+     * version keyservers serve and GnuPG signs with; {@code pgp6} gives a v6 key, for
+     * {@code ed25519}, {@code ed448}, {@code rsa4096} and the post-quantum
+     * {@code mldsa65-ed25519} and {@code mldsa87-ed448}, the last three of which are v6 only.
      */
     @Override
     public String generateKey(String userId, String cipherSuite, String credentialType) {
@@ -748,7 +752,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
             OpenPGPCertificate unfiltered = new OpenPGPCertificate(found.ring(),
                     api.getImplementation(), VERIFICATION_POLICY);
             String userId = displayedUserId(unfiltered, fingerprint, signature.getCreationTime());
-            if (findVerificationKey(pubKeyRing, signature) == null) {
+            if (pubKeyRing.getPublicKey(signature.getKeyID()) == null) {
                 return OpenPgpVerifyResult.indeterminate(IndeterminateReason.KEY_UNAVAILABLE, userId, algorithm, version,
                         fingerprint, fingerprint).withDetail("the certificate found does not contain the signing key");
             }
@@ -773,22 +777,27 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     }
 
     /**
-     * The certificate as Bouncy Castle must see it to decide whether the key is bound: with
-     * only the user ID certifications that verify against the primary key, no user ID
-     * certification revocations, and no user ID left without a verifying certification.
+     * The certificate as Bouncy Castle must see it to decide whether the key is bound: without
+     * user ID certification revocations, and without the user IDs that no certification by the
+     * primary key binds.
      *
      * <p>
-     * Bouncy Castle 1.86 derives the primary key's binding from its first user ID alone and
-     * takes a revocation without checking its type or signature. A first user ID that is unsigned,
-     * certified by a forgery or revoked would so reject a key that GnuPG and Sequoia accept, and
-     * a forged revocation would be read as one. The same holds for every key-level signature: a
-     * key revocation, a direct-key signature, a subkey binding or a subkey revocation that does
-     * not verify against the primary key, or that sits where its type does not belong, is a
-     * forgery GnuPG and Sequoia ignore. It is removed here, so that a forged revocation is never
-     * the attack signal and a forged expiry or set of key flags never makes a bound key
-     * unavailable. The view is for this question only: a user ID revocation does not touch the
-     * key, and a user ID is never a credential. The user ID to show is chosen from the
-     * certificate unfiltered.
+     * Bouncy Castle 1.87 sets aside every self-signature and every revocation that does not
+     * verify, so a forged key revocation, direct-key signature, subkey binding or subkey
+     * revocation changes nothing without help here. What remains is the user IDs: when the
+     * primary key has no direct-key signature, Bouncy Castle takes its binding, key flags
+     * included, from the primary user ID — the first one when none is marked — whether or not
+     * that user ID is bound, and a revocation of that user ID revokes the key. An unsigned or
+     * forged first user ID would so leave a key GnuPG and Sequoia accept unable to sign, and a
+     * revoked one would report it revoked, which is {@code FAILED}. The view is for this question
+     * only: a user ID revocation does not touch the key, and a user ID is never a credential. The
+     * user ID to show is chosen from the certificate unfiltered.
+     *
+     * <p>
+     * This is a workaround for Bouncy Castle, held to GnuPG and Sequoia by
+     * {@code KeyValidityAgreementTest}, whose nested {@code BouncyCastleOnTheStoredCertificate}
+     * pins the library's behaviour: when an upgrade fixes it, that test fails and this view can
+     * go (P10.15).
      */
     private static PGPPublicKeyRing bindingViewOf(PGPPublicKeyRing ring) {
         PGPPublicKey primary = ring.getPublicKey();
@@ -796,77 +805,31 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         primary.getRawUserIDs().forEachRemaining(userIds::add);
         PGPPublicKey view = primary;
         for (byte[] userId : userIds) {
-            view = withVerifyingCertificationsOnly(view, primary, userId);
+            view = withBoundUserIdOnly(view, primary, userId);
         }
-        PGPPublicKeyRing filtered = PGPPublicKeyRing.insertPublicKey(ring,
-                withVerifyingKeySignaturesOnly(view, primary));
-        Iterator<PGPPublicKey> subkeys = ring.getPublicKeys();
-        while (subkeys.hasNext()) {
-            PGPPublicKey subkey = subkeys.next();
-            if (!subkey.isMasterKey()) {
-                filtered = PGPPublicKeyRing.insertPublicKey(filtered,
-                        withVerifyingKeySignaturesOnly(subkey, primary));
-            }
-        }
-        return filtered;
+        return PGPPublicKeyRing.insertPublicKey(ring, view);
     }
 
-    private static final List<Integer> KEY_SIGNATURE_TYPES = List.of(PGPSignature.KEY_REVOCATION,
-            PGPSignature.DIRECT_KEY, PGPSignature.SUBKEY_BINDING, PGPSignature.SUBKEY_REVOCATION);
-
-    private static PGPPublicKey withVerifyingKeySignaturesOnly(PGPPublicKey key, PGPPublicKey primary) {
-        List<PGPSignature> signatures = new ArrayList<>();
-        for (int type : KEY_SIGNATURE_TYPES) {
-            key.getSignaturesOfType(type).forEachRemaining(signatures::add);
-        }
-        PGPPublicKey view = key;
-        for (PGPSignature signature : signatures) {
-            if (!isVerifyingKeySignature(signature, key, primary)) {
-                view = PGPPublicKey.removeCertification(view, signature);
-            }
-        }
-        return view;
-    }
-
-    private static boolean isVerifyingKeySignature(PGPSignature signature, PGPPublicKey key, PGPPublicKey primary) {
-        boolean ofPrimary = key.isMasterKey();
-        if (!belongsOn(signature.getSignatureType(), ofPrimary)) {
-            return false;
-        }
-        try {
-            signature.init(new BcPGPContentVerifierBuilderProvider(), primary);
-            return ofPrimary ? signature.verifyCertification(primary)
-                    : signature.verifyCertification(primary, key);
-        } catch (PGPException | RuntimeException e) {
-            return false;
-        }
-    }
-
-    private static boolean belongsOn(int signatureType, boolean ofPrimary) {
-        return ofPrimary
-                ? signatureType == PGPSignature.KEY_REVOCATION || signatureType == PGPSignature.DIRECT_KEY
-                : signatureType == PGPSignature.SUBKEY_REVOCATION || signatureType == PGPSignature.SUBKEY_BINDING;
-    }
-
-    private static PGPPublicKey withVerifyingCertificationsOnly(PGPPublicKey view, PGPPublicKey primary,
-            byte[] userId) {
+    /**
+     * The key with the user ID's certification revocations removed, and the user ID itself
+     * removed when no certification by the primary key verifies over it; see
+     * {@link #bindingViewOf(PGPPublicKeyRing)} for why.
+     */
+    private static PGPPublicKey withBoundUserIdOnly(PGPPublicKey view, PGPPublicKey primary, byte[] userId) {
         List<PGPSignature> signatures = new ArrayList<>();
         primary.getSignaturesForID(userId).forEachRemaining(signatures::add);
         boolean certified = false;
         for (PGPSignature signature : signatures) {
-            if (isVerifyingCertification(signature, userId, primary)) {
-                certified = true;
-            } else {
+            if (signature.getSignatureType() == PGPSignature.CERTIFICATION_REVOCATION) {
                 view = PGPPublicKey.removeCertification(view, userId, signature);
+            } else if (isVerifyingCertification(signature, userId, primary)) {
+                certified = true;
             }
         }
         return certified ? view : PGPPublicKey.removeCertification(view, userId);
     }
 
     private static boolean isVerifyingCertification(PGPSignature signature, byte[] userId, PGPPublicKey primary) {
-        if (signature.getSignatureType() == PGPSignature.CERTIFICATION_REVOCATION) {
-            return false;
-        }
         try {
             signature.init(new BcPGPContentVerifierBuilderProvider(), primary);
             return signature.verifyCertification(userId, primary);
@@ -1003,9 +966,8 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
 
     /**
      * Says why a key was revoked or had expired when it signed, or nothing when it was neither.
-     * The certificate passed is the binding view, which holds only the revocations that verify,
-     * so one a keyserver made up is never reported; the revocation's provenance comes from the
-     * copies the store kept.
+     * Bouncy Castle answers only with a revocation that verifies, so one a keyserver made up is
+     * never reported; the revocation's provenance comes from the copies the store kept.
      */
     private Optional<String> failureDetail(OpenPGPCertificate.OpenPGPComponentKey key, Date at) {
         OpenPGPCertificate.OpenPGPComponentSignature revocation = key.getRevocation(at);
@@ -1137,25 +1099,6 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
         Object obj = factory.nextObject();
         if (obj instanceof PGPSignatureList sigList && !sigList.isEmpty()) {
             return sigList.get(0);
-        }
-        return null;
-    }
-
-    /**
-     * Finds the public key that should verify this signature.
-     */
-    private PGPPublicKey findVerificationKey(PGPPublicKeyRing keyRing, PGPSignature signature) {
-        long sigKeyId = signature.getKeyID();
-        PGPPublicKey key = keyRing.getPublicKey(sigKeyId);
-        if (key != null) {
-            return key;
-        }
-        var keys = keyRing.getPublicKeys();
-        while (keys.hasNext()) {
-            PGPPublicKey candidate = keys.next();
-            if (candidate.getKeyID() == sigKeyId) {
-                return candidate;
-            }
         }
         return null;
     }
@@ -1414,14 +1357,16 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
     }
 
     /**
-     * Generates a key of the given version using BC 1.85's high-level {@code BcOpenPGPApi}, for
-     * Ed25519, Ed448 and RSA. ECDSA (NIST P-curves) falls back to JCA-based generation, which
-     * produces v4 keys only.
+     * Generates a key of the given version using Bouncy Castle's high-level {@code BcOpenPGPApi},
+     * for Ed25519, Ed448, RSA and the ML-DSA composites of RFC 9980. ECDSA (NIST P-curves) falls
+     * back to JCA-based generation, which produces v4 keys only.
      *
      * <p>
      * A v4 Ed25519 key uses the legacy EdDSA encoding: GnuPG 2.4 reads Ed25519 in v4 keys only
      * in that form, and rejects the RFC 9580 one as an invalid public key algorithm. Ed448 has
-     * no v4 form GnuPG reads, so it is generated as v6 only.
+     * no v4 form GnuPG reads, so it is generated as v6 only, as the ML-DSA composites are, which
+     * RFC 9980 defines for v6 keys alone. An ML-DSA key is the one RFC 9980 recommends: an
+     * ML-DSA certify-only primary key, an ML-DSA signing subkey and an ML-KEM encryption subkey.
      */
     private OpenPGPKey generateKeyInternal(String userId, String cipherSuite, int version) throws Exception {
         String suite = cipherSuite.toLowerCase();
@@ -1434,19 +1379,30 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
                             .addSigningSubkey(PGPKeyPairGenerator::generateLegacyEd25519KeyPair)
                             .build()
                     : api.generateKey(version).ed25519x25519Key(userId).addSigningSubkey().build();
-            case "ed448" -> {
-                if (v4) {
-                    throw new ToolExecutionException("Cipher suite ed448 produces " + Credential.TYPE_PGP6
-                            + " keys only: GnuPG reads no v4 Ed448 key; use ed25519 for a "
-                            + Credential.TYPE_PGP4 + " key");
-                }
-                yield api.generateKey(version).ed448x448Key(userId).addSigningSubkey().build();
-            }
+            case "ed448" -> api.generateKey(v6Only(suite, version)).ed448x448Key(userId).addSigningSubkey().build();
+            case "mldsa65-ed25519" -> api.generateKey(v6Only(suite, version))
+                    .mlDsa65Ed25519MlKem768X25519Key(userId).build();
+            case "mldsa87-ed448" -> api.generateKey(v6Only(suite, version))
+                    .mlDsa87Ed448MlKem1024X448Key(userId).build();
             case "rsa4096" -> api.generateKey(version).singletonRSAKey(4096, userId).build();
             case "nistp256", "nistp384", "nistp521" -> generateECDSAKey(userId, suite, version);
             default -> throw new ToolExecutionException(
                     "Unsupported cipher suite: " + cipherSuite);
         };
+    }
+
+    /**
+     * The version of a suite that makes v6 keys only: GnuPG reads no v4 Ed448 key, and RFC 9980
+     * defines the ML-DSA composites for v6 keys alone.
+     *
+     * @throws ToolExecutionException when a v4 key was asked for
+     */
+    private static int v6Only(String suite, int version) {
+        if (version == PublicKeyPacket.VERSION_4) {
+            throw new ToolExecutionException("Cipher suite " + suite + " produces " + Credential.TYPE_PGP6
+                    + " keys only; use ed25519 for a " + Credential.TYPE_PGP4 + " key");
+        }
+        return version;
     }
 
     private OpenPGPKey generateECDSAKey(String userId, String suite, int version) throws Exception {
@@ -1464,7 +1420,7 @@ class BcRunner implements AutoCloseable, SignatureTool, KeyGenerator, KeyImporte
 
     /**
      * Generates an ECDSA key using JCA-based BC API (fallback for NIST P-curves).
-     * BC 1.85's {@code BcOpenPGPApi} does not provide ECDSA key generation.
+     * Bouncy Castle's {@code BcOpenPGPApi} (1.87) has no ECDSA key preset.
      */
     private OpenPGPKey generateECDSAKeyFallback(String userId, String curveName) throws Exception {
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC", new BouncyCastleProvider());

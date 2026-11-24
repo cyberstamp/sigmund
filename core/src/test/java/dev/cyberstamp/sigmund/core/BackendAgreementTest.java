@@ -4,18 +4,31 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import org.bouncycastle.bcpg.ArmoredOutputStream;
+import org.bouncycastle.bcpg.HashAlgorithmTags;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
+import org.bouncycastle.openpgp.PGPSecretKey;
+import org.bouncycastle.openpgp.PGPSecretKeyRing;
+import org.bouncycastle.openpgp.PGPSignature;
+import org.bouncycastle.openpgp.PGPSignatureGenerator;
+import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator;
 import org.bouncycastle.openpgp.PGPUtil;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
+import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Checks that the OpenPGP backends agree about the same claim.
@@ -95,6 +108,40 @@ class BackendAgreementTest {
     }
 
     /**
+     * A signature of a type that is not a document signature, computed over the artifact's
+     * bytes by a key every backend holds. Asked directly, the backends disagree — {@code sq}
+     * counts it a bad signature, GnuPG an error, Bouncy Castle a key it cannot use — so the
+     * router settles it before any of them is asked, and the toolchain cannot change the answer.
+     */
+    @Nested
+    class NonDocumentSignature {
+
+        @ParameterizedTest
+        @ValueSource(ints = { PGPSignature.DEFAULT_CERTIFICATION, PGPSignature.STAND_ALONE,
+                PGPSignature.TIMESTAMP })
+        void isMalformedWhicheverToolIsRouted(int signatureType, @TempDir Path dir) throws Exception {
+            try (Fixture fixture = Fixture.signedAs(dir, "agreed content", signatureType)) {
+
+                assertThat(fixture.routedAnswers()).allSatisfy(answer -> {
+                    assertThat(answer.outcome()).as(answer.backend() + " outcome")
+                            .isEqualTo(ClaimOutcome.INDETERMINATE);
+                    assertThat(answer.reason()).as(answer.backend() + " reason")
+                            .isEqualTo(IndeterminateReason.EVIDENCE_MALFORMED);
+                });
+            }
+        }
+
+        @Test
+        void aDocumentSignatureIsStillRoutedToTheTools(@TempDir Path dir) throws Exception {
+            try (Fixture fixture = Fixture.signedAs(dir, "agreed content", PGPSignature.BINARY_DOCUMENT)) {
+
+                assertThat(fixture.routedAnswers()).allSatisfy(answer -> assertThat(answer.outcome())
+                        .as(answer.backend() + " outcome").isEqualTo(ClaimOutcome.VERIFIED));
+            }
+        }
+    }
+
+    /**
      * A signing key published to every backend's store, an artifact, and its signature.
      */
     private static final class Fixture implements AutoCloseable {
@@ -119,14 +166,23 @@ class BackendAgreementTest {
         }
 
         static Fixture signed(Path dir, String content) throws Exception {
-            return build(dir, content, true);
+            return build(dir, content, true, null);
         }
 
         static Fixture signedWithoutPublishingTheKey(Path dir, String content) throws Exception {
-            return build(dir, content, false);
+            return build(dir, content, false, null);
         }
 
-        private static Fixture build(Path dir, String content, boolean publishKey)
+        /** Signed over the artifact's bytes with the given signature type by the signing key. */
+        static Fixture signedAs(Path dir, String content, int signatureType) throws Exception {
+            return build(dir, content, true, signatureType);
+        }
+
+        /**
+         * @param signatureType the type to sign with directly, or {@code null} to sign through
+         *        the runner as a build does
+         */
+        private static Fixture build(Path dir, String content, boolean publishKey, Integer signatureType)
                 throws Exception {
             BcKeyStore signingStore = new BcKeyStore(null, dir.resolve("signing-cert-d"),
                     dir.resolve("signing-private"));
@@ -135,7 +191,11 @@ class BackendAgreementTest {
             Path artifact = Files.writeString(dir.resolve("artifact.txt"), content);
             Path signature = dir.resolve("artifact.txt.asc");
             try (BcRunner signer = new BcRunner(signingStore, fingerprint, null)) {
-                SigningTests.signWithOnlyKey(signer, artifact, signature);
+                if (signatureType == null) {
+                    SigningTests.signWithOnlyKey(signer, artifact, signature);
+                } else {
+                    signAs(signingStore.findSecretKey(fingerprint), signatureType, artifact, signature);
+                }
 
                 Path gpgHome = GpgTestKeys.home(dir.resolve("gpg-home"));
                 Path sqHome = Files.createDirectories(dir.resolve("sq-home"));
@@ -157,6 +217,35 @@ class BackendAgreementTest {
                         new GpgRunner("gpg", null, gpgHome),
                         new SqRunner(sqHome));
             }
+        }
+
+        private static void signAs(PGPSecretKeyRing ring, int signatureType, Path artifact, Path signature)
+                throws Exception {
+            PGPSecretKey key = signingKey(ring);
+            PGPSignatureGenerator generator = new PGPSignatureGenerator(
+                    new JcaPGPContentSignerBuilder(key.getPublicKey().getAlgorithm(), HashAlgorithmTags.SHA256),
+                    key.getPublicKey());
+            generator.init(signatureType, key.extractPrivateKey(null));
+            PGPSignatureSubpacketGenerator hashed = new PGPSignatureSubpacketGenerator();
+            hashed.setSignatureCreationTime(true, new Date());
+            hashed.setIssuerFingerprint(false, key.getPublicKey());
+            generator.setHashedSubpackets(hashed.generate());
+            generator.update(Files.readAllBytes(artifact));
+            try (OutputStream out = new ArmoredOutputStream(Files.newOutputStream(signature))) {
+                generator.generate().encode(out);
+            }
+        }
+
+        /** The signing subkey, or the primary key when it signs itself, as the fallback ECDSA key does. */
+        private static PGPSecretKey signingKey(PGPSecretKeyRing ring) {
+            Iterator<PGPSecretKey> keys = ring.getSecretKeys();
+            while (keys.hasNext()) {
+                PGPSecretKey key = keys.next();
+                if (!key.isMasterKey() && !key.getPublicKey().isEncryptionKey()) {
+                    return key;
+                }
+            }
+            return ring.getSecretKey();
         }
 
         private static void publishToBc(BcKeyStore store, String armoredCert) throws Exception {
@@ -187,6 +276,22 @@ class BackendAgreementTest {
             answers.add(answer("gpg", gpg.verify(artifact, claim)));
             answers.add(answer("sq", sq.verify(artifact, claim)));
             return answers;
+        }
+
+        /** What routing the claim through a toolchain of each backend alone establishes. */
+        List<Answer> routedAnswers() throws Exception {
+            OpenPgpClaim claim = claim();
+            EvidenceRef evidence = EvidenceRef.of(signature, Evidence.SOURCE_SIDECAR);
+            List<Answer> answers = new ArrayList<>(3);
+            answers.add(routed("bc", bc, claim, evidence));
+            answers.add(routed("gpg", gpg, claim, evidence));
+            answers.add(routed("sq", sq, claim, evidence));
+            return answers;
+        }
+
+        private Answer routed(String backend, SignatureTool tool, OpenPgpClaim claim, EvidenceRef evidence) {
+            return answer(backend, new ClaimRouter(List.of(tool))
+                    .route(artifact, claim, SignatureFormat.FORMAT_OPENPGP, evidence).verifyResult());
         }
 
         private OpenPgpClaim claim() throws Exception {

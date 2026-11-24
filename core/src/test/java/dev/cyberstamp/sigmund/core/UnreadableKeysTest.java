@@ -10,9 +10,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -75,10 +77,36 @@ class UnreadableKeysTest {
     }
 
     @Test
+    void aKeyOfAnAlgorithmBouncyCastleImplementsThatItCannotParseIsDamaged() throws IOException {
+        byte[] certificate = readFixture("unknown-algorithm-key.gpg");
+        certificate[7] = 31;
+
+        assertThat(KeyRingFiles.causeOf(certificate)).isEqualTo(UnreadableCertificate.Cause.DAMAGED);
+    }
+
+    @Test
     void aCertificateWithASubkeyBouncyCastleDoesNotKnowStillVerifies() throws IOException {
         writeCertD(SECOND, readFixture("second-key-with-unknown-subkey.gpg"));
 
         assertThat(verifyWith(certDOnly()).isVerified()).isTrue();
+    }
+
+    /**
+     * The only copy of the signing key uses an algorithm Bouncy Castle does not know: the claim
+     * is one Bouncy Castle cannot check, and the copy is named, rather than the key reported as one
+     * to go and find.
+     */
+    @Test
+    void aSigningKeyOfAnAlgorithmBouncyCastleDoesNotKnowIsUnsupportedAndSaysSo() throws IOException {
+        byte[] certificate = readFixture("unknown-algorithm-key.gpg");
+        String altered = KeyRingFiles.keyFingerprints(certificate).iterator().next();
+        writeCertD(altered, certificate);
+
+        VerifyResult result = verifyWith(certDOnly(), altered);
+
+        assertThat(result.isIndeterminate(IndeterminateReason.UNSUPPORTED_ALGORITHM)).isTrue();
+        assertThat(result.detail())
+                .startsWith("Bouncy Castle cannot read the copy from " + dir.resolve("cert-d") + ": ");
     }
 
     @Test
@@ -152,6 +180,60 @@ class UnreadableKeysTest {
         assertThat(KeyRingFiles.keyFingerprints(split.rings().get(1))).containsExactly(SECOND);
     }
 
+    /**
+     * A certificate is judged by its keys' fingerprints before it is parsed, so the first,
+     * unreadable, certificate of each fixture is never parsed in a search for the second.
+     */
+    @Nested
+    class ASearchByFingerprint {
+
+        private final KeyRingFiles.KeySearch forSecond = new KeyRingFiles.KeySearch(
+                keys -> keys.contains(SECOND), ring -> BcKeyStore.matchesFingerprint(ring, SECOND));
+
+        @Test
+        void parsesOnlyTheKeyboxBlobWhoseIndexListsTheKey() throws IOException {
+            List<UnreadableCertificate> unreadable = new ArrayList<>();
+
+            PGPPublicKeyRing found = KeyRingFiles.findInKeyBox(fixtureDir("keybox", "pubring.kbx").resolve("pubring.kbx"),
+                    forSecond, TrustRootRef.unknown(), unreadable);
+
+            assertThat(found).isNotNull();
+            assertThat(unreadable).isEmpty();
+        }
+
+        @Test
+        void parsesOnlyTheKeyRingWhosePacketsHoldTheKey() throws IOException {
+            List<UnreadableCertificate> unreadable = new ArrayList<>();
+
+            PGPPublicKeyRing found = KeyRingFiles.findInKeyRingFile(
+                    fixtureDir("keyring", "pubring.gpg").resolve("pubring.gpg"), forSecond, TrustRootRef.unknown(),
+                    unreadable);
+
+            assertThat(found).isNotNull();
+            assertThat(unreadable).isEmpty();
+        }
+
+        /** What a store's index or a ring's packets claim never decides alone. */
+        @Test
+        void findsNothingTheParsedCertificateDoesNotConfirm() throws IOException {
+            KeyRingFiles.KeySearch indexOnly = new KeyRingFiles.KeySearch(keys -> keys.contains(SECOND), ring -> false);
+
+            assertThat(KeyRingFiles.findInKeyBox(fixtureDir("keybox", "pubring.kbx").resolve("pubring.kbx"), indexOnly,
+                    TrustRootRef.unknown(), new ArrayList<>())).isNull();
+        }
+
+        @Test
+        void aCertDFileWhosePacketsHoldAnotherKeyIsNotParsed() throws IOException {
+            Path file = dir.resolve("unknown-algorithm-key.gpg");
+            Files.write(file, readFixture("unknown-algorithm-key.gpg"));
+            List<UnreadableCertificate> unreadable = new ArrayList<>();
+
+            assertThat(KeyRingFiles.findInCertificate(file, forSecond, TrustRootRef.unknown(), Set.of(), unreadable))
+                    .isNull();
+            assertThat(unreadable).isEmpty();
+        }
+    }
+
     @Nested
     class SplittingAKeyringFile {
 
@@ -176,12 +258,17 @@ class UnreadableKeysTest {
     }
 
     private VerifyResult verifyWith(BcKeyStore store) throws IOException {
+        return verifyWith(store, null);
+    }
+
+    /** Verifies the fixture signature as a claim by {@code issuer}, or by its own issuer when {@code null}. */
+    private VerifyResult verifyWith(BcKeyStore store, String issuer) throws IOException {
         Path artifact = dir.resolve("artifact.txt");
         Files.write(artifact, readFixture("artifact.txt"));
         String armored = new String(readFixture("artifact.txt.asc"), StandardCharsets.US_ASCII);
         OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-        OpenPgpClaim claim = new OpenPgpClaim(armored, info.version(), info.issuerFingerprint(),
-                info.algorithmId(), null);
+        OpenPgpClaim claim = new OpenPgpClaim(armored, info.version(),
+                issuer != null ? issuer : info.issuerFingerprint(), info.algorithmId(), null);
         try (BcRunner runner = new BcRunner(store, null, null)) {
             return runner.verify(artifact, claim);
         }
