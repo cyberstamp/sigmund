@@ -65,19 +65,9 @@ class BcSqCrossToolTest {
                 Path sqHome = tempDir.resolve("sq-home");
                 importCertIntoSq(sqHome, bcCert, tempDir);
 
-                SqRunner sq = new SqRunner("sq", sqHome);
-                Path certFile = sq.findCertFile(bcFp);
-                assertThat(certFile).as("SQ did not find the imported BC cert").isNotNull();
-
-                // Debug: try sq verify directly and capture stderr
-                CliTool.Result sqVerifyResult = CliTool.run(
-                        Map.of("SEQUOIA_HOME", sqHome.toString()),
-                        "sq", "--overwrite", "verify",
-                        "--signer-file", certFile.toString(),
-                        "--signature-file", sigFile.toString(),
-                        artifact.toString());
-                assertThat(sqVerifyResult.exitCode())
-                        .as("SQ verification of BC Ed25519 signature failed: " + sqVerifyResult.stderr()).isEqualTo(0);
+                VerifyResult result = new SqRunner("sq", sqHome).verify(artifact, claimOf(sigFile));
+                assertThat(result.isVerified()).as("SQ verification of BC Ed25519 signature failed: "
+                        + result.detail()).isTrue();
             }
         }
     }
@@ -124,5 +114,11 @@ class BcSqCrossToolTest {
         OpenPgpClaim claim = new OpenPgpClaim(
                 armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
         return runner.verify(artifact, claim);
+    }
+
+    private static OpenPgpClaim claimOf(Path signature) throws Exception {
+        String armored = Files.readString(signature);
+        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+        return new OpenPgpClaim(armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
     }
 }
