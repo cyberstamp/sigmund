@@ -63,6 +63,10 @@ wrapping to change after `mvn verify`.
 - **Small, descriptive methods.** Extract logical steps into well-named private methods rather than writing long method bodies.
 - **Detailed javadoc** on all public types and methods. Explain semantics, contracts, and relationships — not just `@param`/`@return`.
 - **No comments on implementation.** Code should be self-explanatory. Only comment non-obvious constraints or workarounds.
+- **Javadoc and comments describe what the code is and does now**, never what it used to be or
+  do, or how it changed — no "no longer", "used to", "now", or a library version's old
+  behaviour. A workaround names the current behaviour it works around. History belongs in
+  commit messages and the roadmap.
 - **Defensive copies** in records and constructors. Use `Map.copyOf()`, `List.copyOf()`, `LinkedHashMap` when insertion order matters.
 - **Narrow API.** Public only when something outside the package needs it.
 
