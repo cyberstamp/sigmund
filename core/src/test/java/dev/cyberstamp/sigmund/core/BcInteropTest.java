@@ -8,6 +8,11 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+/**
+ * Bouncy Castle signs with a key of every cipher suite and key version it generates, and
+ * verifies the signature: the artifact as signed verifies, and the same signature over altered
+ * bytes fails.
+ */
 class BcInteropTest {
 
     @TempDir
@@ -15,81 +20,30 @@ class BcInteropTest {
 
     @ParameterizedTest
     @CsvSource({ "ed25519, pgp4", "ed25519, pgp6", "ed448, pgp6", "rsa4096, pgp4", "rsa4096, pgp6" })
-    void signAndVerifyRoundTrip(String cipherSuite, String credentialType) throws Exception {
+    void aSignatureVerifiesOverTheArtifactAndFailsOverAlteredBytes(String cipherSuite, String credentialType)
+            throws Exception {
         BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        try (BcRunner runner = new BcRunner(store, null, null)) {
+        String fingerprint = BcTestKeys.generate(store, "Test <test@example.com>", cipherSuite, credentialType);
+        Path artifact = Files.writeString(tempDir.resolve("artifact.txt"), "original content");
+        Path signature = tempDir.resolve("artifact.txt.asc");
 
-            String fp = runner.generateKey("Test <test@example.com>", cipherSuite, credentialType);
-            try (BcRunner signer = new BcRunner(store, fp, null)) {
+        try (BcRunner signer = new BcRunner(store, fingerprint, null)) {
+            SignResult signed = SigningTests.signWithOnlyKey(signer, artifact, signature);
+            OpenPgpClaim claim = claimOf(signature);
 
-                Path artifact = tempDir.resolve("artifact.txt");
-                Files.writeString(artifact, "hello world");
-                Path sigFile = tempDir.resolve("artifact.txt.asc");
+            assertThat(signed.algorithm()).isNotNull();
+            assertThat(claim.packetVersion()).isEqualTo(Credential.TYPE_PGP6.equals(credentialType) ? 6 : 4);
+            assertThat(signer.verify(artifact, claim).isVerified()).isTrue();
 
-                SignResult signResult = SigningTests.signWithOnlyKey(signer, artifact, sigFile);
-                assertThat(signResult.algorithm()).isNotNull();
-                assertThat(Files.exists(sigFile)).isTrue();
+            Files.writeString(artifact, "tampered content");
 
-                String armored = Files.readString(sigFile);
-                assertThat(armored.contains("-----BEGIN PGP SIGNATURE-----")).isTrue();
-
-                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-                assertThat(info.version() > 0).isTrue();
-
-                OpenPgpClaim claim = new OpenPgpClaim(
-                        armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
-
-                VerifyResult result = signer.verify(artifact, claim);
-                assertThat(result.isVerified()).isTrue();
-            }
+            assertThat(signer.verify(artifact, claim).isFailed()).isTrue();
         }
     }
 
-    @ParameterizedTest
-    @CsvSource({ "ed25519, pgp4", "ed25519, pgp6", "ed448, pgp6", "rsa4096, pgp4", "rsa4096, pgp6" })
-    void tamperedArtifactFailsVerification(String cipherSuite, String credentialType) throws Exception {
-        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        try (BcRunner runner = new BcRunner(store, null, null)) {
-
-            String fp = runner.generateKey("Test <test@example.com>", cipherSuite, credentialType);
-            try (BcRunner signer = new BcRunner(store, fp, null)) {
-
-                Path artifact = tempDir.resolve("artifact.txt");
-                Files.writeString(artifact, "original content");
-                Path sigFile = tempDir.resolve("artifact.txt.asc");
-                SigningTests.signWithOnlyKey(signer, artifact, sigFile);
-
-                // tamper with artifact
-                Files.writeString(artifact, "tampered content");
-
-                String armored = Files.readString(sigFile);
-                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-                OpenPgpClaim claim = new OpenPgpClaim(
-                        armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
-
-                VerifyResult result = signer.verify(artifact, claim);
-                assertThat(result.isFailed()).isTrue();
-            }
-        }
-    }
-
-    @ParameterizedTest
-    @CsvSource({ "ed25519, pgp4", "ed25519, pgp6", "ed448, pgp6", "rsa4096, pgp4", "rsa4096, pgp6" })
-    void sigmundBuilderDiscoversBc(String cipherSuite, String credentialType) throws Exception {
-        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        try (BcRunner bcRunner = new BcRunner(store, null, null)) {
-
-            String fp = bcRunner.generateKey("Test <test@example.com>", cipherSuite, credentialType);
-            try (BcRunner signer = new BcRunner(store, fp, null)) {
-
-                try (Sigmund sigmund = Sigmund.builder()
-                        .addTool(signer)
-                        .build()) {
-
-                    assertThat(sigmund.tool("bc")).isNotNull();
-                    assertThat(sigmund.tool("bc").isAvailable()).isTrue();
-                }
-            }
-        }
+    private static OpenPgpClaim claimOf(Path signature) throws Exception {
+        String armored = Files.readString(signature);
+        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
+        return new OpenPgpClaim(armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
     }
 }

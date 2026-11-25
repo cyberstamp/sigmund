@@ -11,13 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.bouncycastle.bcpg.PublicKeyPacket;
-import org.bouncycastle.openpgp.PGPException;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.bouncycastle.openpgp.PGPUtil;
-import org.bouncycastle.openpgp.api.OpenPGPKey;
-import org.bouncycastle.openpgp.api.OpenPGPKeyGenerator;
-import org.bouncycastle.openpgp.api.bc.BcOpenPGPApi;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -28,10 +23,11 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Bouncy Castle and {@code sq} on the post-quantum signatures of RFC 9980, in both directions:
- * since 1.87 Bouncy Castle verifies the ML-DSA composite signatures {@code sq} makes, and
- * {@code sq} verifies the ML-DSA and SLH-DSA signatures Bouncy Castle makes, each agreeing with
- * the other on the outcome and the key proved. {@link #bouncyCastleReadsAnMlDsaCertificate()}
- * pins the library's support.
+ * Bouncy Castle verifies the ML-DSA composite signatures {@code sq} makes, and {@code sq} verifies
+ * the ML-DSA and SLH-DSA signatures Bouncy Castle makes, each agreeing with the other on the
+ * outcome and the key proved. ML-DSA keys are generated and signed with here; the SLH-DSA
+ * signatures, slow to make, are fixtures Bouncy Castle made (see the {@code post-quantum} test
+ * resources). {@link #bouncyCastleReadsAnMlDsaCertificate()} pins the library's support.
  *
  * <p>
  * {@code sq} runs under Sigmund's crypto policy, as it does in a build, which keeps Sequoia's
@@ -45,6 +41,7 @@ class BcPostQuantumTest {
     private static final String SLH_DSA_128S = "slhdsa128s";
     private static final String SLH_DSA_128F = "slhdsa128f";
     private static final String SLH_DSA_256S = "slhdsa256s";
+    private static final List<String> SLH_DSA_SUITES = List.of(SLH_DSA_128S, SLH_DSA_128F, SLH_DSA_256S);
 
     private static final Map<String, String> ALGORITHM_NAMES = Map.of(
             ML_DSA_65, "ML-DSA-65+Ed25519",
@@ -68,33 +65,35 @@ class BcPostQuantumTest {
         bcKeys = new BcKeyStore(null, tempDir.resolve("bc-cert-d"), tempDir.resolve("bc-private"));
         bcFingerprints = Map.of(
                 ML_DSA_65, BcTestKeys.generate(bcKeys, "BC 65 <bc65@sigmund.example>", ML_DSA_65, Credential.TYPE_PGP6),
-                ML_DSA_87, BcTestKeys.generate(bcKeys, "BC 87 <bc87@sigmund.example>", ML_DSA_87, Credential.TYPE_PGP6),
-                SLH_DSA_128S,
-                storeSlhDsaKey(OpenPGPKeyGenerator::slhDsaShake128sMlKem768X25519Key, "BC 128s <s@sigmund.example>"),
-                SLH_DSA_128F,
-                storeSlhDsaKey(OpenPGPKeyGenerator::slhDsaShake128fMlKem768X25519Key, "BC 128f <f@sigmund.example>"),
-                SLH_DSA_256S,
-                storeSlhDsaKey(OpenPGPKeyGenerator::slhDsaShake256sMlKem1024X448Key, "BC 256s <l@sigmund.example>"));
+                ML_DSA_87, BcTestKeys.generate(bcKeys, "BC 87 <bc87@sigmund.example>", ML_DSA_87, Credential.TYPE_PGP6));
         try (BcRunner exporter = new BcRunner(bcKeys, null, null)) {
             for (String fingerprint : bcFingerprints.values()) {
-                Path cert = Files.writeString(tempDir.resolve(fingerprint + ".asc"), exporter.exportCert(fingerprint));
-                CliTool.run(Map.of("SEQUOIA_HOME", sqHome.toString()), "sq", "cert", "import", cert.toString());
+                importIntoSq(Files.writeString(tempDir.resolve(fingerprint + ".asc"), exporter.exportCert(fingerprint)));
             }
+        }
+        for (String suite : SLH_DSA_SUITES) {
+            Path cert = fixture(suite + ".cert.asc", tempDir);
+            bcKeys.storeCert(parsed(Files.readAllBytes(cert)));
+            importIntoSq(cert);
         }
     }
 
-    /** One of Bouncy Castle's key presets. */
-    @FunctionalInterface
-    private interface KeyPreset {
-        OpenPGPKeyGenerator.WithPrimaryKey of(OpenPGPKeyGenerator generator, String userId) throws PGPException;
+    private static void importIntoSq(Path cert) {
+        CliTool.run(Map.of("SEQUOIA_HOME", sqHome.toString()), "sq", "cert", "import", cert.toString());
     }
 
-    /** Bouncy Castle offers no cipher suite for SLH-DSA, so its keys are made with the API itself. */
-    private static String storeSlhDsaKey(KeyPreset preset, String userId) throws Exception {
-        OpenPGPKey key = preset.of(new BcOpenPGPApi().generateKey(PublicKeyPacket.VERSION_6), userId).build();
-        bcKeys.storeCert(key.toCertificate().getPGPPublicKeyRing());
-        bcKeys.storeSecretKey(key.getPGPSecretKeyRing());
-        return KeyRingFiles.hex(key.getFingerprint());
+    /** Copies a {@code post-quantum} test resource to a file. */
+    private static Path fixture(String name, Path dir) throws Exception {
+        try (InputStream in = BcPostQuantumTest.class.getResourceAsStream("/post-quantum/" + name)) {
+            assertThat(in).as(name).isNotNull();
+            return Files.write(dir.resolve(name), in.readAllBytes());
+        }
+    }
+
+    private static PGPPublicKeyRing parsed(byte[] armored) throws Exception {
+        try (InputStream in = PGPUtil.getDecoderStream(new ByteArrayInputStream(armored))) {
+            return new PGPPublicKeyRing(in, new BcKeyFingerprintCalculator());
+        }
     }
 
     @Test
@@ -174,11 +173,39 @@ class BcPostQuantumTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = { ML_DSA_65, ML_DSA_87, SLH_DSA_128S, SLH_DSA_128F, SLH_DSA_256S })
+    @ValueSource(strings = { ML_DSA_65, ML_DSA_87 })
     void aPostQuantumSignatureBcMakesIsVerifiedBySqAndBcAlike(String suite, @TempDir Path dir) throws Exception {
         Path artifact = Files.writeString(dir.resolve("artifact.jar"), "post-quantum");
         OpenPgpClaim claim = claimOf(signWithBc(suite, artifact, dir));
+        assertAgreeOnAVerifiedSignature(suite, artifact, claim, bcFingerprints.get(suite));
+    }
 
+    /** The signature Bouncy Castle made with each SLH-DSA key is kept as a fixture. */
+    @ParameterizedTest
+    @ValueSource(strings = { SLH_DSA_128S, SLH_DSA_128F, SLH_DSA_256S })
+    void anSlhDsaSignatureBcMadeIsVerifiedBySqAndBcAlike(String suite, @TempDir Path dir) throws Exception {
+        Path artifact = Files.writeString(dir.resolve("artifact.jar"), "post-quantum");
+        OpenPgpClaim claim = claimOf(fixture(suite + ".sig.asc", dir));
+        String primary = KeyRingFiles.hex(parsed(Files.readAllBytes(fixture(suite + ".cert.asc", dir))).getPublicKey()
+                .getFingerprint());
+        assertAgreeOnAVerifiedSignature(suite, artifact, claim, primary);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { SLH_DSA_128S, SLH_DSA_128F, SLH_DSA_256S })
+    void aTamperedArtifactFailsAnSlhDsaSignatureBcMadeInSqAndBcAlike(String suite, @TempDir Path dir)
+            throws Exception {
+        Path artifact = Files.writeString(dir.resolve("artifact.jar"), "tampered");
+        OpenPgpClaim claim = claimOf(fixture(suite + ".sig.asc", dir));
+
+        try (BcRunner runner = new BcRunner(bcKeys, null, null)) {
+            assertThat(runner.verify(artifact, claim).isFailed()).isTrue();
+        }
+        assertThat(new SqRunner(sqHome).verify(artifact, claim).isFailed()).isTrue();
+    }
+
+    private static void assertAgreeOnAVerifiedSignature(String suite, Path artifact, OpenPgpClaim claim,
+            String primaryFingerprint) {
         OpenPgpVerifyResult bc;
         try (BcRunner runner = new BcRunner(bcKeys, null, null)) {
             bc = (OpenPgpVerifyResult) runner.verify(artifact, claim);
@@ -189,11 +216,11 @@ class BcPostQuantumTest {
         assertThat(sq.isVerified()).as(sq.detail()).isTrue();
         assertThat(bc.algorithm()).isEqualTo(ALGORITHM_NAMES.get(suite));
         assertThat(bc.signerIdentifier()).isEqualTo(sq.signerIdentifier());
-        assertThat(bc.primaryFingerprint()).isEqualTo(sq.primaryFingerprint()).isEqualTo(bcFingerprints.get(suite));
+        assertThat(bc.primaryFingerprint()).isEqualTo(sq.primaryFingerprint()).isEqualTo(primaryFingerprint);
     }
 
     @ParameterizedTest
-    @ValueSource(strings = { ML_DSA_65, ML_DSA_87, SLH_DSA_128S, SLH_DSA_128F, SLH_DSA_256S })
+    @ValueSource(strings = { ML_DSA_65, ML_DSA_87 })
     void aTamperedArtifactFailsAPostQuantumSignatureBcMakesInSqAndBcAlike(String suite, @TempDir Path dir)
             throws Exception {
         Path artifact = Files.writeString(dir.resolve("artifact.jar"), "post-quantum");

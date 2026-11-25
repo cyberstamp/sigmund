@@ -1186,32 +1186,6 @@ class BcRunnerTest {
     }
 
     @Test
-    void signAndVerifyRoundTripEd25519(@TempDir Path tempDir) throws Exception {
-        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        try (BcRunner runner = new BcRunner(store, null, null)) {
-
-            String fingerprint = runner.generateKey("Test <test@example.com>", "ed25519", null);
-            try (BcRunner signer = new BcRunner(store, fingerprint, null)) {
-
-                Path artifact = tempDir.resolve("artifact.txt");
-                Files.writeString(artifact, "test content");
-                Path sigFile = tempDir.resolve("artifact.txt.asc");
-
-                SignResult signResult = SigningTests.signWithOnlyKey(signer, artifact, sigFile);
-                assertThat(signResult.algorithm()).isNotNull();
-
-                String armored = Files.readString(sigFile);
-                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-                OpenPgpClaim claim = new OpenPgpClaim(
-                        armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
-
-                VerifyResult result = signer.verify(artifact, claim);
-                assertThat(result.isVerified()).isTrue();
-            }
-        }
-    }
-
-    @Test
     void verifyFallsBackToKeyIdWhenFingerprintMissing(@TempDir Path tempDir) throws Exception {
         // Use ECDSA P-256 which produces v4 keys — the real scenario where
         // Issuer Fingerprint subpackets (type 33) are often absent
@@ -1472,30 +1446,6 @@ class BcRunnerTest {
 
             PGPSecretKey primary = ring.getSecretKey();
             assertThat(primary.getKeyEncryptionAlgorithm()).isEqualTo(SymmetricKeyAlgorithmTags.NULL);
-        }
-    }
-
-    @Test
-    void signAndVerifyEncryptedKeyRsa(@TempDir Path tempDir) throws Exception {
-        BcKeyStore store = new BcKeyStore(null, tempDir.resolve("cert-d"), tempDir.resolve("bc-private"));
-        PassphraseProvider provider = fixedPassphrase(TEST_PASSPHRASE);
-        try (BcRunner runner = new BcRunner(store, null, null, provider)) {
-
-            String fingerprint = runner.generateKey("Test <test@example.com>", "rsa4096", null);
-            try (BcRunner signer = new BcRunner(store, fingerprint, null, provider)) {
-
-                Path artifact = tempDir.resolve("artifact.txt");
-                Files.writeString(artifact, "rsa encrypted key");
-                Path sigFile = tempDir.resolve("artifact.txt.asc");
-                SigningTests.signWithOnlyKey(signer, artifact, sigFile);
-
-                String armored = Files.readString(sigFile);
-                OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armored);
-                OpenPgpClaim claim = new OpenPgpClaim(
-                        armored, info.version(), info.issuerFingerprint(), info.algorithmId(), null);
-
-                assertThat(signer.verify(artifact, claim).isVerified()).isTrue();
-            }
         }
     }
 

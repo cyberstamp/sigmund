@@ -35,6 +35,11 @@ import java.util.Set;
  * <li>{@code interactive} (boolean, default false) — enable browser-based
  * OIDC flow for desktop signing</li>
  * </ul>
+ * <p>
+ * The tools it creates fetch Sigstore's trust root over TUF the first time they sign or verify,
+ * not when they are created, so a build or command that touches no Sigstore bundle never reaches
+ * the network. A {@code trusted-root} file, which is local, is read when the tool is created, so
+ * a missing or malformed one is a configuration error.
  *
  * @see SigstoreTool
  * @see SignatureToolFactory
@@ -90,39 +95,38 @@ public class SigstoreToolFactory implements SignatureToolFactory {
      * When {@code interactive} is {@code true}, the browser-based OIDC flow
      * is enabled as a fallback after ambient providers.
      *
+     * <p>
+     * The signer is built, and the trust root fetched, on the first signature.
+     *
      * @param settings tool settings from the {@code tools.sigstore} config section
      * @param expected the asserted signer, every identity entry naming its issuer, or {@code null}
      * @return a signing-capable Sigstore tool
-     * @throws ToolExecutionException if the signer cannot be constructed
+     * @throws ToolExecutionException if a {@code trusted-root} file is configured and cannot be read
      */
     @Override
     public SignatureTool createSigning(Map<String, String> settings, SignerIdentity expected) {
         boolean staging = Setting.STAGING.isTrue(settings);
         boolean interactive = Setting.INTERACTIVE.isTrue(settings);
-        try {
-            KeylessSigner.Builder signerBuilder = staging
-                    ? KeylessSigner.builder().sigstoreStagingDefaults()
-                    : KeylessSigner.builder().sigstorePublicDefaults();
+        List<IdentityCredential> allowed = oidcIdentities(expected);
+        Lazy<KeylessSigner> signer = Lazy.of(() -> signerBuilder(staging, interactive, allowed).build());
+        return new SigstoreTool(format, signer, verifierFor(settings, staging, "signing"), firstSubject(allowed),
+                trustRootRef(settings, staging), allowed);
+    }
 
-            if (!interactive) {
-                signerBuilder.forceCredentialProviders(OidcClients.of(
-                        TokenStringOidcClient.from(new EnvTokenProvider()),
-                        GithubActionsOidcClient.builder().build()));
-            }
-
-            List<IdentityCredential> allowed = oidcIdentities(expected);
-            if (!allowed.isEmpty()) {
-                signerBuilder.allowedOidcIdentities(allowed.stream().map(SigstoreToolFactory::matcherFor).toList());
-            }
-            String sigstoreSubject = firstSubject(allowed);
-
-            KeylessSigner signer = signerBuilder.build();
-            KeylessVerifier verifier = buildVerifier(settings, staging);
-            return new SigstoreTool(format, signer, verifier, sigstoreSubject, trustRootRef(settings, staging), allowed);
-        } catch (Exception e) {
-            throw new ToolExecutionException(
-                    "Failed to create Sigstore signing tool: " + e.getMessage(), e);
+    private static KeylessSigner.Builder signerBuilder(boolean staging, boolean interactive,
+            List<IdentityCredential> allowed) {
+        KeylessSigner.Builder builder = staging
+                ? KeylessSigner.builder().sigstoreStagingDefaults()
+                : KeylessSigner.builder().sigstorePublicDefaults();
+        if (!interactive) {
+            builder.forceCredentialProviders(OidcClients.of(
+                    TokenStringOidcClient.from(new EnvTokenProvider()),
+                    GithubActionsOidcClient.builder().build()));
         }
+        if (!allowed.isEmpty()) {
+            builder.allowedOidcIdentities(allowed.stream().map(SigstoreToolFactory::matcherFor).toList());
+        }
+        return builder;
     }
 
     private static List<IdentityCredential> oidcIdentities(SignerIdentity expected) {
@@ -162,25 +166,49 @@ public class SigstoreToolFactory implements SignatureToolFactory {
     /**
      * Creates a verify-only {@link SigstoreTool}.
      *
+     * <p>
+     * The verifier is built, and the trust root fetched, on the first verification; one read
+     * from a {@code trusted-root} file is built now.
+     *
      * @param settings tool settings from the {@code tools.sigstore} config section
      * @return a verify-only Sigstore tool
-     * @throws ToolExecutionException if the verifier cannot be constructed
+     * @throws ToolExecutionException if a {@code trusted-root} file is configured and cannot be read
      */
     @Override
     public SignatureTool createVerifyOnly(Map<String, String> settings) {
         boolean staging = Setting.STAGING.isTrue(settings);
+        return new SigstoreTool(format, null, verifierFor(settings, staging, "verification"), null,
+                trustRootRef(settings, staging), List.of());
+    }
+
+    /**
+     * The verifier a tool uses: built now from a {@code trusted-root} file, which is local and
+     * whose errors are configuration errors, else on first use from the TUF-distributed trust
+     * root of the public-good or staging instance.
+     *
+     * @param purpose names the tool in the error, {@code signing} or {@code verification}
+     * @throws ToolExecutionException if the {@code trusted-root} file cannot be read
+     */
+    private static Lazy<KeylessVerifier> verifierFor(Map<String, String> settings, boolean staging,
+            String purpose) {
+        String trustedRoot = Setting.TRUSTED_ROOT.from(settings);
+        if (trustedRoot == null || trustedRoot.isBlank()) {
+            return Lazy.of(() -> staging
+                    ? KeylessVerifier.builder().sigstoreStagingDefaults().build()
+                    : KeylessVerifier.builder().sigstorePublicDefaults().build());
+        }
         try {
-            KeylessVerifier verifier = buildVerifier(settings, staging);
-            return new SigstoreTool(format, null, verifier, null,
-                    trustRootRef(settings, staging));
+            return Lazy.built(KeylessVerifier.builder()
+                    .trustedRootProvider(TrustedRootProvider.from(Setting.TRUSTED_ROOT.pathFrom(settings)))
+                    .build());
         } catch (Exception e) {
             throw new ToolExecutionException(
-                    "Failed to create Sigstore verification tool: " + e.getMessage(), e);
+                    "Failed to create Sigstore " + purpose + " tool: " + e.getMessage(), e);
         }
     }
 
     /**
-     * Names the trust root {@link #buildVerifier} will use, so results record which
+     * Names the trust root the verifier of {@link #verifierFor} verifies against, so results record which
      * certificates were acceptable rather than only that verification was local.
      *
      * @param settings tool settings from the {@code tools.sigstore} config section
@@ -193,19 +221,6 @@ public class SigstoreToolFactory implements SignatureToolFactory {
             return TrustRootRef.sigstore(trustedRoot);
         }
         return TrustRootRef.sigstore(staging ? "staging" : "public-good");
-    }
-
-    private KeylessVerifier buildVerifier(Map<String, String> settings, boolean staging)
-            throws Exception {
-        String trustedRoot = Setting.TRUSTED_ROOT.from(settings);
-        if (trustedRoot != null && !trustedRoot.isBlank()) {
-            return KeylessVerifier.builder()
-                    .trustedRootProvider(TrustedRootProvider.from(Setting.TRUSTED_ROOT.pathFrom(settings)))
-                    .build();
-        }
-        return staging
-                ? KeylessVerifier.builder().sigstoreStagingDefaults().build()
-                : KeylessVerifier.builder().sigstorePublicDefaults().build();
     }
 
     /**

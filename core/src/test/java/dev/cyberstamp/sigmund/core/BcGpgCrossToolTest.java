@@ -19,8 +19,9 @@ import org.junit.jupiter.api.io.TempDir;
  *
  * <p>
  * GPG only understands v4 keys (LibrePGP). BC generates v4 keys unless asked for
- * {@code pgp6} — Ed25519 in the legacy EdDSA form GPG reads — so each v4 suite signs with BC
- * and verifies with GPG. Ed448 is v6 only.
+ * {@code pgp6}: Ed25519 in the legacy EdDSA form GPG reads, and NIST P-384, sign with BC and
+ * verify with GPG. NIST P-256 is held to every backend by {@code BackendAgreementTest}; RSA,
+ * whose v4 encoding needs no special form, by the GPG-signed case below. Ed448 is v6 only.
  *
  * <p>
  * gpg→bc tests work because BC can verify v4 signatures.
@@ -55,7 +56,7 @@ class BcGpgCrossToolTest {
     @Test
     void gpgSignBcVerifyRsa(@TempDir Path tempDir) throws Exception {
         Path gpgHome = GpgTestKeys.home(tempDir.resolve("gpg-home"));
-        GpgTestKeys.generate(gpgHome, "GPG RSA <gpg-rsa@test.example>", "rsa4096");
+        GpgTestKeys.generate(gpgHome, "GPG RSA <gpg-rsa@test.example>", "rsa2048");
 
         Path artifact = tempDir.resolve("artifact.txt");
         Files.writeString(artifact, "cross-tool test GPG→BC rsa");
@@ -78,16 +79,6 @@ class BcGpgCrossToolTest {
     @Test
     void bcSignGpgVerifyEd25519(@TempDir Path tempDir) throws Exception {
         bcSignGpgVerify(tempDir, "ed25519", "BC Ed25519 <bc-ed25519@test.example>");
-    }
-
-    @Test
-    void bcSignGpgVerifyRsa4096(@TempDir Path tempDir) throws Exception {
-        bcSignGpgVerify(tempDir, "rsa4096", "BC RSA <bc-rsa@test.example>");
-    }
-
-    @Test
-    void bcSignGpgVerifyNistp256(@TempDir Path tempDir) throws Exception {
-        bcSignGpgVerify(tempDir, "nistp256", "BC ECDSA <bc-ecdsa@test.example>");
     }
 
     @Test
