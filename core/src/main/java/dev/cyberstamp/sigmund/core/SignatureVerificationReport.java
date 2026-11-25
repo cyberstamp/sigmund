@@ -30,9 +30,8 @@ public class SignatureVerificationReport {
      *
      * <p>
      * Counts rather than a single summary name: "2 verified, 1 indeterminate" says what
-     * happened, where a name like "pass with skips" hides the numbers and speaks a vocabulary
-     * the model no longer uses — an unverifiable claim is indeterminate, with a reason, not
-     * skipped.
+     * happened, where a name like "pass with skips" hides the numbers — and a claim that cannot
+     * be checked is indeterminate, with a reason, not skipped.
      *
      * @return counts by claim outcome, omitting outcomes nothing reached
      */

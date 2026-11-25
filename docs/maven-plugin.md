@@ -318,7 +318,7 @@ Summary: All clear: 5 dependencies, 4 PGP4 signature(s), 3 unique key(s)
 PQ coverage: 0/5 dependencies have a post-quantum signature
 ```
 
-Signers whose key Sigmund could not use appear as `UNKNOWN (key unavailable)`, with the reason on the key line. See [Why Some Signers Appear as UNKNOWN](getting-started.md#why-some-signers-appear-as-unknown) for what each reason means and how to resolve more keys.
+Signers whose key Sigmund could not use appear as `UNKNOWN (key unavailable)`, with the reason on the key line. A signature file that could not be read, or holds no signature, is not taken for an unsigned module: its artifact appears under `Signer: NOT VERIFIED` with `(evidence unreadable: …)` or `(malformed evidence: …)` on the key line, and a generated trust config gives it no rule, so it stays `NOT_CONFIGURED` until the file is fixed. See [Why Some Signers Appear as UNKNOWN](getting-started.md#why-some-signers-appear-as-unknown) for what each reason means and how to resolve more keys.
 
 **Generating a trust config:**
 

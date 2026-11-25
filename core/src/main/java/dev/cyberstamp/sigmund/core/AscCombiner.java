@@ -177,8 +177,8 @@ final class AscCombiner {
     }
 
     /**
-     * Extracts version, algorithm ID, issuer fingerprint, creation time and signature type from
-     * an armored block in a single dearmor pass.
+     * Extracts version, algorithm ID, issuer fingerprint, creation time, signature type and the
+     * first packet's tag from an armored block in a single dearmor pass.
      *
      * @param armoredBlock a single ASCII-armored OpenPGP block
      * @return the extracted metadata
@@ -193,10 +193,19 @@ final class AscCombiner {
             String fingerprint = extractIssuerFingerprintFromPackets(raw, areas);
             Instant creationTime = extractCreationTimeFromPackets(raw, areas);
             int signatureType = extractSignatureType(raw, bodyOffset, version);
-            return new OpenPgpSignaturePacketInfo(version, algoId, fingerprint, creationTime, signatureType);
+            return new OpenPgpSignaturePacketInfo(version, algoId, fingerprint, creationTime, signatureType,
+                    firstPacketTag(raw));
         } catch (IOException e) {
-            return new OpenPgpSignaturePacketInfo(-1, -1, null, null, -1);
+            return new OpenPgpSignaturePacketInfo(-1, -1, null, null, -1, -1);
         }
+    }
+
+    /**
+     * The tag of the first packet, or -1 when the bytes do not start with a packet header:
+     * its first octet always has the high bit set (RFC 9580 §4.2).
+     */
+    private static int firstPacketTag(byte[] raw) {
+        return raw.length > 0 && (raw[0] & 0x80) != 0 ? packetTag(raw[0] & 0xFF) : -1;
     }
 
     /**

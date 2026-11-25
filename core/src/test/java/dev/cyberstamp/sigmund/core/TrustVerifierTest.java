@@ -258,4 +258,151 @@ class TrustVerifierTest {
             assertThat(result.claims()).hasSize(2);
         }
     }
+
+    @Nested
+    class EvidenceThatCannotBeRead {
+
+        /** A directory where a signature file was resolved: reading it fails as an unreadable file does. */
+        @Test
+        void isRecordedAndLeavesTheArtifactUndecidedWhileTheOtherFilesAreVerified(@TempDir Path dir)
+                throws IOException {
+            Path unreadable = Files.createDirectory(dir.resolve("lib.jar.sigstore.json"));
+
+            ArtifactResult result = assess(expecting(ALICE, ClaimSetMode.ALL_CLAIMS),
+                    List.of(unreadable, evidenceFile), verifiedBy(ALICE));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
+            assertThat(result.reason()).isEqualTo(IndeterminateReason.EVIDENCE_UNREADABLE);
+            assertThat(result.claims()).hasSize(1);
+            assertThat(result.evidenceWithoutClaims()).singleElement().satisfies(record -> {
+                assertThat(record.file()).isEqualTo(unreadable);
+                assertThat(record.source()).isEqualTo(Evidence.SOURCE_SIDECAR);
+                assertThat(record.message()).isNotBlank();
+            });
+        }
+
+        @Test
+        void aFileGoneSinceItWasResolvedSaysSo(@TempDir Path dir) {
+            Path gone = dir.resolve("lib.jar.asc");
+
+            ArtifactResult result = assess(expecting(ALICE, ClaimSetMode.ALL_CLAIMS), List.of(gone));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
+            assertThat(result.evidenceWithoutClaims()).singleElement()
+                    .satisfies(record -> assertThat(record.message()).isEqualTo("no such file"));
+        }
+
+        @Test
+        void theOtherArtifactsOfTheRunAreStillAssessed(@TempDir Path dir) throws IOException {
+            Path unreadable = Files.createDirectory(dir.resolve("lib.jar.asc"));
+            TrustPolicy policy = expecting(ALICE, ClaimSetMode.ALL_CLAIMS);
+            TrustVerifier verifier = new TrustVerifier(policy, List.of(provider(verifiedBy(ALICE))),
+                    new ClaimIdentityResolver(policy, Map.of(), false));
+
+            List<ArtifactResult> results = verifier.assessAll(List.of(
+                    new AssessmentRequest(COORDS, artifact, List.of(unreadable)),
+                    new AssessmentRequest(COORDS, artifact, List.of(evidenceFile))));
+
+            assertThat(results).extracting(ArtifactResult::outcome)
+                    .containsExactly(ArtifactOutcome.INDETERMINATE, ArtifactOutcome.SATISFIED);
+        }
+    }
+
+    /** A file read but holding no signature is malformed evidence, not the absence of it. */
+    @Nested
+    class EvidenceHoldingNoSignature {
+
+        @Test
+        void anEmptySignatureFileIsMalformedRatherThanNoClaim(@TempDir Path dir) throws IOException {
+            Path empty = Files.writeString(dir.resolve("lib.jar.asc"), "");
+
+            ArtifactResult result = assess(expecting(ALICE, ClaimSetMode.ALL_CLAIMS), List.of(empty));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
+            assertThat(result.reason()).isEqualTo(IndeterminateReason.EVIDENCE_MALFORMED);
+            assertThat(result.evidenceWithoutClaims()).singleElement().satisfies(record -> {
+                assertThat(record.file()).isEqualTo(empty);
+                assertThat(record.digest()).isEqualTo(DigestSet.sha256(new byte[0]));
+                assertThat(record.describe()).isEqualTo(empty + " is empty");
+            });
+        }
+
+        @Test
+        void aFileWithoutASignatureSaysItHoldsNone(@TempDir Path dir) throws IOException {
+            Path page = Files.writeString(dir.resolve("lib.jar.asc"), "<html>Not Found</html>");
+
+            ArtifactResult result = assess(expecting(ALICE, ClaimSetMode.ALL_CLAIMS), List.of(page));
+
+            assertThat(result.evidenceWithoutClaims()).singleElement()
+                    .satisfies(record -> assertThat(record.describe()).isEqualTo(page + " holds no signature"));
+        }
+
+        @Test
+        void besideAVerifiedClaimItLeavesTheArtifactUndecidedWhenSurplusClaimsAreRejected(@TempDir Path dir)
+                throws IOException {
+            Path empty = Files.writeString(dir.resolve("lib.jar.sigstore.json"), "");
+            TrustPolicy policy = expecting(ALICE, ClaimSetMode.ALL_CLAIMS);
+            EvidenceProvider onlyTheAsc = new EvidenceProvider() {
+                @Override
+                public String name() {
+                    return "openpgp";
+                }
+
+                @Override
+                public boolean isAvailable() {
+                    return true;
+                }
+
+                @Override
+                public boolean canHandle(Evidence evidence) {
+                    return true;
+                }
+
+                @Override
+                public List<ClaimResult> verify(Path artifactFile, Evidence evidence) {
+                    return evidence.file().equals(evidenceFile) ? List.of(verifiedBy(ALICE)) : List.of();
+                }
+            };
+
+            ArtifactResult result = new TrustVerifier(policy, List.of(onlyTheAsc),
+                    new ClaimIdentityResolver(policy, Map.of(), false)).assess(COORDS, artifact,
+                            List.of(evidenceFile, empty));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
+            assertThat(result.reason()).isEqualTo(IndeterminateReason.EVIDENCE_MALFORMED);
+        }
+
+        @Test
+        void aFileNoProviderHandlesIsNotRecorded(@TempDir Path dir) throws IOException {
+            Path other = Files.writeString(dir.resolve("lib.jar.md5"), "d41d8cd98f00b204e9800998ecf8427e");
+            TrustPolicy policy = expecting(ALICE, ClaimSetMode.ALL_CLAIMS);
+            EvidenceProvider handlesNothing = new EvidenceProvider() {
+                @Override
+                public String name() {
+                    return "openpgp";
+                }
+
+                @Override
+                public boolean isAvailable() {
+                    return true;
+                }
+
+                @Override
+                public boolean canHandle(Evidence evidence) {
+                    return false;
+                }
+
+                @Override
+                public List<ClaimResult> verify(Path artifactFile, Evidence evidence) {
+                    return List.of();
+                }
+            };
+
+            ArtifactResult result = new TrustVerifier(policy, List.of(handlesNothing),
+                    new ClaimIdentityResolver(policy, Map.of(), false)).assess(COORDS, artifact, List.of(other));
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.NO_CLAIM);
+            assertThat(result.evidenceWithoutClaims()).isEmpty();
+        }
+    }
 }

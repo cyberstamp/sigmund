@@ -54,19 +54,19 @@ class OutcomeRollupTest {
         void aFailedClaimDominatesEvenAlongsideAVerifiedOne() {
             ClaimResult failed = claim(ClaimOutcome.FAILED, null);
 
-            assertThat(OutcomeRollup.derive(List.of(verified(), failed), accepting(verified()),
+            assertThat(OutcomeRollup.derive(List.of(verified(), failed), List.of(), accepting(verified()),
                     ClaimSetMode.ANY_CLAIM).outcome()).isEqualTo(ArtifactOutcome.FAILED);
         }
 
         @Test
         void noRequirementMeansNotConfigured() {
-            assertThat(OutcomeRollup.derive(List.of(verified()), notConfigured(),
+            assertThat(OutcomeRollup.derive(List.of(verified()), List.of(), notConfigured(),
                     ClaimSetMode.ALL_CLAIMS).outcome()).isEqualTo(ArtifactOutcome.NOT_CONFIGURED);
         }
 
         @Test
         void noClaimsAtAllMeansNoClaim() {
-            assertThat(OutcomeRollup.derive(List.of(), unmet(), ClaimSetMode.ALL_CLAIMS)
+            assertThat(OutcomeRollup.derive(List.of(), List.of(), unmet(), ClaimSetMode.ALL_CLAIMS)
                     .outcome()).isEqualTo(ArtifactOutcome.NO_CLAIM);
         }
     }
@@ -79,7 +79,7 @@ class OutcomeRollupTest {
             ClaimResult pqcUnsupported = claim(ClaimOutcome.INDETERMINATE, IndeterminateReason.UNSUPPORTED_ALGORITHM);
             ClaimResult classic = verified();
 
-            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(classic, pqcUnsupported),
+            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(classic, pqcUnsupported), List.of(),
                     accepting(classic), ClaimSetMode.ALL_CLAIMS);
 
             // the set-aside claim is not lost: it stays in the artifact's claim list, where
@@ -93,7 +93,7 @@ class OutcomeRollupTest {
         void onlyUnsupportedClaimsIsIndeterminateNotNoClaim() {
             ClaimResult unsupported = claim(ClaimOutcome.INDETERMINATE, IndeterminateReason.UNSUPPORTED_ALGORITHM);
 
-            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(unsupported), unmet(),
+            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(unsupported), List.of(), unmet(),
                     ClaimSetMode.ALL_CLAIMS);
 
             assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
@@ -110,7 +110,7 @@ class OutcomeRollupTest {
             ClaimResult accepted = verifiedBy("alice");
             ClaimResult stranger = verifiedBy("mallory");
 
-            assertThat(OutcomeRollup.derive(List.of(accepted, stranger), accepting(accepted),
+            assertThat(OutcomeRollup.derive(List.of(accepted, stranger), List.of(), accepting(accepted),
                     ClaimSetMode.ALL_CLAIMS).outcome()).isEqualTo(ArtifactOutcome.UNSATISFIED);
         }
 
@@ -119,7 +119,7 @@ class OutcomeRollupTest {
             ClaimResult accepted = verifiedBy("alice");
             ClaimResult stranger = verifiedBy("mallory");
 
-            assertThat(OutcomeRollup.derive(List.of(accepted, stranger), accepting(accepted),
+            assertThat(OutcomeRollup.derive(List.of(accepted, stranger), List.of(), accepting(accepted),
                     ClaimSetMode.ANY_CLAIM).outcome()).isEqualTo(ArtifactOutcome.SATISFIED);
         }
 
@@ -128,7 +128,7 @@ class OutcomeRollupTest {
             ClaimResult accepted = verified();
             ClaimResult unresolved = claim(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE);
 
-            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(accepted, unresolved),
+            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(accepted, unresolved), List.of(),
                     accepting(accepted), ClaimSetMode.ALL_CLAIMS);
 
             assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
@@ -143,7 +143,7 @@ class OutcomeRollupTest {
         void anUnresolvedClaimThatCouldHaveSatisfiedThemIsIndeterminate() {
             ClaimResult unresolved = claim(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE);
 
-            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(unresolved), unmet(),
+            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(unresolved), List.of(), unmet(),
                     ClaimSetMode.ANY_CLAIM);
 
             assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
@@ -152,7 +152,7 @@ class OutcomeRollupTest {
 
         @Test
         void aVerifiedClaimPolicyRejectsIsUnsatisfied() {
-            assertThat(OutcomeRollup.derive(List.of(verified()), unmet(),
+            assertThat(OutcomeRollup.derive(List.of(verified()), List.of(), unmet(),
                     ClaimSetMode.ANY_CLAIM).outcome()).isEqualTo(ArtifactOutcome.UNSATISFIED);
         }
     }
@@ -203,7 +203,7 @@ class OutcomeRollupTest {
             Requirement both = requiring(signer("classic", CLASSIC), signer("pqc", PQC));
 
             OutcomeRollup.Result result = OutcomeRollup.derive(
-                    List.of(verifiedBy(CLASSIC), unsupportedNaming(PQC)), both,
+                    List.of(verifiedBy(CLASSIC), unsupportedNaming(PQC)), List.of(), both,
                     ClaimSetMode.ALL_CLAIMS);
 
             assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
@@ -214,7 +214,7 @@ class OutcomeRollupTest {
         void anUncheckableClaimNamingSomeoneElseLeavesTheRequirementUnsatisfied() {
             Requirement both = requiring(signer("classic", CLASSIC), signer("pqc", PQC));
 
-            assertThat(OutcomeRollup.derive(List.of(verifiedBy(CLASSIC), unsupportedNaming(OTHER)),
+            assertThat(OutcomeRollup.derive(List.of(verifiedBy(CLASSIC), unsupportedNaming(OTHER)), List.of(),
                     both, ClaimSetMode.ALL_CLAIMS).outcome())
                     .isEqualTo(ArtifactOutcome.UNSATISFIED);
         }
@@ -228,7 +228,7 @@ class OutcomeRollupTest {
         void anUncheckableClaimDoesNotExcuseAWrongVerifiedSigner() {
             Requirement both = requiring(signer("classic", CLASSIC), signer("pqc", PQC));
 
-            assertThat(OutcomeRollup.derive(List.of(verifiedBy(OTHER), unsupportedNaming(PQC)),
+            assertThat(OutcomeRollup.derive(List.of(verifiedBy(OTHER), unsupportedNaming(PQC)), List.of(),
                     both, ClaimSetMode.ALL_CLAIMS).outcome())
                     .isEqualTo(ArtifactOutcome.UNSATISFIED);
         }
@@ -237,7 +237,7 @@ class OutcomeRollupTest {
         void anUncheckableClaimAloneNamingARequiredSignerIsUnsupported() {
             Requirement pqc = requiring(signer("pqc", PQC));
 
-            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(unsupportedNaming(PQC)),
+            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(unsupportedNaming(PQC)), List.of(),
                     pqc, ClaimSetMode.ALL_CLAIMS);
 
             assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
@@ -252,7 +252,7 @@ class OutcomeRollupTest {
         void anUncheckableClaimAloneNamingSomeoneElseIsUnsatisfied() {
             Requirement pqc = requiring(signer("pqc", PQC));
 
-            assertThat(OutcomeRollup.derive(List.of(unsupportedNaming(OTHER)), pqc,
+            assertThat(OutcomeRollup.derive(List.of(unsupportedNaming(OTHER)), List.of(), pqc,
                     ClaimSetMode.ALL_CLAIMS).outcome())
                     .isEqualTo(ArtifactOutcome.UNSATISFIED);
         }
@@ -264,7 +264,7 @@ class OutcomeRollupTest {
                     IndeterminateReason.UNSUPPORTED_ALGORITHM);
 
             OutcomeRollup.Result result = OutcomeRollup.derive(
-                    List.of(unsupportedNaming(OTHER), anonymous), pqc, ClaimSetMode.ALL_CLAIMS);
+                    List.of(unsupportedNaming(OTHER), anonymous), List.of(), pqc, ClaimSetMode.ALL_CLAIMS);
 
             assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
             assertThat(result.reason()).isEqualTo(IndeterminateReason.UNSUPPORTED_ALGORITHM);
@@ -274,9 +274,80 @@ class OutcomeRollupTest {
         void oneSignerWithBothKeysIsSatisfiedByTheClassicClaimAlone() {
             Requirement publisher = requiring(signer("publisher", CLASSIC, PQC));
 
-            assertThat(OutcomeRollup.derive(List.of(verifiedBy(CLASSIC), unsupportedNaming(PQC)),
+            assertThat(OutcomeRollup.derive(List.of(verifiedBy(CLASSIC), unsupportedNaming(PQC)), List.of(),
                     publisher, ClaimSetMode.ALL_CLAIMS).outcome())
                     .isEqualTo(ArtifactOutcome.SATISFIED);
+        }
+    }
+
+    @Nested
+    class EvidenceThatCouldNotBeRead {
+
+        private final List<EvidenceWithoutClaims> unreadable = List.of(EvidenceWithoutClaims
+                .unreadable(Path.of("lib.jar.sigstore.json"), Evidence.SOURCE_SIDECAR, "permission denied"));
+
+        @Test
+        void anArtifactWhoseOnlyEvidenceWentUnreadIsNotUnsigned() {
+            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(), unreadable, unmet(), ClaimSetMode.ALL_CLAIMS);
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
+            assertThat(result.reason()).isEqualTo(IndeterminateReason.EVIDENCE_UNREADABLE);
+        }
+
+        /** The unread file may hold a claim from a signer the rule does not accept. */
+        @Test
+        void metRequirementsAreUndecidedWhenSurplusClaimsAreRejected() {
+            ClaimResult alice = verified();
+
+            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(alice), unreadable, accepting(alice),
+                    ClaimSetMode.ALL_CLAIMS);
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
+            assertThat(result.reason()).isEqualTo(IndeterminateReason.EVIDENCE_UNREADABLE);
+        }
+
+        @Test
+        void metRequirementsAreSatisfiedWhenAnyClaimWillDo() {
+            ClaimResult alice = verified();
+
+            assertThat(OutcomeRollup.derive(List.of(alice), unreadable, accepting(alice), ClaimSetMode.ANY_CLAIM)
+                    .outcome()).isEqualTo(ArtifactOutcome.SATISFIED);
+        }
+
+        @Test
+        void anUnresolvedClaimNamesItsOwnReason() {
+            ClaimResult keyless = claim(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE);
+
+            assertThat(OutcomeRollup.derive(List.of(keyless), unreadable, unmet(), ClaimSetMode.ALL_CLAIMS).reason())
+                    .isEqualTo(IndeterminateReason.KEY_UNAVAILABLE);
+        }
+
+        @Test
+        void aFailedClaimStillWins() {
+            ClaimResult failed = claim(ClaimOutcome.FAILED, null);
+
+            assertThat(OutcomeRollup.derive(List.of(failed), unreadable, unmet(), ClaimSetMode.ALL_CLAIMS).outcome())
+                    .isEqualTo(ArtifactOutcome.FAILED);
+        }
+
+        @Test
+        void withoutARuleTheArtifactIsNotConfigured() {
+            assertThat(OutcomeRollup.derive(List.of(), unreadable, notConfigured(), ClaimSetMode.ALL_CLAIMS)
+                    .outcome()).isEqualTo(ArtifactOutcome.NOT_CONFIGURED);
+        }
+
+        /** The first file decides the reason when no claim's comes first, whichever it is. */
+        @Test
+        void aFileHoldingNoSignatureIsMalformed() {
+            List<EvidenceWithoutClaims> empty = List.of(new EvidenceWithoutClaims(Path.of("lib.jar.asc"),
+                    Evidence.SOURCE_SIDECAR, IndeterminateReason.EVIDENCE_MALFORMED, DigestSet.sha256(
+                            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+                    "is empty"));
+
+            OutcomeRollup.Result result = OutcomeRollup.derive(List.of(), empty, unmet(), ClaimSetMode.ALL_CLAIMS);
+
+            assertThat(result.outcome()).isEqualTo(ArtifactOutcome.INDETERMINATE);
+            assertThat(result.reason()).isEqualTo(IndeterminateReason.EVIDENCE_MALFORMED);
         }
     }
 }

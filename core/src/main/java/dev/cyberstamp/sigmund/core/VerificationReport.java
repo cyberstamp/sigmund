@@ -325,6 +325,27 @@ public final class VerificationReport {
     }
 
     /**
+     * Names each evidence file of an artifact that yielded no claim, and why: one that could not
+     * be read, or one holding no signature.
+     *
+     * <p>
+     * Unlike {@link #explain(ArtifactResult)}, these lines belong beside the artifact however
+     * little detail is asked for: the file is what an operator has to fix, and an artifact
+     * reported {@link IndeterminateReason#EVIDENCE_UNREADABLE} or
+     * {@link IndeterminateReason#EVIDENCE_MALFORMED} for it would otherwise name no culprit.
+     *
+     * @param result the result
+     * @return one line per file, empty when every file yielded a claim
+     */
+    public static List<String> evidenceWithoutClaims(ArtifactResult result) {
+        List<String> lines = new ArrayList<>(result.evidenceWithoutClaims().size());
+        for (EvidenceWithoutClaims evidence : result.evidenceWithoutClaims()) {
+            lines.add("evidence " + evidence.describe());
+        }
+        return List.copyOf(lines);
+    }
+
+    /**
      * Builds a claim's first line: the outcome, the tool that reached it, and who it names.
      */
     private static String headline(ClaimResult claim) {

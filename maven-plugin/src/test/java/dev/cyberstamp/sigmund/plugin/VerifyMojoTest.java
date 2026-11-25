@@ -178,7 +178,7 @@ class VerifyMojoTest {
             ArtifactCoords coords = new ArtifactCoords("com.example", name, "", "jar", "1.0");
             return new ArtifactResult(
                     new ArtifactSubject(coords, DigestSet.sha256(FP.toLowerCase())),
-                    outcome, null, matchedRule, List.of(claims), Instant.EPOCH);
+                    outcome, null, matchedRule, List.of(claims), List.of(), Instant.EPOCH);
         }
 
         private ClaimResult verifiedClaim() {

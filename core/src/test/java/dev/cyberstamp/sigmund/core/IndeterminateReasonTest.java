@@ -25,6 +25,12 @@ class IndeterminateReasonTest {
             assertThat(IndeterminateReason.DISCOVERY_UNAVAILABLE.isTransient()).isTrue();
         }
 
+        /** Nothing was read, so nothing is known to be wrong with the bytes. */
+        @Test
+        void evidenceUnreadableIsTransient() {
+            assertThat(IndeterminateReason.EVIDENCE_UNREADABLE.isTransient()).isTrue();
+        }
+
         @Test
         void unsupportedAlgorithmIsPermanent() {
             assertThat(IndeterminateReason.UNSUPPORTED_ALGORITHM.isTransient()).isFalse();

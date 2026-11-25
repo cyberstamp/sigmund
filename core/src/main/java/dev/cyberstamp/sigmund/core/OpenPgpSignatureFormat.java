@@ -62,7 +62,8 @@ public class OpenPgpSignatureFormat implements SignatureFormat {
      * algorithm ID, issuer fingerprint and creation time, and wraps each into an
      * {@link OpenPgpClaim}. A hybrid {@code .asc} carrying a classic and a post-quantum
      * block therefore yields two claims, verified independently. An empty file yields none, as a
-     * file without an armored block does: it holds no signature.
+     * file without an armored block does: it holds no signature, which trust verification
+     * records as {@link EvidenceWithoutClaims}, malformed rather than absent.
      *
      * @param evidence the evidence to parse
      * @return the parsed claims, one per armored block

@@ -2,6 +2,7 @@ package dev.cyberstamp.sigmund.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
@@ -153,6 +154,18 @@ class AscCombinerTest {
     }
 
     // --- signature type ---
+
+    @Test
+    void inspectSignaturePacketReadsTheTagOfTheFirstPacket() {
+        byte[] v4 = new byte[] { (byte) 0x88, 0x08, 0x04, 0x10, 0x11, 0x08, 0x00, 0x00, 0x00, 0x00 };
+        assertThat(AscCombiner.inspectSignaturePacket(AscCombiner.armor(v4)).packetTag()).isEqualTo(2);
+    }
+
+    @Test
+    void inspectSignaturePacketReadsNoTagFromBytesThatAreNotAPacket() {
+        byte[] text = "not a signature".getBytes(StandardCharsets.US_ASCII);
+        assertThat(AscCombiner.inspectSignaturePacket(AscCombiner.armor(text)).packetTag()).isEqualTo(-1);
+    }
 
     @Test
     void inspectSignaturePacketReadsTheTypeOfAV4Signature() {

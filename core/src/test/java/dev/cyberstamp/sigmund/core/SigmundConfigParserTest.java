@@ -988,8 +988,8 @@ class SigmundConfigParserTest {
         }
 
         /**
-         * A flag that is not a boolean used to read as {@code false}, so {@code "off"} and
-         * {@code "true"} alike turned key fetching off.
+         * A flag that is not a boolean is an error: read as {@code false}, {@code "off"} and
+         * {@code "true"} alike would turn key fetching off.
          */
         @Test
         void aFlagThatIsNotABooleanIsErrorRatherThanFalse() {

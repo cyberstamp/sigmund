@@ -475,8 +475,8 @@ class BcKeyStoreTest {
     }
 
     /**
-     * Bouncy Castle 1.86 corrupted a native Ed25519 (algorithm 27) v4 signature when it joined two
-     * copies of it; a local copy joined with a fetched one must still be a certificate.
+     * A local copy of a v4 key with native Ed25519 (RFC 9580 algorithm 27) signatures, joined with
+     * a fetched copy of the same, encodes to the same bytes and binds its key.
      */
     @Test
     void aLocalCopyOfAV4Ed25519KeyJoinsWithAFetchedOne(@TempDir Path tempDir) throws Exception {
@@ -510,8 +510,7 @@ class BcKeyStoreTest {
     }
 
     /**
-     * A certificate that cannot be encoded — as Bouncy Castle 1.86 made one by joining two copies
-     * of a native Ed25519 v4 key — never truncates the file a store already holds.
+     * A certificate that cannot be encoded never truncates the file a store already holds.
      */
     @Test
     void aCertificateThatCannotBeEncodedLeavesTheStoredFileIntact(@TempDir Path tempDir) throws Exception {

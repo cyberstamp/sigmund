@@ -25,6 +25,14 @@ import java.util.List;
  * {@link IndeterminateReason#UNSUPPORTED_ALGORITHM}; then any other claim, which leaves a signer
  * the requirements do not accept; and last no evidence at all.</li>
  * </ol>
+ *
+ * <p>
+ * An evidence file that yielded no claim — one that could not be read, or whose bytes hold no
+ * signature — is unresolved like a claim no tool could decide, with its own reason
+ * ({@link IndeterminateReason#EVIDENCE_UNREADABLE} or
+ * {@link IndeterminateReason#EVIDENCE_MALFORMED}) when no claim's reason comes first: it may hold
+ * a claim from a signer the rule does not accept, and an artifact whose only evidence yielded
+ * none is not unsigned.
  */
 final class OutcomeRollup {
 
@@ -35,12 +43,14 @@ final class OutcomeRollup {
      * Derives the outcome for one artifact.
      *
      * @param claims every claim found for the artifact, in the order they were parsed
+     * @param evidenceWithoutClaims the evidence files found for the artifact that yielded no claim
      * @param evaluator the requirement of the rule that matched the artifact, or {@code null}
      *        when no rule did
      * @param mode what to do with claims beyond those that satisfied the requirements
      * @return the outcome and, where one applies, the reason it could not be decided
      */
-    public static Result derive(List<ClaimResult> claims, RequirementEvaluator evaluator, ClaimSetMode mode) {
+    public static Result derive(List<ClaimResult> claims, List<EvidenceWithoutClaims> evidenceWithoutClaims,
+            RequirementEvaluator evaluator, ClaimSetMode mode) {
         List<ClaimResult> found = claims == null ? List.of() : claims;
 
         // One pass: a failed claim ends it, an unsupported one is set aside before
@@ -69,6 +79,9 @@ final class OutcomeRollup {
                 // what it says.
                 default -> throw new IllegalStateException("unhandled claim outcome: " + claim.outcome());
             }
+        }
+        if (unresolvedReason == null && evidenceWithoutClaims != null && !evidenceWithoutClaims.isEmpty()) {
+            unresolvedReason = evidenceWithoutClaims.get(0).reason();
         }
 
         // no rule applies to this artifact

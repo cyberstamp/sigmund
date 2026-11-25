@@ -255,7 +255,7 @@ class SigmundTest {
             Path sigFile = createTempFile("test.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
 
-            var claim = new OpenPgpClaim("armored", 4, "FP", 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, "FP", 1, null);
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));
             var tool = mockVerifyingTool("gpg", format, true,
                     new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "Alice", "RSA", 4, "KEY", "FP"));
@@ -275,7 +275,7 @@ class SigmundTest {
             Path sigFile = createTempFile("fallthrough.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
 
-            var claim = new OpenPgpClaim("armored", 4, "FP", 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, "FP", 1, null);
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));
             var skippingTool = mockVerifyingTool("bc", format, true,
                     new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.UNSUPPORTED_ALGORITHM, null, null,
@@ -299,7 +299,7 @@ class SigmundTest {
             Path sigFile = createTempFile("nokey.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
 
-            var claim = new OpenPgpClaim("armored", 4, "FP", 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, "FP", 1, null);
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));
             var noKeyTool = mockVerifyingTool("bc", format, true,
                     new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE, null, "RSA", 4,
@@ -322,7 +322,7 @@ class SigmundTest {
             Path sigFile = createTempFile("fail.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
 
-            var claim = new OpenPgpClaim("armored", 4, "FP", 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, "FP", 1, null);
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));
             var failTool = mockVerifyingTool("bc", format, true,
                     new OpenPgpVerifyResult(ClaimOutcome.FAILED, null, null, "RSA", 4, "KEY", "FP"));
@@ -343,7 +343,7 @@ class SigmundTest {
             Path sigFile = createTempFile("best.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
 
-            var claim = new OpenPgpClaim("armored", 4, "FP", 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, "FP", 1, null);
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));
             var noKeyTool = mockVerifyingTool("bc", format, true,
                     new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE, null, null, 4,
@@ -364,7 +364,7 @@ class SigmundTest {
             Path sigFile = createTempFile("allnokey.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
 
-            var claim = new OpenPgpClaim("armored", 4, "FP", 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, "FP", 1, null);
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));
             var tool1 = mockVerifyingTool("bc", format, true,
                     new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.KEY_UNAVAILABLE, null, null, 4,
@@ -388,7 +388,7 @@ class SigmundTest {
             Path sigFile = createTempFile("allskip.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
 
-            var claim = new OpenPgpClaim("armored", 4, "FP", 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, "FP", 1, null);
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));
             var tool1 = mockVerifyingTool("bc", format, true,
                     new OpenPgpVerifyResult(ClaimOutcome.INDETERMINATE, IndeterminateReason.UNSUPPORTED_ALGORITHM, null, null,
@@ -418,8 +418,8 @@ class SigmundTest {
             Path sigFile = createTempFile("hybrid.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
 
-            var classic = new OpenPgpClaim("classic", 4, "FP4", 1, null);
-            var pqc = new OpenPgpClaim("pqc", 6, "FP6", 31, null);
+            var classic = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, "FP4", 1, null);
+            var pqc = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 6, "FP6", 31, null);
             var format = mockFormat("openpgp", ".asc", true, List.of(classic, pqc));
             var v4Only = mockVerifyingTool("gpg", format,
                     c -> c instanceof OpenPgpClaim openPgp && openPgp.packetVersion() == 4,
@@ -448,7 +448,7 @@ class SigmundTest {
             Path sigFile = createTempFile("broken.jar.asc",
                     "-----BEGIN PGP SIGNATURE-----\ntest\n-----END PGP SIGNATURE-----\n");
 
-            var claim = new OpenPgpClaim("armored", 4, "FP", 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, "FP", 1, null);
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));
             try (var alone = Sigmund.builder().verificationConfig(onlyTools("sq"))
                     .addTool(brokenVerifyingTool("sq", format)).build();
@@ -485,7 +485,7 @@ class SigmundTest {
             Path sig1 = createTempFile("test.jar.asc", "sig1");
             Path sig2 = createTempFile("test2.jar.asc", "sig2");
 
-            var claim = new OpenPgpClaim("armored", 4, "FP", 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, "FP", 1, null);
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));
             var tool = mockVerifyingTool("gpg", format, true,
                     new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, null, "RSA", 4, null, null));
@@ -622,7 +622,7 @@ class SigmundTest {
 
         @Test
         void verifierAssessTrusted() {
-            var claim = new OpenPgpClaim("armored", 4, null, 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, null, 1, null);
             var result = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "Alice <alice@example.com>", "RSA",
                     4, "4AEE18F83AFDEB23", "4AEE18F83AFDEB23000000000000000000000000");
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));
@@ -645,7 +645,7 @@ class SigmundTest {
 
         @Test
         void verifierAssessUntrusted() {
-            var claim = new OpenPgpClaim("armored", 4, null, 1, null);
+            var claim = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, null, 1, null);
             var result = new OpenPgpVerifyResult(ClaimOutcome.VERIFIED, null, "Bob <bob@example.com>", "RSA",
                     4, "0000000018F83AFD", "0000000018F83AFD000000000000000000000000");
             var format = mockFormat("openpgp", ".asc", true, List.of(claim));

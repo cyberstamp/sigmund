@@ -142,6 +142,44 @@ class BackendAgreementTest {
     }
 
     /**
+     * A block of the {@code .asc} that holds no signature packet is malformed whichever tool is
+     * routed, and no tool is asked: {@code gpg} and {@code sq} do not take such a block, and
+     * Bouncy Castle cannot parse it.
+     */
+    @Nested
+    class BlockHoldingNoSignature {
+
+        @Test
+        void aBlockThatCannotBeDecodedIsMalformedWhicheverToolIsRouted(@TempDir Path dir) throws Exception {
+            try (Fixture fixture = Fixture.signed(dir, "agreed content")) {
+                Files.writeString(fixture.signature,
+                        "-----BEGIN PGP SIGNATURE-----\n\nbm90IGEgc2lnbmF0dXJl\n-----END PGP SIGNATURE-----\n");
+
+                assertThat(fixture.routedResults()).allSatisfy(result -> {
+                    assertThat(result.isIndeterminate(IndeterminateReason.EVIDENCE_MALFORMED)).isTrue();
+                    assertThat(result.detail()).isEqualTo("the block cannot be decoded into an OpenPGP packet");
+                });
+            }
+        }
+
+        /** A public key pasted into the {@code .asc}: its key packet's version reads as a signature's. */
+        @Test
+        void aPublicKeyBlockIsMalformedWhicheverToolIsRouted(@TempDir Path dir) throws Exception {
+            try (Fixture fixture = Fixture.signed(dir, "agreed content")) {
+                BcKeyStore store = new BcKeyStore(null, dir.resolve("other-cert-d"), dir.resolve("other-private"));
+                String fingerprint = BcTestKeys.generate(store, "Other <other@test.example>", "ed25519", null);
+                Files.writeString(fixture.signature,
+                        AscCombiner.armor(store.findPublicKey(fingerprint).ring().getEncoded()));
+
+                assertThat(fixture.routedResults()).allSatisfy(result -> {
+                    assertThat(result.isIndeterminate(IndeterminateReason.EVIDENCE_MALFORMED)).isTrue();
+                    assertThat(result.detail()).isEqualTo("the block holds a packet of tag 6, not a signature");
+                });
+            }
+        }
+    }
+
+    /**
      * A signing key published to every backend's store, an artifact, and its signature.
      */
     private static final class Fixture implements AutoCloseable {
@@ -287,6 +325,18 @@ class BackendAgreementTest {
             answers.add(routed("gpg", gpg, claim, evidence));
             answers.add(routed("sq", sq, claim, evidence));
             return answers;
+        }
+
+        /** What routing the claim through a toolchain of each backend alone answers, in full. */
+        List<VerifyResult> routedResults() throws Exception {
+            OpenPgpClaim claim = claim();
+            EvidenceRef evidence = EvidenceRef.of(signature, Evidence.SOURCE_SIDECAR);
+            List<VerifyResult> results = new ArrayList<>(3);
+            for (SignatureTool tool : List.<SignatureTool> of(bc, gpg, sq)) {
+                results.add(new ClaimRouter(List.of(tool))
+                        .route(artifact, claim, SignatureFormat.FORMAT_OPENPGP, evidence).verifyResult());
+            }
+            return results;
         }
 
         private Answer routed(String backend, SignatureTool tool, OpenPgpClaim claim, EvidenceRef evidence) {

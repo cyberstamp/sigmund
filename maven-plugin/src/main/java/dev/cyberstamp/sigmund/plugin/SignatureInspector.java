@@ -11,6 +11,7 @@ import dev.cyberstamp.sigmund.core.KeyCredential;
 import dev.cyberstamp.sigmund.core.KeyImporter;
 import dev.cyberstamp.sigmund.core.Sigmund;
 import dev.cyberstamp.sigmund.core.SignatureVerificationReport;
+import dev.cyberstamp.sigmund.core.UnreadableEvidenceException;
 import dev.cyberstamp.sigmund.core.UnverifiedResult;
 import dev.cyberstamp.sigmund.core.VerificationConfig;
 import dev.cyberstamp.sigmund.core.VerifyResult;
@@ -134,6 +135,11 @@ class SignatureInspector implements AutoCloseable {
             SignatureVerificationReport report;
             try {
                 report = sigmund.verify(resolved.artifactFile(), sigFile);
+            } catch (UnreadableEvidenceException e) {
+                log.warn("Signature of " + coords + " not read: " + e.evidence().describe());
+                entries.add(SignedArtifact.withoutClaims(coords, repoId, e.evidence().file(),
+                        IndeterminateReason.EVIDENCE_UNREADABLE, e.evidence().describe()));
+                continue;
             } catch (Exception e) {
                 log.warn("Verification failed for " + coords + ": " + e.getMessage());
                 entries.add(SignedArtifact.toolUnavailable(coords, repoId));
@@ -147,7 +153,8 @@ class SignatureInspector implements AutoCloseable {
 
             for (FileSignatureReport fileReport : report.files()) {
                 if (fileReport.results().isEmpty()) {
-                    entries.add(SignedArtifact.noClaim(coords, repoId));
+                    entries.add(SignedArtifact.withoutClaims(coords, repoId, fileReport.signatureFile(),
+                            IndeterminateReason.EVIDENCE_MALFORMED, fileReport.signatureFile() + " holds no signature"));
                     continue;
                 }
                 for (ClaimResult claim : fileReport.results()) {
@@ -260,12 +267,28 @@ class SignatureInspector implements AutoCloseable {
             VerifyResult verifyResult, Path artifactFile, Path signatureFile, String signerLabel) {
 
         /**
-         * Records an artifact for which no claim was found at all — no signature file
-         * resolved, or one that yielded nothing to verify. This is the absence of
-         * evidence, not a failed or indeterminate claim.
+         * Records an artifact for which no evidence was found at all: no signature file
+         * resolved. This is the absence of evidence, not a failed or indeterminate claim; a
+         * file that was resolved but yielded no claim is {@link #withoutClaims}.
          */
         static SignedArtifact noClaim(ArtifactCoords coords, String repoId) {
             return new SignedArtifact(coords, repoId, null, null, null, null);
+        }
+
+        /**
+         * Records an artifact whose signature file was resolved but yielded no claim — it could
+         * not be read, or it holds no signature — which is not the absence of evidence, so the
+         * artifact is not taken for an unsigned one.
+         *
+         * @param file the signature file
+         * @param reason {@link IndeterminateReason#EVIDENCE_UNREADABLE} or
+         *        {@link IndeterminateReason#EVIDENCE_MALFORMED}
+         * @param detail the file and why it yielded no claim
+         */
+        static SignedArtifact withoutClaims(ArtifactCoords coords, String repoId, Path file,
+                IndeterminateReason reason, String detail) {
+            return new SignedArtifact(coords, repoId, new UnverifiedResult(ClaimOutcome.INDETERMINATE, reason, detail),
+                    null, file, null);
         }
 
         /** Records an artifact whose verification tool could not be run. */

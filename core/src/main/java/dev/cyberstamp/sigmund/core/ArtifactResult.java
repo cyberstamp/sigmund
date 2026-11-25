@@ -17,6 +17,9 @@ import java.util.List;
  * @param reason why it could not be decided, {@code null} unless indeterminate
  * @param matchedRule the policy rule that applied to the artifact, {@code null} when none did
  * @param claims every claim found for the artifact, contributing or not
+ * @param evidenceWithoutClaims the evidence files found for the artifact that yielded no claim —
+ *        one that could not be read, or whose bytes hold no signature — which leave the outcome
+ *        undecided with their reason unless something else decides it
  * @param verifiedAt when Sigmund evaluated the artifact
  */
 public record ArtifactResult(
@@ -25,6 +28,7 @@ public record ArtifactResult(
         IndeterminateReason reason,
         MatchedRule matchedRule,
         List<ClaimResult> claims,
+        List<EvidenceWithoutClaims> evidenceWithoutClaims,
         Instant verifiedAt) {
 
     /**
@@ -50,6 +54,7 @@ public record ArtifactResult(
                             + subject.coords());
         }
         claims = claims == null ? List.of() : List.copyOf(claims);
+        evidenceWithoutClaims = evidenceWithoutClaims == null ? List.of() : List.copyOf(evidenceWithoutClaims);
     }
 
 }
