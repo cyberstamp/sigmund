@@ -818,7 +818,7 @@ Configured in the top-level `tools.sigstore` section. Sigstore uses OIDC-based k
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `staging` | `false` | Use the Sigstore staging instance instead of production. For testing only. |
-| `trusted-root` | (none) | Path to a custom `trusted_root.json` file, used to verify bundles. When omitted, the root is fetched via TUF from the instance `staging` selects. Signing always uses that instance's Fulcio and Rekor |
+| `trusted-root` | (none) | Path to a custom `trusted_root.json` file, used to verify bundles. When omitted, the root is fetched via TUF from the instance `staging` selects, the first time a bundle is signed or verified, so a run that touches no Sigstore bundle never reaches the network. A configured file is read when the tool is created, so a missing or malformed one fails then. Signing always uses that instance's Fulcio and Rekor |
 | `interactive` | `false` | Allow interactive OIDC browser login. When `false`, only ambient credentials are used: the `SIGSTORE_JAVA_ID_TOKEN` environment variable (if set), then GitHub Actions OIDC. Set to `true` for desktop signing. |
 
 The Sigstore tool is pure Java (provided by the `sigmund-sigstore` module) and does not require any external CLI binary. It is ServiceLoader-discovered — adding the module to the classpath is sufficient.

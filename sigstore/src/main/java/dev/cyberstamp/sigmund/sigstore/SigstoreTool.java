@@ -92,51 +92,28 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
     }
 
     private final SigstoreSignatureFormat format;
-    private final KeylessSigner signer;
-    private final KeylessVerifier verifier;
+    private final Lazy<KeylessSigner> signer;
+    private final Lazy<KeylessVerifier> verifier;
     private final String sigstoreSubject;
     private final TrustRootRef trustRoot;
     private final List<IdentityCredential> allowedIdentities;
 
     /**
-     * Creates a new Sigstore tool.
+     * Creates a Sigstore tool whose signer and verifier are built when first used.
      *
-     * @param format the shared signature format instance
-     * @param signer the keyless signer, or {@code null} for verify-only mode
-     * @param verifier the keyless verifier
-     * @param sigstoreSubject the expected OIDC subject for signing info display, or {@code null}
-     */
-    SigstoreTool(SigstoreSignatureFormat format, KeylessSigner signer, KeylessVerifier verifier,
-            String sigstoreSubject) {
-        this(format, signer, verifier, sigstoreSubject, TrustRootRef.unknown());
-    }
-
-    /**
-     * Creates a tool that records which Sigstore trust root it verifies against.
+     * <p>
+     * Building either fetches the trust root, so a tool that neither signs nor verifies never
+     * reaches the network.
      *
      * @param format the bundle format
-     * @param signer the keyless signer, or {@code null} when verify-only
-     * @param verifier the keyless verifier, or {@code null} when sign-only
+     * @param signer builds the keyless signer, or {@code null} when verify-only
+     * @param verifier builds the keyless verifier, or {@code null} when sign-only
      * @param sigstoreSubject the expected OIDC subject for signing info display, or {@code null}
-     * @param trustRoot the trust root the verifier was built with
-     */
-    SigstoreTool(SigstoreSignatureFormat format, KeylessSigner signer, KeylessVerifier verifier,
-            String sigstoreSubject, TrustRootRef trustRoot) {
-        this(format, signer, verifier, sigstoreSubject, trustRoot, List.of());
-    }
-
-    /**
-     * Creates a signing tool that records the identities its signer accepts.
-     *
-     * @param format the bundle format
-     * @param signer the keyless signer
-     * @param verifier the keyless verifier, or {@code null} when sign-only
-     * @param sigstoreSubject the expected OIDC subject for signing info display, or {@code null}
-     * @param trustRoot the trust root the verifier was built with
+     * @param trustRoot the trust root the verifier verifies against
      * @param allowedIdentities the OIDC identity entries the signer's token must match one of (on
      *        issuer, and on subject when the entry names one), empty when any identity is accepted
      */
-    SigstoreTool(SigstoreSignatureFormat format, KeylessSigner signer, KeylessVerifier verifier,
+    SigstoreTool(SigstoreSignatureFormat format, Lazy<KeylessSigner> signer, Lazy<KeylessVerifier> verifier,
             String sigstoreSubject, TrustRootRef trustRoot, List<IdentityCredential> allowedIdentities) {
         this.allowedIdentities = List.copyOf(allowedIdentities);
         this.trustRoot = trustRoot;
@@ -161,7 +138,7 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
      *
      * <p>
      * Sigstore verification is local, but which certificates it accepts depends entirely on
-     * the TUF-distributed trust root the verifier was built with — the public-good instance,
+     * the TUF-distributed trust root the verifier verifies against — the public-good instance,
      * staging, or a private deployment.
      */
     @Override
@@ -230,8 +207,14 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
         if (signer == null) {
             throw new IllegalStateException("Signing not configured");
         }
+        KeylessSigner keyless;
         try {
-            Bundle bundle = signer.signFile(artifactFile);
+            keyless = signer.get();
+        } catch (Exception e) {
+            throw new ToolExecutionException("Failed to create Sigstore signer: " + e.getMessage(), e);
+        }
+        try {
+            Bundle bundle = keyless.signFile(artifactFile);
             Files.writeString(outputSig, bundle.toJson());
 
             X509Certificate cert = (X509Certificate) bundle.getCertPath().getCertificates().get(0);
@@ -254,8 +237,10 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
      * identity metadata (OIDC issuer, subject, algorithm, Rekor log index) extracted
      * from the Fulcio certificate and Rekor entry in the bundle.
      * <p>
-     * The {@code verify} call itself is offline — it validates the bundle against
-     * the trusted root fetched at {@link KeylessVerifier} construction time.
+     * The {@code verify} call itself is offline — it validates the bundle against the trusted
+     * root the {@link KeylessVerifier} fetched when it was built, on the first verification.
+     * A trust root that cannot be fetched is
+     * {@link IndeterminateReason#TRUST_ROOT_UNAVAILABLE} for this claim and every later one.
      *
      * @param artifactFile the artifact that was signed
      * @param claim the Sigstore claim
@@ -267,6 +252,15 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
         if (verifier == null) {
             throw new IllegalStateException("Verification not configured");
         }
+        KeylessVerifier keyless;
+        try {
+            keyless = verifier.get();
+        } catch (Exception e) {
+            if (isInfrastructureFailure(e)) {
+                return SigstoreVerifyResult.indeterminate(IndeterminateReason.TRUST_ROOT_UNAVAILABLE);
+            }
+            throw new ToolExecutionException("Failed to create Sigstore verifier: " + e.getMessage(), e);
+        }
         SigstoreClaim su = (SigstoreClaim) claim;
 
         Bundle bundle;
@@ -277,7 +271,7 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
         }
 
         try {
-            verifier.verify(artifactFile, bundle, dev.sigstore.VerificationOptions.empty());
+            keyless.verify(artifactFile, bundle, dev.sigstore.VerificationOptions.empty());
         } catch (KeylessVerificationException e) {
             return handleVerificationException(e);
         }
@@ -307,12 +301,13 @@ public class SigstoreTool implements SignatureTool, AutoCloseable {
 
     /**
      * Closes the underlying {@link KeylessSigner}, releasing cached ephemeral
-     * signing certificate material. No-op for verify-only instances.
+     * signing certificate material. No-op for a verify-only tool, or one that never signed.
      */
     @Override
     public void close() {
-        if (signer != null) {
-            signer.close();
+        KeylessSigner keyless = signer == null ? null : signer.ifBuilt();
+        if (keyless != null) {
+            keyless.close();
         }
     }
 

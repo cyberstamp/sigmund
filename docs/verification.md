@@ -284,7 +284,7 @@ is read for whether it found a bad signature or a key it would not use.
 
 ## Sigstore Verification
 
-The Sigstore backend verifies `.sigstore.json` bundles using `sigstore-java`'s `KeylessVerifier`. Verification is fully offline after the initial TUF trusted root fetch.
+The Sigstore backend verifies `.sigstore.json` bundles using `sigstore-java`'s `KeylessVerifier`. The trusted root is fetched via TUF when the first bundle is verified, and verification is fully offline after that; a run with no `.sigstore.json` file makes no fetch. A trusted root that cannot be fetched makes each bundle `INDETERMINATE [TRUST_ROOT_UNAVAILABLE]`, after a single attempt.
 
 ### Auto-Detection
 

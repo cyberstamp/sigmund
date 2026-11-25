@@ -10,10 +10,14 @@ import dev.cyberstamp.sigmund.core.IndeterminateReason;
 import dev.cyberstamp.sigmund.core.OpenPgpClaim;
 import dev.cyberstamp.sigmund.core.SigstoreClaim;
 import dev.cyberstamp.sigmund.core.SigstoreVerifyResult;
+import dev.cyberstamp.sigmund.core.ToolExecutionException;
+import dev.cyberstamp.sigmund.core.TrustRootRef;
 import dev.cyberstamp.sigmund.core.VerifyResult;
 import dev.sigstore.KeylessVerificationException;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.security.cert.X509Certificate;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.bouncycastle.asn1.x509.GeneralName;
@@ -29,7 +33,51 @@ class SigstoreToolTest {
      * metadata methods and {@code extractCredentials()}, not {@code sign()} or {@code verify()}.
      */
     private SigstoreTool metadataOnlyTool() {
-        return new SigstoreTool(format, null, null, null);
+        return new SigstoreTool(format, null, null, null, TrustRootRef.unknown(), List.of());
+    }
+
+    /** The signer and verifier are built, and the trust root fetched, only when first used. */
+    @Nested
+    class BuiltWhenFirstUsed {
+
+        private final SigstoreClaim claim = new SigstoreClaim("{}", null);
+
+        @Test
+        void aTrustRootThatCannotBeFetchedIsUnavailableForEveryClaimAfterOneAttempt() {
+            int[] attempts = { 0 };
+            var tool = new SigstoreTool(format, null, Lazy.of(() -> {
+                attempts[0]++;
+                throw new IOException("tuf-repo-cdn.sigstore.dev unreachable");
+            }), null, TrustRootRef.unknown(), List.of());
+
+            VerifyResult first = tool.verify(Path.of("lib.jar"), claim);
+            VerifyResult second = tool.verify(Path.of("lib.jar"), claim);
+
+            assertThat(first.isIndeterminate(IndeterminateReason.TRUST_ROOT_UNAVAILABLE)).isTrue();
+            assertThat(second.isIndeterminate(IndeterminateReason.TRUST_ROOT_UNAVAILABLE)).isTrue();
+            assertThat(attempts[0]).isEqualTo(1);
+        }
+
+        @Test
+        void aVerifierThatCannotBeBuiltForAnotherReasonIsAToolFailure() {
+            var tool = new SigstoreTool(format, null, Lazy.of(() -> {
+                throw new IllegalStateException("no such instance");
+            }), null, TrustRootRef.unknown(), List.of());
+
+            assertThatThrownBy(() -> tool.verify(Path.of("lib.jar"), claim))
+                    .isInstanceOf(ToolExecutionException.class)
+                    .hasMessageContaining("no such instance");
+        }
+
+        @Test
+        void closingAToolThatNeverSignedBuildsNoSigner() {
+            var tool = new SigstoreTool(format, Lazy.of(() -> {
+                throw new AssertionError("the signer was built");
+            }), null, null, TrustRootRef.unknown(), List.of());
+
+            assertThatCode(tool::close).doesNotThrowAnyException();
+            assertThat(tool.canSign()).isTrue();
+        }
     }
 
     @Nested
