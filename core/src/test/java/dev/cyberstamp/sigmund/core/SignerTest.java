@@ -363,7 +363,7 @@ class SignerTest {
 
             @Override
             public List<Claim> parse(Evidence e) {
-                return List.of(new OpenPgpClaim("block", 4, null, 22, Instant.EPOCH));
+                return List.of(new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, null, 22, Instant.EPOCH));
             }
 
             @Override

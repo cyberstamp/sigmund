@@ -31,7 +31,7 @@ class SignatureEvidenceAdapterTest {
     }
 
     private static final String FP = "4AEE18F83AFDEB23468B2E5A2D7BAF3C1E9F5A12";
-    private static final OpenPgpClaim V4_CLAIM = new OpenPgpClaim("armored", 4, FP, 1, null);
+    private static final OpenPgpClaim V4_CLAIM = new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, FP, 1, null);
 
     @Nested
     class ClaimProvenance {
@@ -134,7 +134,7 @@ class SignatureEvidenceAdapterTest {
         @Test
         void multipleClaimsRoutedIndependently() {
             var format = mockFormat("openpgp", ".asc", true,
-                    List.of(V4_CLAIM, new OpenPgpClaim("armored2", 6,
+                    List.of(V4_CLAIM, new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 6,
                             "CB186C4F0609A697E4D52DFA6C722B0C1F1E27C18A56708F6525EC27BAD9ACC9", 1, null)));
             var v4Tool = mockToolForVersion("gpg", 4, passVerifyResult(),
                     List.of(new KeyCredential("pgp4", FP)));

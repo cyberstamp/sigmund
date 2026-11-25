@@ -517,7 +517,9 @@ The file is empty, or holds no OpenPGP armored block (`-----BEGIN PGP SIGNATURE-
 cut short in transfer. Fetch the signature again; `Overall: no claims found` follows. Trust
 verification reports the same file under its artifact as `evidence <file> is empty` or
 `evidence <file> holds no signature`, and the artifact
-[`INDETERMINATE [EVIDENCE_MALFORMED]`](#indeterminate-evidence_malformed).
+[`INDETERMINATE [EVIDENCE_MALFORMED]`](#indeterminate-evidence_malformed). An armored block that
+holds something other than a signature, such as a public key, is a block of its own, reported
+`INDETERMINATE [EVIDENCE_MALFORMED]`.
 
 ### `INDETERMINATE [KEY_UNAVAILABLE: …]`
 
@@ -578,6 +580,12 @@ than as `NO_CLAIM`, since evidence was found: the report names the file under th
 every detail level (`evidence <file> is empty`, `evidence <file> holds no signature`), as it
 does an unreadable one, and `dependency-signers` reports `(malformed evidence: …)` rather than
 listing the module as unsigned.
+
+A block of an `.asc` that holds no signature at all — one whose armor does not decode into an
+OpenPGP packet, or a public key pasted in among the signatures — is reported the same way, with
+the detail `the block cannot be decoded into an OpenPGP packet` or `the block holds a packet of
+tag <n>, not a signature`, whichever tools are configured: a tool that does not take it would
+otherwise leave it set aside as `UNSUPPORTED_ALGORITHM`, letting the other blocks decide.
 
 An OpenPGP signature whose type is not a binary or text document signature — a certification, a
 standalone or a timestamp signature — is reported the same way, with the detail

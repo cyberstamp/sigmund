@@ -11,7 +11,9 @@ import java.time.Instant;
  * @param creationTime the signature creation subpacket, or null if not found
  * @param signatureType the signature type (RFC 9580 §5.2.1), or -1 if the block is not a bare
  *        signature packet or the type cannot be read
+ * @param packetTag the tag of the block's first packet (RFC 9580 §5.1), such as 2 for a
+ *        signature, or -1 if the block cannot be decoded into a packet
  */
 record OpenPgpSignaturePacketInfo(int version, int algorithmId, String issuerFingerprint,
-        Instant creationTime, int signatureType) {
+        Instant creationTime, int signatureType, int packetTag) {
 }

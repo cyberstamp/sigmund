@@ -273,7 +273,7 @@ class SignerBindingCheckTest {
         private final VerifyResult result;
         private final List<Credential> proven;
         private final TestFormat format = new TestFormat(this);
-        List<Claim> claims = List.of(new OpenPgpClaim("block", 4, null, 22, Instant.EPOCH));
+        List<Claim> claims = List.of(new OpenPgpClaim(OpenPgpTestBlocks.DOCUMENT_SIGNATURE, 4, null, 22, Instant.EPOCH));
         int verifications;
 
         TestTool(VerifyResult result, List<Credential> proven) {

@@ -13,6 +13,11 @@ import java.util.List;
  * verification ({@link SignatureEvidenceAdapter}) and by direct signature verification
  * ({@link Sigmund#verify(Path, Path)}), so that the two cannot disagree about a claim:
  * <ul>
+ * <li>An OpenPGP block that holds no signature packet ({@link OpenPgpClaim#holdsSignaturePacket()})
+ * — one that cannot be decoded, or whose first packet is not a signature — is
+ * {@link IndeterminateReason#EVIDENCE_MALFORMED} and no tool is asked: {@code gpg} and
+ * {@code sq} do not take such a block and Bouncy Castle cannot parse it, so it is settled here,
+ * where the answer cannot depend on the toolchain.</li>
  * <li>An OpenPGP signature that is not a document signature
  * ({@link OpenPgpClaim#isNonDocumentSignature()}) is
  * {@link IndeterminateReason#EVIDENCE_MALFORMED} and no tool is asked: the backends disagree on
@@ -66,6 +71,10 @@ final class ClaimRouter {
      * @return the record of the answer that counts; never {@code null}
      */
     ClaimResult route(Path artifactFile, Claim claim, String kind, EvidenceRef evidence) {
+        if (claim instanceof OpenPgpClaim openPgp && !openPgp.holdsSignaturePacket()) {
+            return ClaimResult.of(claim, kind, notASignature(openPgp), List.of(), evidence,
+                    TrustRootRef.unknown(), null, Instant.now());
+        }
         if (claim instanceof OpenPgpClaim openPgp && openPgp.isNonDocumentSignature()) {
             return ClaimResult.of(claim, kind, notADocumentSignature(openPgp), List.of(), evidence,
                     TrustRootRef.unknown(), null, Instant.now());
@@ -134,6 +143,18 @@ final class ClaimRouter {
         }
         return new UnverifiedResult(ClaimOutcome.INDETERMINATE,
                 IndeterminateReason.UNSUPPORTED_ALGORITHM);
+    }
+
+    /**
+     * The result standing for an OpenPGP block that holds no signature packet. The block
+     * carries no algorithm or key to name.
+     */
+    private static VerifyResult notASignature(OpenPgpClaim claim) {
+        String detail = claim.packetTag() < 0
+                ? "the block cannot be decoded into an OpenPGP packet"
+                : String.format("the block holds a packet of tag %d, not a signature", claim.packetTag());
+        return OpenPgpVerifyResult.indeterminate(IndeterminateReason.EVIDENCE_MALFORMED, null, null,
+                claim.packetVersion(), claim.issuerFingerprint(), null).withDetail(detail);
     }
 
     /**

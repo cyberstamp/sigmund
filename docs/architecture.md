@@ -59,7 +59,7 @@ BC attempts verification first. If BC cannot decide a signature (missing key, un
 The routing mechanism, `ClaimRouter`, is shared by trust verification and by `verify-signature`, so the two cannot disagree about a claim:
 
 1. Each signature file is parsed into one or more `Claim`s by its `SignatureFormat`
-2. An OpenPGP claim whose signature type is not a binary or text document signature is `INDETERMINATE [EVIDENCE_MALFORMED]` and no tool is asked: the backends disagree on such a block, so the router settles it
+2. An OpenPGP claim whose block holds no signature packet — one that cannot be decoded, or whose first packet is not a signature or compressed data — or whose signature type is not a binary or text document signature is `INDETERMINATE [EVIDENCE_MALFORMED]` and no tool is asked: the backends disagree on such a block, or set it aside as unsupported when they decline it, so the router settles it
 3. For each other claim, tools are checked in toolchain order
 4. Each tool where `canVerify(claim)` returns true attempts verification
 5. If a tool returns `VERIFIED` or `FAILED`, that answer stands and no later tool is asked — the toolchain order decides which tool answers, never what the answer is, so a `FAILED` cannot be outvoted

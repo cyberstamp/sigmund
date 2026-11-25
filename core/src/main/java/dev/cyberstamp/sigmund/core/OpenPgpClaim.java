@@ -26,6 +26,8 @@ public record OpenPgpClaim(
         int algorithmId,
         Instant creationTime) implements Claim {
 
+    private static final int TAG_SIGNATURE = 2;
+    private static final int TAG_COMPRESSED_DATA = 8;
     private static final int BINARY_DOCUMENT = 0x00;
     private static final int CANONICAL_TEXT_DOCUMENT = 0x01;
 
@@ -61,6 +63,29 @@ public record OpenPgpClaim(
      */
     public int signatureType() {
         return AscCombiner.inspectSignaturePacket(armoredBlock).signatureType();
+    }
+
+    /**
+     * Whether the block holds a signature packet a tool can be asked to verify: a signature
+     * whose version can be read, or compressed data, which may wrap one and which the tools
+     * unwrap. A block that cannot be decoded into a packet, or whose first packet is anything
+     * else — a public key pasted into the {@code .asc} among them — holds no signature, though
+     * the file holding it was taken for one.
+     *
+     * @return {@code true} for a block holding a signature packet, or compressed data
+     */
+    public boolean holdsSignaturePacket() {
+        OpenPgpSignaturePacketInfo info = AscCombiner.inspectSignaturePacket(armoredBlock);
+        return info.packetTag() == TAG_COMPRESSED_DATA || info.packetTag() == TAG_SIGNATURE && info.version() > 0;
+    }
+
+    /**
+     * The tag of the block's first packet (RFC 9580 §5.1).
+     *
+     * @return the tag, or {@code -1} when the block cannot be decoded into a packet
+     */
+    public int packetTag() {
+        return AscCombiner.inspectSignaturePacket(armoredBlock).packetTag();
     }
 
     /**
