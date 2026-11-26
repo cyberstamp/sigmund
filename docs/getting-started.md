@@ -28,14 +28,14 @@ No external tools are required for this walkthrough. Sigmund includes a pure-Jav
 >     <plugin>
 >       <groupId>dev.cyberstamp.sigmund</groupId>
 >       <artifactId>sigmund-maven-plugin</artifactId>
->       <version>0.0.2</version>
+>       <version>0.0.3</version>
 >     </plugin>
 >   </plugins>
 > </pluginManagement>
 > ```
 >
 > Alternatively, replace `sigmund` with the full plugin coordinates, e.g.:
-> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.2:dependency-signers`
+> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.3:dependency-signers`
 
 ## See Who Signed Your Dependencies
 

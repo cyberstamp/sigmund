@@ -43,14 +43,14 @@ This guide covers how to verify artifact signatures using Sigmund. Signature ver
 >     <plugin>
 >       <groupId>dev.cyberstamp.sigmund</groupId>
 >       <artifactId>sigmund-maven-plugin</artifactId>
->       <version>0.0.2</version>
+>       <version>0.0.3</version>
 >     </plugin>
 >   </plugins>
 > </pluginManagement>
 > ```
 >
 > Alternatively, replace `sigmund` with the full plugin coordinates, e.g.:
-> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.2:verify-signature`
+> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.3:verify-signature`
 
 ## Overview
 

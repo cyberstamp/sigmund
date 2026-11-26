@@ -25,14 +25,14 @@ This guide helps you migrate from `sigstore-maven-plugin` (dev.sigstore) to Sigm
 >     <plugin>
 >       <groupId>dev.cyberstamp.sigmund</groupId>
 >       <artifactId>sigmund-maven-plugin</artifactId>
->       <version>0.0.2</version>
+>       <version>0.0.3</version>
 >     </plugin>
 >   </plugins>
 > </pluginManagement>
 > ```
 >
 > Alternatively, replace `sigmund` with the full plugin coordinates, e.g.:
-> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.2:sign`
+> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.3:sign`
 
 ## Why migrate
 
@@ -99,7 +99,7 @@ Consider Sigmund when you want, beyond signing:
 
 ```xml
 <properties>
-  <sigmund.version>0.0.2</sigmund.version>
+  <sigmund.version>0.0.3</sigmund.version>
 </properties>
 
 <plugin>

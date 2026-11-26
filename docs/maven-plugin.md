@@ -27,14 +27,14 @@ The Sigmund Maven plugin provides goals for signing artifacts and verifying depe
 >     <plugin>
 >       <groupId>dev.cyberstamp.sigmund</groupId>
 >       <artifactId>sigmund-maven-plugin</artifactId>
->       <version>0.0.2</version>
+>       <version>0.0.3</version>
 >     </plugin>
 >   </plugins>
 > </pluginManagement>
 > ```
 >
 > Alternatively, replace `sigmund` with the full plugin coordinates, e.g.:
-> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.2:sign`
+> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.3:sign`
 
 ## Plugin Coordinates
 
@@ -42,7 +42,7 @@ The Sigmund Maven plugin provides goals for signing artifacts and verifying depe
 <plugin>
   <groupId>dev.cyberstamp.sigmund</groupId>
   <artifactId>sigmund-maven-plugin</artifactId>
-  <version>0.0.2</version>
+  <version>0.0.3</version>
   <executions>
     <execution>
       <goals>
@@ -60,7 +60,7 @@ The Maven plugin does not include Sigstore support by default, so a build that s
 
 ```xml
 <properties>
-  <sigmund.version>0.0.2</sigmund.version>
+  <sigmund.version>0.0.3</sigmund.version>
 </properties>
 
 <plugin>
@@ -249,7 +249,7 @@ The toolchain, key fetching and tool settings come from `sigmund.yaml`, found as
 **Example:**
 
 ```bash
-mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.2:verify-signature \
+mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.3:verify-signature \
   -Dfile=artifact.jar \
   -Dsignature=artifact.jar.asc
 ```

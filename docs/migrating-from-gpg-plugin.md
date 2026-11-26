@@ -30,14 +30,14 @@ This guide helps you migrate from `maven-gpg-plugin` to Sigmund's Maven plugin. 
 >     <plugin>
 >       <groupId>dev.cyberstamp.sigmund</groupId>
 >       <artifactId>sigmund-maven-plugin</artifactId>
->       <version>0.0.2</version>
+>       <version>0.0.3</version>
 >     </plugin>
 >   </plugins>
 > </pluginManagement>
 > ```
 >
 > Alternatively, replace `sigmund` with the full plugin coordinates, e.g.:
-> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.2:sign`
+> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.3:sign`
 
 ## Why migrate
 
@@ -105,7 +105,7 @@ With the GnuPG backend, signing works as with `maven-gpg-plugin`'s GnuPG signer:
 <plugin>
   <groupId>dev.cyberstamp.sigmund</groupId>
   <artifactId>sigmund-maven-plugin</artifactId>
-  <version>0.0.2</version>
+  <version>0.0.3</version>
   <executions>
     <execution>
       <id>sign-artifacts</id>

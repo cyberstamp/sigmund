@@ -37,14 +37,14 @@ This guide covers artifact signing with Sigmund's backends: GPG (simplest, exist
 >     <plugin>
 >       <groupId>dev.cyberstamp.sigmund</groupId>
 >       <artifactId>sigmund-maven-plugin</artifactId>
->       <version>0.0.2</version>
+>       <version>0.0.3</version>
 >     </plugin>
 >   </plugins>
 > </pluginManagement>
 > ```
 >
 > Alternatively, replace `sigmund` with the full plugin coordinates, e.g.:
-> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.2:sign`
+> `mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.3:sign`
 
 ## Overview
 
@@ -541,7 +541,7 @@ Add `sigmund-sigstore` as a plugin dependency to enable the Sigstore backend, at
 
 ```xml
 <properties>
-  <sigmund.version>0.0.2</sigmund.version>
+  <sigmund.version>0.0.3</sigmund.version>
 </properties>
 
 <plugin>

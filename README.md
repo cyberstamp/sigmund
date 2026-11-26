@@ -13,7 +13,7 @@ Sigmund also signs, and can take the place of `maven-gpg-plugin`, `sign-maven-pl
 See who signed your dependencies — no POM changes required, just copy-paste into any Maven project:
 
 ```bash
-mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.2:dependency-signers
+mvn dev.cyberstamp.sigmund:sigmund-maven-plugin:0.0.3:dependency-signers
 ```
 
 Sample output:
@@ -50,7 +50,7 @@ To shorten subsequent commands, add the plugin to your `pluginManagement`:
       <plugin>
         <groupId>dev.cyberstamp.sigmund</groupId>
         <artifactId>sigmund-maven-plugin</artifactId>
-        <version>0.0.2</version>
+        <version>0.0.3</version>
       </plugin>
     </plugins>
   </pluginManagement>
@@ -157,7 +157,7 @@ Run `mvn sigmund:sign` to sign with both — classic signature first, PQC signat
 
 ## Project Status
 
-**Version:** 0.0.2
+**Version:** 0.0.3
 **License:** Apache License 2.0  
 **Issues:** [GitHub Issues](https://github.com/cyberstamp/sigmund/issues)
 
