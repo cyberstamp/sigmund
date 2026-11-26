@@ -10,7 +10,7 @@ Sigmund signs through the `sigmund:sign` goal and the CLI. A goal has to be boun
 project that deploys, runs before deploy whether or not anything is deployed, and attaches its
 signatures by the project model. Maven Resolver 2 offers `ArtifactGenerator`s: components that,
 given the artifacts of an install or deploy request, contribute more artifacts to it — the hook
-Resolver's own GnuPG and Sigstore signers use. The resolver extension (ADR-010) already loads
+Resolver's own GnuPG and Sigstore signers use. The resolver extension (ADR-011) already loads
 Sigmund and locates `sigmund.yaml` on Maven 3.10 and later.
 
 ## Decision

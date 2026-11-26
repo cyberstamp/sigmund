@@ -1,4 +1,4 @@
-# ADR-010: Resolution-Time Verification in a Resolver Pipeline Connector and Post-Processor
+# ADR-011: Resolution-Time Verification in a Resolver Pipeline Connector and Post-Processor
 
 ## Status
 

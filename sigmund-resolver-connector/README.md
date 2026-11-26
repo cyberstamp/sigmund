@@ -8,7 +8,7 @@ blocks fails resolution with a `SigmundVerificationException`.
 **Maven 3.10 or later only** (Maven 4 included), on Java 17. The extension is built on Maven
 Resolver 2 pipeline connectors (Resolver 2.0.8+), which Maven 3.9 and older do not have: it does
 not work with Maven 3.9 or older, and will not. See
-[ADR-010](../adr/010-resolution-time-verification-in-a-pipeline-connector.md).
+[ADR-011](../adr/011-resolution-time-verification-in-a-pipeline-connector.md).
 
 ## Setup
 
