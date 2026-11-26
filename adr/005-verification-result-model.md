@@ -9,6 +9,11 @@ Amended by [ADR-009](009-an-unbound-key-is-never-failed.md): a key its certifica
 is `INDETERMINATE(KEY_UNAVAILABLE)`, never `FAILED`, including when its self-signatures do not
 verify.
 
+Amended by [ADR-010](010-evidence-without-claims.md): an evidence file that yields no claim is
+recorded on `ArtifactResult` as `evidenceWithoutClaims`, with its reason — the new, transient
+`EVIDENCE_UNREADABLE` for a file that could not be read, `EVIDENCE_MALFORMED` for one holding no
+signature — and leaves the artifact `INDETERMINATE` rather than `NO_CLAIM`.
+
 ## Context
 
 Verification today produces two enums and a flat result. `TrustVerifier.assess()`
