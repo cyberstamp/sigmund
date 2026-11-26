@@ -10,8 +10,10 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 import org.bouncycastle.openpgp.PGPSecretKeyRing;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -185,5 +187,34 @@ class BcToolFactoryTest {
             ring.encode(armored);
         }
         return out.toByteArray();
+    }
+
+    @Nested
+    class PassphrasePrompt {
+
+        @Test
+        void anInteractiveRunMayPrompt() {
+            AtomicBoolean prompted = new AtomicBoolean();
+
+            BcToolFactory.resolvePassphraseProvider(Map.of("interactive", "true"), () -> {
+                prompted.set(true);
+                return fingerprint -> new char[0];
+            });
+
+            assertThat(prompted).isTrue();
+        }
+
+        @Test
+        void aNonInteractiveRunNeverPrompts() {
+            AtomicBoolean prompted = new AtomicBoolean();
+
+            PassphraseProvider provider = BcToolFactory.resolvePassphraseProvider(Map.of("interactive", "false"), () -> {
+                prompted.set(true);
+                return fingerprint -> new char[0];
+            });
+
+            assertThat(prompted).isFalse();
+            assertThat(provider).isNull();
+        }
     }
 }

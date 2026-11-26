@@ -6,7 +6,7 @@ the docs it points to rather than a summary here.
 
 ## Project Overview
 
-Sigmund is a Maven plugin and CLI for artifact signing, signature verification, and dependency trust enforcement. Multi-module Maven project: `core`, `cli`, `maven-plugin`, `sigstore`.
+Sigmund is a Maven plugin and CLI for artifact signing, signature verification, and dependency trust enforcement. Multi-module Maven project: `core`, `cli`, `maven-plugin`, `sigstore`, `sigmund-resolver-connector` (Maven Resolver extension verifying resolved artifacts and signing deployed ones).
 
 Where to look:
 
@@ -121,7 +121,8 @@ Rules the code relies on; breaking one is a defect even if tests pass.
   also listed under `tools.<name>` in the schema, which `SchemaAgreementTest` holds to the
   factory, and in its table in `docs/configuration.md`. A setting that takes a list says so on its
   constant (`takesList()`), and `listSettings()` is derived from it with `ToolSetting.listKeysOf`.
-  The key-fetching settings Sigmund injects are `FetchSetting`, not accepted under `tools`.
+  The key-fetching settings Sigmund injects are `FetchSetting`, and whether the run may prompt is
+  `SessionSetting` (`Sigmund.Builder.interactive`); neither is accepted under `tools`.
 
 ## Testing
 
@@ -141,6 +142,10 @@ Rules the code relies on; breaking one is a defect even if tests pass.
   an absent tool, a set variable. A variable that changes Sigmund's behaviour, such as
   `SIGMUND_BC_SIGNING_KEY`, is excluded from the test JVM in the root `pom.xml`
   (`excludedEnvironmentVariables`); a test that needs it sets it on a process it forks.
+- `sigmund-resolver-connector`'s invoker ITs run each case on the Maven distributions the build
+  unpacks (`it.maven3.version`, `it.maven4.version`), not on the Maven running the build, with an
+  empty `user.home` so the developer's `~/.m2/extensions.xml` does not load. Their signed
+  fixtures and test key are described in `src/it/fixtures/README.md`.
 - Parser tests use inline YAML strings via `SigmundConfigParser.parse(source, reader)`.
 - When a test pins a CLI tool's output, use the tool's real output — including invisible
   characters such as `sq`'s no-break spaces — captured from the installed version.

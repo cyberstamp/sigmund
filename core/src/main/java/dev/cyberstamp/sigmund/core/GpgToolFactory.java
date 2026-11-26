@@ -73,8 +73,8 @@ final class GpgToolFactory implements SignatureToolFactory {
         String executable = executable(settings);
         List<String> fingerprints = signingFingerprints(settings);
         String passphrase = resolvePassphrase(settings);
-        return new GpgRunner(executable, fingerprints,
-                Setting.HOME.pathFrom(settings), passphrase, false, false, List.of());
+        return new GpgRunner(executable, fingerprints, Setting.HOME.pathFrom(settings), passphrase,
+                SessionSetting.interactive(settings), true, false, false, List.of());
     }
 
     @Override

@@ -12,6 +12,7 @@ This guide covers artifact signing with Sigmund's backends: GPG (simplest, exist
   - [Passphrase Protection](#passphrase-protection)
   - [Passphrase Resolution Order](#passphrase-resolution-order)
 - [Ephemeral CI Signing](#ephemeral-ci-signing)
+- [Signing on Deploy with the Resolver Extension](#signing-on-deploy-with-the-resolver-extension)
 - [Hybrid PQC Signing](#hybrid-pqc-signing)
   - [Prerequisites](#prerequisites)
   - [Installing Sequoia sq](#installing-sequoia-sq)
@@ -215,7 +216,7 @@ export SIGMUND_BC_PASSPHRASE=mysecret
 mvn sigmund:sign
 ```
 
-If the environment variable is not set, Sigmund prompts interactively when a terminal is available. If neither is available, signing fails for encrypted keys.
+If the environment variable is not set, Sigmund prompts when the run is interactive and a terminal is available. A batch run (`mvn -B`, CI) never prompts: signing fails for an encrypted key instead of waiting. The same holds for GnuPG: without `SIGMUND_GPG_PASSPHRASE`, a batch run passes `--pinentry-mode error`, so gpg-agent signs with a passphrase it holds but never asks for one.
 
 To use a different environment variable name (e.g., to reuse an existing CI secret), set `passphrase-env` in `sigmund.yaml`:
 
@@ -232,7 +233,7 @@ When signing with BC, the passphrase is resolved in this order:
 
 1. **Programmatic `PassphraseProvider`** via `Sigmund.Builder.bcPassphraseProvider()` (API use only)
 2. **Environment variable** — `SIGMUND_BC_PASSPHRASE` by default, or the variable named in the `passphrase-env` setting, which is an error when it is not set
-3. **Interactive console prompt** — if a terminal is available
+3. **Interactive console prompt** — only when the run is interactive and a terminal is available; never under `mvn -B` or on CI
 4. **No passphrase** — works only for unencrypted keys
 
 Unencrypted keys continue to work without a passphrase. Private key files in `bc-private/` are created with owner-only (600) file permissions on POSIX systems.
@@ -272,6 +273,13 @@ tools:
 ```
 
 **Priority:** a key in the environment variable wins over `tsk-file` — a file holding an exported secret key (a Transferable Secret Key), such as the one `export-secret-key` writes — which wins over `signing-fingerprint`, so CI can override a file-based setup without editing `sigmund.yaml`.
+
+## Signing on Deploy with the Resolver Extension
+
+On Maven 3.10 or later, the `sigmund-resolver-connector` extension signs at deploy time instead of
+a `sigmund:sign` goal: with `-Dsigmund.resolver.sign.enabled=true`, each artifact `mvn deploy`
+uploads is signed with the keys configured here, and its signature deployed beside it. See
+[its README](../sigmund-resolver-connector/README.md#signing).
 
 ## Hybrid PQC Signing
 

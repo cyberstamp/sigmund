@@ -32,6 +32,7 @@
         <module>sigstore</module>
         <module>cli</module>
         <module>maven-plugin</module>
+        <module>sigmund-resolver-connector</module>
     </modules>
     <properties>
         <project.build.outputTimestamp>2026-08-21T15:31:12Z</project.build.outputTimestamp>
@@ -155,6 +156,8 @@
                         -->
                         <excludedEnvironmentVariables>
                             <excludedEnvironmentVariable>SIGMUND_BC_SIGNING_KEY</excludedEnvironmentVariable>
+                            <excludedEnvironmentVariable>SIGMUND_BC_PASSPHRASE</excludedEnvironmentVariable>
+                            <excludedEnvironmentVariable>SIGMUND_GPG_PASSPHRASE</excludedEnvironmentVariable>
                         </excludedEnvironmentVariables>
                     </configuration>
                 </plugin>

@@ -385,8 +385,8 @@ Each backend checks a default environment variable — no `sigmund.yaml` configu
 
 | Backend | Default env var | Fallback |
 |---------|----------------|----------|
-| BC | `SIGMUND_BC_PASSPHRASE` | Interactive console prompt |
-| GPG | `SIGMUND_GPG_PASSPHRASE` | `gpg-agent` |
+| BC | `SIGMUND_BC_PASSPHRASE` | Console prompt, unless Maven runs in batch mode (`-B`) |
+| GPG | `SIGMUND_GPG_PASSPHRASE` | `gpg-agent`; in batch mode only a passphrase it already holds (`--pinentry-mode error`) |
 | Sigstore | `SIGSTORE_JAVA_ID_TOKEN` (optional) | Ambient OIDC (env var or GitHub Actions) or interactive browser login |
 
 ```bash

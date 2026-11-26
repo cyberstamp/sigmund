@@ -135,7 +135,7 @@ BC private keys can be encrypted at rest using AES-256 AEAD (OCB mode) with Argo
 Passphrase resolution order:
 1. Explicit `PassphraseProvider` via `Sigmund.Builder.bcPassphraseProvider()` (programmatic API)
 2. `passphrase-env` setting (env var name, default `SIGMUND_BC_PASSPHRASE`; a variable named there that is not set is an error)
-3. Interactive console prompt (if a terminal is available)
+3. Interactive console prompt (only when the run is interactive and a terminal is available; never under `mvn -B` or on CI)
 4. No passphrase (works only for unencrypted keys)
 
 Private key files in `bc-private/` are created with owner-only (600) file permissions on POSIX systems.
@@ -421,4 +421,6 @@ core/              Core signing and verification library (pure Java, no CLI depe
 cli/               Command-line interface (picocli)
 maven-plugin/      Maven plugin for build integration
 sigstore/          Sigstore signing/verification backend (dev.sigstore:sigstore-java)
+sigmund-resolver-connector/
+                   Maven 3.10+ extension verifying downloads and local-repository hits at resolution time (ADR-011), signing deploys (ADR-012)
 ```
