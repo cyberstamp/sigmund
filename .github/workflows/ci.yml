@@ -28,6 +28,16 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      # The plugin's integration builds resolve into their own local repository, which falls back
+      # to ~/.m2/repository but is not part of the cache above: without this, every run downloads
+      # the integration projects' dependencies and signatures from Maven Central again.
+      - name: Cache the integration builds' local repository
+        uses: actions/cache@v6
+        with:
+          path: maven-plugin/target/local-repo
+          key: maven-it-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: maven-it-${{ runner.os }}-
+
       - name: Install sq build dependencies
         run: |
           sudo apt-get update
