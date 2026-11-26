@@ -4,7 +4,7 @@
     <parent>
         <groupId>dev.cyberstamp.sigmund</groupId>
         <artifactId>sigmund-parent</artifactId>
-        <version>0.0.3</version>
+        <version>0.0.4-SNAPSHOT</version>
     </parent>
     <artifactId>sigmund-maven-plugin</artifactId>
     <packaging>maven-plugin</packaging>
