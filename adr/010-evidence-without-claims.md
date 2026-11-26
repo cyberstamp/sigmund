@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Amends [ADR-005](005-verification-result-model.md): adds an `IndeterminateReason`, a
+Accepted. Amends [ADR-005](005-verification-result-model.md): adds an `IndeterminateReason`, a
 component of `ArtifactResult`, and a file-level use of the reasons.
 
 ## Context
