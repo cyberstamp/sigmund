@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>dev.cyberstamp.sigmund</groupId>
     <artifactId>sigmund-parent</artifactId>
-    <version>0.0.3-SNAPSHOT</version>
+    <version>0.0.3</version>
     <packaging>pom</packaging>
     <name>Sigmund :: Parent</name>
     <description>Sigmund - hybrid PQC signing for Maven artifacts</description>
@@ -18,7 +18,7 @@
         <connection>scm:git:git://github.com/cyberstamp/sigmund.git</connection>
         <developerConnection>scm:git:ssh://github.com/cyberstamp/sigmund.git</developerConnection>
         <url>https://github.com/cyberstamp/sigmund</url>
-        <tag>HEAD</tag>
+        <tag>0.0.3</tag>
     </scm>
     <developers>
         <developer>
@@ -34,7 +34,7 @@
         <module>maven-plugin</module>
     </modules>
     <properties>
-        <project.build.outputTimestamp>2026-08-21T15:31:12Z</project.build.outputTimestamp>
+        <project.build.outputTimestamp>2026-11-26T21:23:39Z</project.build.outputTimestamp>
         <bouncycastle.version>1.87</bouncycastle.version>
         <sigstore-java.version>2.4.0</sigstore-java.version>
         <!-- The Protobuf runtime sigstore-java's generated classes were built with; the CLI imports

@@ -4,7 +4,7 @@
     <parent>
         <groupId>dev.cyberstamp.sigmund</groupId>
         <artifactId>sigmund-parent</artifactId>
-        <version>0.0.3-SNAPSHOT</version>
+        <version>0.0.3</version>
     </parent>
     <artifactId>sigmund</artifactId>
     <packaging>quarkus</packaging>
